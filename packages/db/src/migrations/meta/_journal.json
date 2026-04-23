@@ -344,6 +344,20 @@
       "when": 1776927442335,
       "tag": "0048_tearful_human_robot",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1776927543344,
+      "tag": "0049_clever_quasar",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1776928093785,
+      "tag": "0050_flat_bloodstrike",
+      "breakpoints": true
     }
   ]
 }

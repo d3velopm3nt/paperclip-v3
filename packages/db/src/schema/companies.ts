@@ -17,6 +17,8 @@ export const companies = pgTable(
       .notNull()
       .default(true),
     brandColor: text("brand_color"),
+    // v3: email-triage agent override (nullable, defaults to CEO resolution)
+    triageAgentId: uuid("triage_agent_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -24,3 +26,5 @@ export const companies = pgTable(
     issuePrefixUniqueIdx: uniqueIndex("companies_issue_prefix_idx").on(table.issuePrefix),
   }),
 );
+
+// v3: companies.triage_agent_id FK added in migration SQL to avoid circular import with agents.ts
