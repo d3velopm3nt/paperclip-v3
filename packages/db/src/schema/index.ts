@@ -68,3 +68,6 @@ export { emailMessages } from "./email_messages.js";
 
 // v3: action policies
 export { actionPolicies } from "./action_policies.js";
+
+// v3: plan gate
+export { plans } from "./plans.js";
