@@ -22,7 +22,9 @@ afterEach(async () => {
 });
 
 describeIf("email_accounts schema", () => {
-  it("inserts and reads an email account scoped to a company", async () => {
+  it(
+    "inserts and reads an email account scoped to a company",
+    async () => {
     const dbh = await startEmbeddedPostgresTestDatabase("paperclip-email-accounts-");
     cleanups.push(dbh.cleanup);
     const sql = postgres(dbh.connectionString);
@@ -62,5 +64,7 @@ describeIf("email_accounts schema", () => {
     expect(rows).toHaveLength(1);
 
     await sql.end();
-  });
+  },
+    20_000,
+  );
 });

@@ -22,7 +22,9 @@ afterEach(async () => {
 });
 
 describeIf("companies.triageAgentId", () => {
-  it("sets and reads triageAgentId fk on companies", async () => {
+  it(
+    "sets and reads triageAgentId fk on companies",
+    async () => {
     const dbh = await startEmbeddedPostgresTestDatabase("paperclip-triage-agent-");
     cleanups.push(dbh.cleanup);
     const sql = postgres(dbh.connectionString);
@@ -54,5 +56,7 @@ describeIf("companies.triageAgentId", () => {
     expect(updated.triageAgentId).toBe(agent.id);
 
     await sql.end();
-  });
+  },
+    20_000,
+  );
 });

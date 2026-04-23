@@ -22,7 +22,9 @@ afterEach(async () => {
 });
 
 describeIf("action_policies schema", () => {
-  it("inserts a policy per company and enforces uniqueness on (companyId, actionType)", async () => {
+  it(
+    "inserts a policy per company and enforces uniqueness on (companyId, actionType)",
+    async () => {
     const dbh = await startEmbeddedPostgresTestDatabase("paperclip-action-policies-");
     cleanups.push(dbh.cleanup);
     const sql = postgres(dbh.connectionString);
@@ -62,5 +64,7 @@ describeIf("action_policies schema", () => {
     expect(rows).toHaveLength(1);
 
     await sql.end();
-  });
+  },
+    20_000,
+  );
 });

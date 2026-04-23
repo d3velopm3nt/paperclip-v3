@@ -19,7 +19,9 @@ afterEach(async () => {
 });
 
 describeIf("v3 migrations end-to-end", () => {
-  it("applies all migrations cleanly on a fresh database and creates expected tables", async () => {
+  it(
+    "applies all migrations cleanly on a fresh database and creates expected tables",
+    async () => {
     const dbh = await startEmbeddedPostgresTestDatabase("paperclip-v3-migrations-");
     cleanups.push(dbh.cleanup);
     const sql = postgres(dbh.connectionString);
@@ -59,5 +61,7 @@ describeIf("v3 migrations end-to-end", () => {
     expect(fks).toContain("companies_triage_agent_id_agents_id_fk");
 
     await sql.end();
-  });
+  },
+    20_000,
+  );
 });

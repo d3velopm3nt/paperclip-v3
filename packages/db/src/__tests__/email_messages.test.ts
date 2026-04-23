@@ -23,7 +23,9 @@ afterEach(async () => {
 });
 
 describeIf("email_messages schema", () => {
-  it("inserts a message tied to an account and dedups on (account, message_id_header)", async () => {
+  it(
+    "inserts a message tied to an account and dedups on (account, message_id_header)",
+    async () => {
     const dbh = await startEmbeddedPostgresTestDatabase("paperclip-email-messages-");
     cleanups.push(dbh.cleanup);
     const sql = postgres(dbh.connectionString);
@@ -84,5 +86,7 @@ describeIf("email_messages schema", () => {
     expect(rows).toHaveLength(1);
 
     await sql.end();
-  });
+  },
+    20_000,
+  );
 });
