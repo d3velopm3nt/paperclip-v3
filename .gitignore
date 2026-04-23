@@ -50,3 +50,9 @@ tests/release-smoke/test-results/
 tests/release-smoke/playwright-report/
 .superset/
 .claude/worktrees/
+
+# v3: runtime artifacts
+logs/
+server/logs/
+server/secrets/
+data/
