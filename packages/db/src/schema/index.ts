@@ -64,3 +64,4 @@ export { agentKpis, agentKpiDefinitions, agentExperiments, agentKpiObservations 
 
 // v3: email monitoring
 export { emailAccounts } from "./email_accounts.js";
+export { emailMessages } from "./email_messages.js";
