@@ -61,3 +61,6 @@ export { agentMemories } from "./agent_memories.js";
 export { companyMcpServers, agentMcpExclusions } from "./company_mcp_servers.js";
 export { skillChangeLog } from "./skill_change_log.js";
 export { agentKpis, agentKpiDefinitions, agentExperiments, agentKpiObservations } from "./agent_kpis.js";
+
+// v3: email monitoring
+export { emailAccounts } from "./email_accounts.js";
