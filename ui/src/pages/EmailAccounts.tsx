@@ -23,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Mail, Plus, Pencil, Trash2, Plug, XCircle } from "lucide-react";
+import { Mail, Plus, Pencil, Trash2, Plug, XCircle, Timer } from "lucide-react";
 
 interface FormState {
   label: string;
@@ -375,12 +375,16 @@ export function EmailAccounts() {
                   <Mail className="h-5 w-5" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-medium truncate">{account.label}</span>
                     <span
                       className={`h-2 w-2 rounded-full ${account.active ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
                       title={account.active ? "Active" : "Paused"}
                     />
+                    <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                      <Timer className="h-3 w-3" />
+                      {account.pollIntervalSec}s
+                    </span>
                   </div>
                   <div className="text-xs text-muted-foreground truncate">{account.fromEmail}</div>
                   {account.lastErrorText && (
