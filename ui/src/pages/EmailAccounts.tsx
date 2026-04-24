@@ -1,4 +1,5 @@
 // v3: email accounts page — list, create, edit, delete, test-connection
+import * as React from "react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -24,7 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Mail, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle } from "lucide-react";
+import { Mail, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle, Server, Send, Folder, Timer, User } from "lucide-react";
 
 interface FormState {
   label: string;
@@ -367,58 +368,51 @@ export function EmailAccounts() {
       ) : (
         <div className="grid gap-3">
           {accounts.map((account) => (
-            <Card key={account.id} className="p-4">
+            <Card key={account.id} className="p-4 hover:border-border/80 transition-colors">
               <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
+                <div className="flex-1 min-w-0 space-y-2.5">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{account.label}</span>
-                    <Badge variant={account.active ? "default" : "secondary"}>
+                    <span className="font-medium text-base">{account.label}</span>
+                    <Badge variant={account.active ? "default" : "secondary"} className="h-5">
                       {account.active ? "active" : "paused"}
                     </Badge>
-                    {account.imapTls && <Badge variant="outline">TLS</Badge>}
-                  </div>
-                  <div className="text-sm text-muted-foreground mt-2 grid gap-1 sm:grid-cols-[auto,1fr] sm:gap-x-4">
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">User</span>
-                    <span className="font-mono text-xs">{account.imapUser}</span>
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">IMAP</span>
-                    <span className="font-mono text-xs">
-                      {account.imapHost}:{account.imapPort} · {account.folder}
-                    </span>
-                    {account.smtpHost && (
-                      <>
-                        <span className="text-xs uppercase tracking-wide text-muted-foreground/70">SMTP</span>
-                        <span className="font-mono text-xs">
-                          {account.smtpHost}:{account.smtpPort}
-                          {account.smtpSecure ? " · TLS" : " · STARTTLS"}
-                        </span>
-                      </>
-                    )}
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">From</span>
-                    <span className="text-xs">
+                    <span className="text-xs text-muted-foreground">
                       {account.fromName} &lt;{account.fromEmail}&gt;
-                      {account.replyTo ? ` · Reply-To: ${account.replyTo}` : ""}
                     </span>
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Poll</span>
-                    <span className="text-xs">every {account.pollIntervalSec}s</span>
-                    {account.lastPolledAt && (
-                      <>
-                        <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Last poll</span>
-                        <span className="flex items-center gap-1 text-xs">
-                          <CheckCircle2 className="h-3 w-3" />
-                          {new Date(account.lastPolledAt).toLocaleString()}
-                        </span>
-                      </>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <InfoPill icon={User} label={account.imapUser} mono />
+                    <InfoPill
+                      icon={Server}
+                      label={`IMAP · ${account.imapHost}:${account.imapPort}${account.imapTls ? " · TLS" : ""}`}
+                      mono
+                    />
+                    {account.smtpHost && (
+                      <InfoPill
+                        icon={Send}
+                        label={`SMTP · ${account.smtpHost}:${account.smtpPort}${account.smtpSecure ? " · TLS" : " · STARTTLS"}`}
+                        mono
+                      />
                     )}
-                    {account.lastErrorText && (
-                      <>
-                        <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Error</span>
-                        <span className="flex items-center gap-1 text-xs text-destructive">
+                    <InfoPill icon={Folder} label={account.folder} />
+                    <InfoPill icon={Timer} label={`${account.pollIntervalSec}s`} />
+                  </div>
+                  {(account.lastPolledAt || account.lastErrorText) && (
+                    <div className="flex items-center gap-3 text-xs">
+                      {account.lastPolledAt && (
+                        <span className="flex items-center gap-1 text-muted-foreground">
+                          <CheckCircle2 className="h-3 w-3" />
+                          Last poll {new Date(account.lastPolledAt).toLocaleString()}
+                        </span>
+                      )}
+                      {account.lastErrorText && (
+                        <span className="flex items-center gap-1 text-destructive">
                           <XCircle className="h-3 w-3" />
                           {account.lastErrorText}
                         </span>
-                      </>
-                    )}
-                  </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
@@ -594,6 +588,25 @@ export function EmailAccounts() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function InfoPill({
+  icon: Icon,
+  label,
+  mono = false,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  mono?: boolean;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-0.5 text-xs text-foreground/80 ${mono ? "font-mono" : ""}`}
+    >
+      <Icon className="h-3 w-3 text-muted-foreground" />
+      {label}
+    </span>
   );
 }
 
