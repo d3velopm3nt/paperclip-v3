@@ -36,6 +36,7 @@ export function CompanySettings() {
   const [companyName, setCompanyName] = useState("");
   const [description, setDescription] = useState("");
   const [brandColor, setBrandColor] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
   const [logoUrl, setLogoUrl] = useState("");
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
 
@@ -45,6 +46,7 @@ export function CompanySettings() {
     setCompanyName(selectedCompany.name);
     setDescription(selectedCompany.description ?? "");
     setBrandColor(selectedCompany.brandColor ?? "");
+    setOwnerEmail(selectedCompany.ownerEmail ?? "");
     setLogoUrl(selectedCompany.logoUrl ?? "");
   }, [selectedCompany]);
 
@@ -57,13 +59,15 @@ export function CompanySettings() {
     !!selectedCompany &&
     (companyName !== selectedCompany.name ||
       description !== (selectedCompany.description ?? "") ||
-      brandColor !== (selectedCompany.brandColor ?? ""));
+      brandColor !== (selectedCompany.brandColor ?? "") ||
+      ownerEmail !== (selectedCompany.ownerEmail ?? ""));
 
   const generalMutation = useMutation({
     mutationFn: (data: {
       name: string;
       description: string | null;
       brandColor: string | null;
+      ownerEmail: string | null;
     }) => companiesApi.update(selectedCompanyId!, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
@@ -216,7 +220,8 @@ export function CompanySettings() {
     generalMutation.mutate({
       name: companyName.trim(),
       description: description.trim() || null,
-      brandColor: brandColor || null
+      brandColor: brandColor || null,
+      ownerEmail: ownerEmail.trim() || null,
     });
   }
 
@@ -251,6 +256,18 @@ export function CompanySettings() {
               value={description}
               placeholder="Optional company description"
               onChange={(e) => setDescription(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Owner email"
+            hint="Default recipient for plan-pending notifications. Seeded into new inbound email accounts' team notification list."
+          >
+            <input
+              className="w-full rounded-md border border-border bg-transparent px-2.5 py-1.5 text-sm outline-none"
+              type="email"
+              value={ownerEmail}
+              placeholder="you@example.com"
+              onChange={(e) => setOwnerEmail(e.target.value)}
             />
           </Field>
         </div>

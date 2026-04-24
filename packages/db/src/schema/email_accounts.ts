@@ -6,8 +6,10 @@ import {
   boolean,
   timestamp,
   index,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
+import { agents } from "./agents.js";
 
 // v3: email monitoring — per-company IMAP config
 export const emailAccounts = pgTable(
@@ -18,6 +20,26 @@ export const emailAccounts = pgTable(
       .notNull()
       .references(() => companies.id, { onDelete: "cascade" }),
     label: text("label").notNull(),
+    // v3: role drives behavior — inbound accounts are IMAP-polled and
+    // their SMTP is used for client replies; agent_voice accounts are
+    // not polled and used only for operator/team notifications.
+    role: text("role").notNull().default("inbound"),
+    // v3: addresses the agent may CC or directly email when asking the team
+    // for clarification, and where plan-pending notifications are sent.
+    teamEmails: jsonb("team_emails").$type<string[]>().notNull().default([]),
+    // v3: optional per-inbox triage agent override. When null,
+    // routeInbound falls back to the company's role='ceo' agent.
+    triageAgentId: uuid("triage_agent_id").references(() => agents.id, {
+      onDelete: "set null",
+    }),
+    // v3: optional override — when a client reply is sent, use this account's
+    // SMTP instead of the inbox that received the mail. Null = reply from self.
+    replyFromAccountId: uuid("reply_from_account_id"),
+    // v3: auto-acknowledge inbound emails so the sender knows a human/agent
+    // is looking at it. Optional per-inbox; disabled by default.
+    autoAcknowledge: boolean("auto_acknowledge").notNull().default(false),
+    ackSubject: text("ack_subject"),
+    ackBody: text("ack_body"),
     imapHost: text("imap_host").notNull(),
     imapPort: integer("imap_port").notNull(),
     imapUser: text("imap_user").notNull(),

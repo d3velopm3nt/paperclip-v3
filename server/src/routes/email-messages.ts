@@ -8,6 +8,7 @@ import { emailAccounts, emailAttachments, emailMessages } from "@paperclipai/db"
 import { badRequest, notFound } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
 import { resolveEmailAttachmentsRoot } from "../home-paths.js";
+import { emailProcessorService } from "../services/email-processor.js";
 
 export function emailMessageRoutes(db: Db) {
   const router = Router();
@@ -118,6 +119,31 @@ export function emailMessageRoutes(db: Db) {
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(att.filename)}"`);
     }
     createReadStream(resolved).pipe(res);
+  });
+
+  // POST /api/email-messages/:id/reprocess — resets state + re-runs routing.
+  router.post("/email-messages/:id/reprocess", async (req, res) => {
+    const { id } = req.params;
+    const [msg] = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    try {
+      await emailProcessorService(db).reprocess(id);
+    } catch (err) {
+      throw badRequest(
+        `Reprocess failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const [updated] = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    res.json(updated);
   });
 
   return router;

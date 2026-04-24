@@ -22,6 +22,10 @@ export const emailMessages = pgTable(
       .notNull()
       .references(() => emailAccounts.id, { onDelete: "cascade" }),
     messageIdHeader: text("message_id_header").notNull(),
+    // v3: RFC-2822 threading headers — let routeInbound continue an existing
+    // triage issue when a client replies, instead of creating a new one.
+    inReplyToHeader: text("in_reply_to_header"),
+    referencesHeaders: jsonb("references_headers").$type<string[]>().notNull().default([]),
     fromAddr: text("from_addr").notNull(),
     toAddrs: jsonb("to_addrs").$type<string[]>().notNull().default([]),
     subject: text("subject").notNull().default(""),
@@ -44,6 +48,7 @@ export const emailMessages = pgTable(
   (table) => ({
     accountIdx: index("email_messages_account_idx").on(table.emailAccountId),
     stateIdx: index("email_messages_state_idx").on(table.processingState),
+    inReplyToIdx: index("email_messages_in_reply_to_idx").on(table.inReplyToHeader),
     dedupIdx: uniqueIndex("email_messages_dedup_idx").on(
       table.emailAccountId,
       table.messageIdHeader,

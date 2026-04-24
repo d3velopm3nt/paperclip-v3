@@ -1,6 +1,7 @@
 // v3: email accounts page — list, create, edit, delete, test-connection
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@/lib/router";
 import {
   emailAccountsApi,
   type EmailAccount,
@@ -27,6 +28,9 @@ import { Mail, Plus, Pencil, Trash2, Plug, XCircle, Timer } from "lucide-react";
 
 interface FormState {
   label: string;
+  role: "inbound" | "agent_voice";
+  teamEmails: string;
+  triageAgentId: string;
   imapHost: string;
   imapPort: string;
   imapUser: string;
@@ -48,6 +52,9 @@ interface FormState {
 
 const emptyForm: FormState = {
   label: "",
+  role: "inbound",
+  teamEmails: "",
+  triageAgentId: "",
   imapHost: "",
   imapPort: "993",
   imapUser: "",
@@ -74,6 +81,9 @@ function accountToForm(account: EmailAccount): FormState {
     (account.smtpUser ?? account.imapUser) === account.imapUser;
   return {
     label: account.label,
+    role: account.role,
+    teamEmails: (account.teamEmails ?? []).join(", "),
+    triageAgentId: account.triageAgentId ?? "",
     imapHost: account.imapHost,
     imapPort: String(account.imapPort),
     imapUser: account.imapUser,
@@ -99,6 +109,7 @@ export function EmailAccounts() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const companyId = selectedCompanyId!;
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -120,10 +131,11 @@ export function EmailAccounts() {
 
   const createMutation = useMutation({
     mutationFn: (data: EmailAccountCreateRequest) => emailAccountsApi.create(companyId, data),
-    onSuccess: () => {
+    onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.emailAccounts.list(companyId) });
       pushToast({ title: "Email account created" });
       setDialogOpen(false);
+      navigate(`/email/accounts/${created.id}`);
     },
     onError: (err: Error) => pushToast({ tone: "warn", title: "Create failed", body: err.message }),
   });
@@ -207,9 +219,18 @@ export function EmailAccounts() {
           smtpSecure: false,
         };
 
+    const teamEmailsArr = form.teamEmails
+      .split(/[,\n]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const triageAgentId = form.triageAgentId.trim() || null;
+
     if (editing) {
       const data: EmailAccountUpdateRequest = {
         label: form.label,
+        role: form.role,
+        teamEmails: teamEmailsArr,
+        triageAgentId,
         imapHost: form.imapHost,
         imapPort: port,
         imapUser: form.imapUser,
@@ -237,6 +258,9 @@ export function EmailAccounts() {
       }
       createMutation.mutate({
         label: form.label,
+        role: form.role,
+        teamEmails: teamEmailsArr,
+        triageAgentId,
         imapHost: form.imapHost,
         imapPort: port,
         imapUser: form.imapUser,
@@ -366,7 +390,11 @@ export function EmailAccounts() {
       ) : (
         <div className="grid gap-3">
           {accounts.map((account) => (
-            <Card key={account.id} className="p-4 hover:border-border/80 transition-colors">
+            <Card
+              key={account.id}
+              className="p-4 hover:border-border/80 hover:bg-accent/30 cursor-pointer transition-colors"
+              onClick={() => navigate(`/email/accounts/${account.id}`)}
+            >
               <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
                 <div
                   className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
@@ -381,9 +409,20 @@ export function EmailAccounts() {
                       className={`h-2 w-2 rounded-full ${account.active ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
                       title={account.active ? "Active" : "Paused"}
                     />
-                    <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
-                      <Timer className="h-3 w-3" />
-                      {account.pollIntervalSec}s
+                    {account.role === "inbound" && (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[11px] text-muted-foreground">
+                        <Timer className="h-3 w-3" />
+                        {account.pollIntervalSec}s
+                      </span>
+                    )}
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[11px] ${
+                        account.role === "agent_voice"
+                          ? "bg-violet-500/15 text-violet-700 dark:text-violet-300"
+                          : "bg-blue-500/15 text-blue-700 dark:text-blue-300"
+                      }`}
+                    >
+                      {account.role === "agent_voice" ? "agent voice" : "inbound"}
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground truncate">{account.fromEmail}</div>
@@ -394,7 +433,7 @@ export function EmailAccounts() {
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0 flex-wrap">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap" onClick={(e) => e.stopPropagation()}>
                   <Button
                     variant="outline"
                     size="sm"
@@ -415,7 +454,7 @@ export function EmailAccounts() {
                       <span className="hidden sm:inline">{testingSmtpId === account.id ? "…" : "SMTP"}</span>
                     </Button>
                   )}
-                  <Button variant="ghost" size="icon-sm" onClick={() => openEdit(account)}>
+                  <Button variant="ghost" size="icon-sm" onClick={() => navigate(`/email/accounts/${account.id}`)}>
                     <Pencil className="h-4 w-4" />
                   </Button>
                   <Button variant="ghost" size="icon-sm" onClick={() => setDeleteConfirm(account)}>
@@ -441,6 +480,10 @@ export function EmailAccounts() {
           <div className="space-y-5">
             <section className="grid grid-cols-2 gap-3">
               <Field label="Label" value={form.label} onChange={(v) => setForm({ ...form, label: v })} />
+              <RoleSelect
+                value={form.role}
+                onChange={(v) => setForm({ ...form, role: v })}
+              />
               <Field label="Folder" value={form.folder} onChange={(v) => setForm({ ...form, folder: v })} />
               <Field label="From name" value={form.fromName} onChange={(v) => setForm({ ...form, fromName: v })} />
               <Field label="From email" value={form.fromEmail} onChange={(v) => setForm({ ...form, fromEmail: v })} />
@@ -451,6 +494,20 @@ export function EmailAccounts() {
                 onChange={(v) => setForm({ ...form, pollIntervalSec: v })}
               />
               <Toggle label="Active" value={form.active} onChange={(v) => setForm({ ...form, active: v })} />
+              <div className="col-span-2">
+                <Field
+                  label="Team emails (comma-separated — notified when plan pending)"
+                  value={form.teamEmails}
+                  onChange={(v) => setForm({ ...form, teamEmails: v })}
+                />
+              </div>
+              <div className="col-span-2">
+                <Field
+                  label="Triage agent id (optional — overrides company CEO agent)"
+                  value={form.triageAgentId}
+                  onChange={(v) => setForm({ ...form, triageAgentId: v })}
+                />
+              </div>
             </section>
 
             <section className="space-y-3">
@@ -603,6 +660,28 @@ function Toggle({
     <label className="flex items-center gap-2 text-sm">
       <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />
       <span>{label}</span>
+    </label>
+  );
+}
+
+function RoleSelect({
+  value,
+  onChange,
+}: {
+  value: "inbound" | "agent_voice";
+  onChange: (v: "inbound" | "agent_voice") => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-sm">
+      <span className="text-muted-foreground">Role</span>
+      <select
+        className="border border-input bg-background rounded-md h-9 px-2 text-sm"
+        value={value}
+        onChange={(e) => onChange(e.target.value as "inbound" | "agent_voice")}
+      >
+        <option value="inbound">Inbound — polls IMAP, replies to clients</option>
+        <option value="agent_voice">Agent voice — sends operator/team notifications</option>
+      </select>
     </label>
   );
 }

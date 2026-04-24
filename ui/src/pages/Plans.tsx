@@ -231,7 +231,12 @@ function PlanDetailPane({
   }
   const plan: PlanDetail = detailQuery.data;
   const meta = (plan.proposalMeta ?? {}) as Record<string, unknown>;
-  const sourceEmail = (meta.sourceEmail ?? null) as { subject?: string; from?: string } | null;
+  const sourceEmail = (meta.sourceEmail ?? null) as {
+    subject?: string;
+    from?: string;
+    to?: string[];
+    account?: { id?: string; address?: string; label?: string | null };
+  } | null;
   const clientName = plan.clientId ? clientsById[plan.clientId]?.name : null;
   const pending = plan.decision === "pending";
 
@@ -267,12 +272,31 @@ function PlanDetailPane({
 
       {sourceEmail && (
         <Card className="p-3 bg-muted/40">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-1 flex items-center gap-1">
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1">
             <Mail className="h-3 w-3" /> Source email
           </div>
-          <div className="text-sm">
-            <div className="truncate">{sourceEmail.subject || "(no subject)"}</div>
-            <div className="text-xs text-muted-foreground font-mono">{sourceEmail.from}</div>
+          <div className="text-sm space-y-1">
+            <div className="truncate font-medium">{sourceEmail.subject || "(no subject)"}</div>
+            <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 text-xs font-mono">
+              <span className="text-muted-foreground">From:</span>
+              <span className="truncate">{sourceEmail.from}</span>
+              {sourceEmail.to && sourceEmail.to.length > 0 && (
+                <>
+                  <span className="text-muted-foreground">To:</span>
+                  <span className="truncate">{sourceEmail.to.join(", ")}</span>
+                </>
+              )}
+              {sourceEmail.account?.address && (
+                <>
+                  <span className="text-muted-foreground">Account:</span>
+                  <span className="truncate">
+                    {sourceEmail.account.label
+                      ? `${sourceEmail.account.label} <${sourceEmail.account.address}>`
+                      : sourceEmail.account.address}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
         </Card>
       )}

@@ -47,4 +47,6 @@ export const emailMessagesApi = {
     api.get<EmailMessageDetail>(`/email-messages/${encodeURIComponent(id)}`),
   attachmentUrl: (messageId: string, attachmentId: string) =>
     `/api/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+  reprocess: (id: string) =>
+    api.post<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}/reprocess`, {}),
 };

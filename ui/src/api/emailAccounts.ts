@@ -1,10 +1,19 @@
 // v3: email accounts client — wraps /api/companies/:id/email-accounts + /api/email-accounts/:id
 import { api } from "./client";
 
+export type EmailAccountRole = "inbound" | "agent_voice";
+
 export interface EmailAccount {
   id: string;
   companyId: string;
   label: string;
+  role: EmailAccountRole;
+  teamEmails: string[];
+  triageAgentId: string | null;
+  replyFromAccountId: string | null;
+  autoAcknowledge: boolean;
+  ackSubject: string | null;
+  ackBody: string | null;
   imapHost: string;
   imapPort: number;
   imapUser: string;
@@ -27,6 +36,13 @@ export interface EmailAccount {
 
 export interface EmailAccountCreateRequest {
   label: string;
+  role?: EmailAccountRole;
+  teamEmails?: string[];
+  triageAgentId?: string | null;
+  replyFromAccountId?: string | null;
+  autoAcknowledge?: boolean;
+  ackSubject?: string | null;
+  ackBody?: string | null;
   imapHost: string;
   imapPort: number;
   imapUser: string;
@@ -47,6 +63,13 @@ export interface EmailAccountCreateRequest {
 
 export interface EmailAccountUpdateRequest {
   label?: string;
+  role?: EmailAccountRole;
+  teamEmails?: string[];
+  triageAgentId?: string | null;
+  replyFromAccountId?: string | null;
+  autoAcknowledge?: boolean;
+  ackSubject?: string | null;
+  ackBody?: string | null;
   imapHost?: string;
   imapPort?: number;
   imapUser?: string;

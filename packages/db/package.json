@@ -40,7 +40,8 @@
     "typecheck": "tsc --noEmit",
     "generate": "tsc -p tsconfig.json && drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "studio": "tsc -p tsconfig.json && DATABASE_URL=\"postgres://paperclip:paperclip@localhost:54329/paperclip\" drizzle-kit studio"
   },
   "dependencies": {
     "@paperclipai/shared": "workspace:*",

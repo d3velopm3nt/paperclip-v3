@@ -2,7 +2,7 @@
 // Reconciles the active set every reconcileIntervalMs so newly-added or
 // deactivated accounts pick up/drop out without a restart.
 
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { emailAccounts } from "@paperclipai/db";
 import { startMonitor } from "../services/email-monitor.js";
@@ -33,7 +33,7 @@ export function startEmailPollWorker(opts: EmailPollWorkerOptions): EmailPollWor
       const rows = await db
         .select({ id: emailAccounts.id, active: emailAccounts.active })
         .from(emailAccounts)
-        .where(eq(emailAccounts.active, true));
+        .where(and(eq(emailAccounts.active, true), eq(emailAccounts.role, "inbound")));
       const activeIds = new Set(rows.map((r) => r.id));
       // Stop monitors for accounts that went away or became inactive
       for (const [id, handle] of monitors) {

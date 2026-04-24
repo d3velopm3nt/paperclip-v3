@@ -75,3 +75,4 @@ export { actionPolicies } from "./action_policies.js";
 
 // v3: plan gate
 export { plans } from "./plans.js";
+export { planDecisionTokens } from "./plan_decision_tokens.js";

@@ -17,6 +17,9 @@ export const companies = pgTable(
       .notNull()
       .default(true),
     brandColor: text("brand_color"),
+    // v3: owner/operator email — seeded into new inbound accounts' team_emails
+    // so plan-pending notifications reach the human who runs the company.
+    ownerEmail: text("owner_email"),
     // v3: email-triage agent override (nullable, defaults to CEO resolution)
     triageAgentId: uuid("triage_agent_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

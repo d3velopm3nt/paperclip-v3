@@ -386,6 +386,48 @@
       "when": 1777042881276,
       "tag": "0054_worthless_photon",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1777056000000,
+      "tag": "0055_email_roles_and_team",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1777060000000,
+      "tag": "0056_email_reply_voice",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1777065000000,
+      "tag": "0057_company_owner_email",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1777070000000,
+      "tag": "0058_email_auto_ack",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1777075000000,
+      "tag": "0059_email_threading",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1777080000000,
+      "tag": "0060_plan_decision_tokens",
+      "breakpoints": true
     }
   ]
 }

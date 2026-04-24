@@ -19,6 +19,7 @@ export const updateCompanySchema = createCompanySchema
     spentMonthlyCents: z.number().int().nonnegative().optional(),
     requireBoardApprovalForNewAgents: z.boolean().optional(),
     brandColor: brandColorSchema,
+    ownerEmail: z.string().email().nullable().optional(),
     logoAssetId: logoAssetIdSchema,
   });
 

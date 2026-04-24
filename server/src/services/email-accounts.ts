@@ -4,7 +4,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, chmodSync } from "n
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { emailAccounts } from "@paperclipai/db";
+import { companies, emailAccounts } from "@paperclipai/db";
 import { badRequest } from "../errors.js";
 
 // ---------------------------------------------------------------------------
@@ -185,6 +185,13 @@ function stripPassword(row: EmailAccountRow): EmailAccountPublic {
 
 export interface CreateEmailAccountInput {
   label: string;
+  role?: "inbound" | "agent_voice";
+  teamEmails?: string[];
+  triageAgentId?: string | null;
+  replyFromAccountId?: string | null;
+  autoAcknowledge?: boolean;
+  ackSubject?: string | null;
+  ackBody?: string | null;
   imapHost: string;
   imapPort: number;
   imapUser: string;
@@ -205,6 +212,13 @@ export interface CreateEmailAccountInput {
 
 export interface UpdateEmailAccountInput {
   label?: string;
+  role?: "inbound" | "agent_voice";
+  teamEmails?: string[];
+  triageAgentId?: string | null;
+  replyFromAccountId?: string | null;
+  autoAcknowledge?: boolean;
+  ackSubject?: string | null;
+  ackBody?: string | null;
   imapHost?: string;
   imapPort?: number;
   imapUser?: string;
@@ -247,11 +261,31 @@ export function emailAccountService(db: Db) {
       input.smtpHost && input.smtpPassword
         ? encryptPassword(input.smtpPassword)
         : null;
+    const role = input.role ?? "inbound";
+    // Seed team_emails with the company's owner email when caller did not
+    // supply any and the account is inbound — common case: you want to be
+    // notified of plans on any new inbox.
+    let teamEmails = input.teamEmails;
+    if ((!teamEmails || teamEmails.length === 0) && role === "inbound") {
+      const [company] = await db
+        .select({ ownerEmail: companies.ownerEmail })
+        .from(companies)
+        .where(eq(companies.id, companyId))
+        .limit(1);
+      if (company?.ownerEmail) teamEmails = [company.ownerEmail];
+    }
     const [row] = await db
       .insert(emailAccounts)
       .values({
         companyId,
         label: input.label,
+        role,
+        teamEmails: teamEmails ?? [],
+        triageAgentId: input.triageAgentId ?? null,
+        replyFromAccountId: input.replyFromAccountId ?? null,
+        autoAcknowledge: input.autoAcknowledge ?? false,
+        ackSubject: input.ackSubject ?? null,
+        ackBody: input.ackBody ?? null,
         imapHost: input.imapHost,
         imapPort: input.imapPort,
         imapUser: input.imapUser,
@@ -280,6 +314,13 @@ export function emailAccountService(db: Db) {
     };
 
     if (input.label !== undefined) updates.label = input.label;
+    if (input.role !== undefined) updates.role = input.role;
+    if (input.teamEmails !== undefined) updates.teamEmails = input.teamEmails;
+    if (input.triageAgentId !== undefined) updates.triageAgentId = input.triageAgentId;
+    if (input.replyFromAccountId !== undefined) updates.replyFromAccountId = input.replyFromAccountId;
+    if (input.autoAcknowledge !== undefined) updates.autoAcknowledge = input.autoAcknowledge;
+    if (input.ackSubject !== undefined) updates.ackSubject = input.ackSubject;
+    if (input.ackBody !== undefined) updates.ackBody = input.ackBody;
     if (input.imapHost !== undefined) updates.imapHost = input.imapHost;
     if (input.imapPort !== undefined) updates.imapPort = input.imapPort;
     if (input.imapUser !== undefined) updates.imapUser = input.imapUser;

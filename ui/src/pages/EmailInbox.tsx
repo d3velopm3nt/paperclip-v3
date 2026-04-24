@@ -1,6 +1,7 @@
 // v3: inbox view of processed inbound email for the selected company.
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "../context/ToastContext";
 import {
   emailMessagesApi,
   type EmailMessageDetail,
@@ -93,6 +94,19 @@ export function EmailInbox() {
     enabled: !!selectedId,
   });
 
+  const qc = useQueryClient();
+  const { pushToast } = useToast();
+  const reprocessMutation = useMutation({
+    mutationFn: (id: string) => emailMessagesApi.reprocess(id),
+    onSuccess: (_data, id) => {
+      pushToast({ tone: "success", title: "Email reprocessed" });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.detail(id) });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId, stateFilter) });
+    },
+    onError: (err: Error) =>
+      pushToast({ tone: "warn", title: "Reprocess failed", body: err.message }),
+  });
+
   const messages = (listQuery.data ?? []).filter((m) => {
     if (!search.trim()) return true;
     const q = search.toLowerCase();
@@ -173,6 +187,8 @@ export function EmailInbox() {
               detail={detailQuery.data ?? null}
               loading={detailQuery.isLoading}
               onBack={() => setSelectedId(null)}
+              onReprocess={(id) => reprocessMutation.mutate(id)}
+              reprocessing={reprocessMutation.isPending}
             />
           </div>
         )}
@@ -226,10 +242,14 @@ function MessageDetail({
   detail,
   loading,
   onBack,
+  onReprocess,
+  reprocessing,
 }: {
   detail: EmailMessageDetail | null;
   loading: boolean;
   onBack: () => void;
+  onReprocess: (id: string) => void;
+  reprocessing: boolean;
 }) {
   if (loading || !detail) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
@@ -240,11 +260,22 @@ function MessageDetail({
         <Button variant="ghost" size="sm" onClick={onBack} className="sm:hidden">
           <ArrowLeft className="h-4 w-4 mr-1" /> Back
         </Button>
-        <span
-          className={`text-xs px-2 py-0.5 rounded-full ${STATE_COLORS[detail.processingState] ?? "bg-muted text-muted-foreground"}`}
-        >
-          {detail.processingState}
-        </span>
+        <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onReprocess(detail.id)}
+            disabled={reprocessing}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1 ${reprocessing ? "animate-spin" : ""}`} />
+            Reprocess
+          </Button>
+          <span
+            className={`text-xs px-2 py-0.5 rounded-full ${STATE_COLORS[detail.processingState] ?? "bg-muted text-muted-foreground"}`}
+          >
+            {detail.processingState}
+          </span>
+        </div>
       </div>
 
       <div>

@@ -56,6 +56,13 @@ export function emailAccountRoutes(db: Db) {
     validateCreateBody(req.body as Record<string, unknown>);
     const account = await svc.create(companyId, {
       label: req.body.label,
+      role: req.body.role,
+      teamEmails: req.body.teamEmails,
+      triageAgentId: req.body.triageAgentId ?? null,
+      replyFromAccountId: req.body.replyFromAccountId ?? null,
+      autoAcknowledge: req.body.autoAcknowledge,
+      ackSubject: req.body.ackSubject ?? null,
+      ackBody: req.body.ackBody ?? null,
       imapHost: req.body.imapHost,
       imapPort: req.body.imapPort,
       imapUser: req.body.imapUser,
@@ -99,6 +106,13 @@ export function emailAccountRoutes(db: Db) {
     assertCompanyAccess(req, existing.companyId);
     const updated = await svc.update(id, {
       label: req.body.label,
+      role: req.body.role,
+      teamEmails: req.body.teamEmails,
+      triageAgentId: req.body.triageAgentId,
+      replyFromAccountId: req.body.replyFromAccountId,
+      autoAcknowledge: req.body.autoAcknowledge,
+      ackSubject: req.body.ackSubject,
+      ackBody: req.body.ackBody,
       imapHost: req.body.imapHost,
       imapPort: req.body.imapPort,
       imapUser: req.body.imapUser,
