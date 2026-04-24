@@ -23,6 +23,12 @@ export const emailAccounts = pgTable(
     imapUser: text("imap_user").notNull(),
     imapPasswordEnc: text("imap_password_enc").notNull(),
     imapTls: boolean("imap_tls").notNull().default(true),
+    // v3: SMTP outbound — nullable so existing rows remain valid
+    smtpHost: text("smtp_host"),
+    smtpPort: integer("smtp_port"),
+    smtpUser: text("smtp_user"),
+    smtpPasswordEnc: text("smtp_password_enc"),
+    smtpSecure: boolean("smtp_secure").notNull().default(false),
     folder: text("folder").notNull().default("INBOX"),
     fromName: text("from_name").notNull(),
     fromEmail: text("from_email").notNull(),

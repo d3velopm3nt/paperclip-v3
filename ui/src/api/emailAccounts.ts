@@ -9,6 +9,10 @@ export interface EmailAccount {
   imapPort: number;
   imapUser: string;
   imapTls: boolean;
+  smtpHost: string | null;
+  smtpPort: number | null;
+  smtpUser: string | null;
+  smtpSecure: boolean;
   folder: string;
   fromName: string;
   fromEmail: string;
@@ -28,6 +32,11 @@ export interface EmailAccountCreateRequest {
   imapUser: string;
   imapPassword: string;
   imapTls?: boolean;
+  smtpHost?: string | null;
+  smtpPort?: number | null;
+  smtpUser?: string | null;
+  smtpPassword?: string | null;
+  smtpSecure?: boolean;
   folder?: string;
   fromName: string;
   fromEmail: string;
@@ -43,6 +52,11 @@ export interface EmailAccountUpdateRequest {
   imapUser?: string;
   imapPassword?: string;
   imapTls?: boolean;
+  smtpHost?: string | null;
+  smtpPort?: number | null;
+  smtpUser?: string | null;
+  smtpPassword?: string | null;
+  smtpSecure?: boolean;
   folder?: string;
   fromName?: string;
   fromEmail?: string;
@@ -52,6 +66,16 @@ export interface EmailAccountUpdateRequest {
 }
 
 export type TestConnectionResult = { ok: true } | { ok: false; error: string };
+
+export interface EphemeralTestRequest {
+  kind: "imap" | "smtp";
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  tls?: boolean;
+  secure?: boolean;
+}
 
 export const emailAccountsApi = {
   list: (companyId: string) =>
@@ -66,4 +90,8 @@ export const emailAccountsApi = {
     api.delete<void>(`/email-accounts/${encodeURIComponent(id)}`),
   testConnection: (id: string) =>
     api.post<TestConnectionResult>(`/email-accounts/${encodeURIComponent(id)}/test-connection`, {}),
+  testSmtp: (id: string) =>
+    api.post<TestConnectionResult>(`/email-accounts/${encodeURIComponent(id)}/test-smtp`, {}),
+  testEphemeral: (data: EphemeralTestRequest) =>
+    api.post<TestConnectionResult>(`/email-accounts/test-connection`, data),
 };

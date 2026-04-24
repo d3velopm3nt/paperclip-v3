@@ -176,10 +176,10 @@ async function testImapConnection(opts: {
 // ---------------------------------------------------------------------------
 
 export type EmailAccountRow = typeof emailAccounts.$inferSelect;
-export type EmailAccountPublic = Omit<EmailAccountRow, "imapPasswordEnc">;
+export type EmailAccountPublic = Omit<EmailAccountRow, "imapPasswordEnc" | "smtpPasswordEnc">;
 
 function stripPassword(row: EmailAccountRow): EmailAccountPublic {
-  const { imapPasswordEnc: _enc, ...rest } = row;
+  const { imapPasswordEnc: _imap, smtpPasswordEnc: _smtp, ...rest } = row;
   return rest;
 }
 
@@ -190,6 +190,11 @@ export interface CreateEmailAccountInput {
   imapUser: string;
   imapPassword: string;  // plaintext — will be encrypted before storage
   imapTls?: boolean;
+  smtpHost?: string | null;
+  smtpPort?: number | null;
+  smtpUser?: string | null;
+  smtpPassword?: string | null;  // plaintext; if null and smtpHost set, reuses imapPassword
+  smtpSecure?: boolean;
   folder?: string;
   fromName: string;
   fromEmail: string;
@@ -205,6 +210,11 @@ export interface UpdateEmailAccountInput {
   imapUser?: string;
   imapPassword?: string;  // plaintext — if provided, re-encrypts
   imapTls?: boolean;
+  smtpHost?: string | null;
+  smtpPort?: number | null;
+  smtpUser?: string | null;
+  smtpPassword?: string | null;
+  smtpSecure?: boolean;
   folder?: string;
   fromName?: string;
   fromEmail?: string;
@@ -233,6 +243,10 @@ export function emailAccountService(db: Db) {
 
   async function create(companyId: string, input: CreateEmailAccountInput): Promise<EmailAccountPublic> {
     const imapPasswordEnc = encryptPassword(input.imapPassword);
+    const smtpPasswordEnc =
+      input.smtpHost && input.smtpPassword
+        ? encryptPassword(input.smtpPassword)
+        : null;
     const [row] = await db
       .insert(emailAccounts)
       .values({
@@ -243,6 +257,11 @@ export function emailAccountService(db: Db) {
         imapUser: input.imapUser,
         imapPasswordEnc,
         imapTls: input.imapTls ?? true,
+        smtpHost: input.smtpHost ?? null,
+        smtpPort: input.smtpPort ?? null,
+        smtpUser: input.smtpUser ?? null,
+        smtpPasswordEnc,
+        smtpSecure: input.smtpSecure ?? false,
         folder: input.folder ?? "INBOX",
         fromName: input.fromName,
         fromEmail: input.fromEmail,
@@ -266,6 +285,13 @@ export function emailAccountService(db: Db) {
     if (input.imapUser !== undefined) updates.imapUser = input.imapUser;
     if (input.imapPassword !== undefined) updates.imapPasswordEnc = encryptPassword(input.imapPassword);
     if (input.imapTls !== undefined) updates.imapTls = input.imapTls;
+    if (input.smtpHost !== undefined) updates.smtpHost = input.smtpHost;
+    if (input.smtpPort !== undefined) updates.smtpPort = input.smtpPort;
+    if (input.smtpUser !== undefined) updates.smtpUser = input.smtpUser;
+    if (input.smtpPassword !== undefined) {
+      updates.smtpPasswordEnc = input.smtpPassword === null ? null : encryptPassword(input.smtpPassword);
+    }
+    if (input.smtpSecure !== undefined) updates.smtpSecure = input.smtpSecure;
     if (input.folder !== undefined) updates.folder = input.folder;
     if (input.fromName !== undefined) updates.fromName = input.fromName;
     if (input.fromEmail !== undefined) updates.fromEmail = input.fromEmail;
@@ -304,5 +330,78 @@ export function emailAccountService(db: Db) {
     });
   }
 
-  return { list, getById, create, update, delete: deleteAccount, testConnection };
+  async function testSmtpConnectionForAccount(account: EmailAccountRow): Promise<TestConnectionResult> {
+    if (!account.smtpHost || !account.smtpPort) {
+      return { ok: false, error: "SMTP not configured for this account" };
+    }
+    const user = account.smtpUser ?? account.imapUser;
+    const enc = account.smtpPasswordEnc ?? account.imapPasswordEnc;
+    let password: string;
+    try {
+      password = decryptPassword(enc);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Failed to decrypt stored SMTP password",
+      };
+    }
+    return testSmtpConnection({
+      host: account.smtpHost,
+      port: account.smtpPort,
+      user,
+      password,
+      secure: account.smtpSecure,
+    });
+  }
+
+  return {
+    list,
+    getById,
+    create,
+    update,
+    delete: deleteAccount,
+    testConnection,
+    testSmtpConnectionForAccount,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// SMTP test + ephemeral (unsaved) probes
+// ---------------------------------------------------------------------------
+
+export async function testSmtpConnection(opts: {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  secure: boolean;
+}): Promise<TestConnectionResult> {
+  try {
+    const { default: nodemailer } = await import("nodemailer");
+    const transporter = nodemailer.createTransport({
+      host: opts.host,
+      port: opts.port,
+      secure: opts.secure,
+      auth: { user: opts.user, pass: opts.password },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
+      tls: { rejectUnauthorized: false },
+    });
+    await transporter.verify();
+    transporter.close();
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "SMTP verify failed" };
+  }
+}
+
+export async function testImapConnectionRaw(opts: {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  tls: boolean;
+}): Promise<TestConnectionResult> {
+  return testImapConnection(opts);
 }

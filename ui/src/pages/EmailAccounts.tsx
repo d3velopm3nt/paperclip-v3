@@ -33,6 +33,12 @@ interface FormState {
   imapUser: string;
   imapPassword: string;
   imapTls: boolean;
+  smtpHost: string;
+  smtpPort: string;
+  smtpUser: string;
+  smtpPassword: string;
+  smtpSecure: boolean;
+  smtpSameAsImap: boolean;
   folder: string;
   fromName: string;
   fromEmail: string;
@@ -48,6 +54,12 @@ const emptyForm: FormState = {
   imapUser: "",
   imapPassword: "",
   imapTls: true,
+  smtpHost: "",
+  smtpPort: "587",
+  smtpUser: "",
+  smtpPassword: "",
+  smtpSecure: false,
+  smtpSameAsImap: true,
   folder: "INBOX",
   fromName: "",
   fromEmail: "",
@@ -57,6 +69,10 @@ const emptyForm: FormState = {
 };
 
 function accountToForm(account: EmailAccount): FormState {
+  const sameAsImap =
+    !!account.smtpHost &&
+    account.smtpHost === account.imapHost &&
+    (account.smtpUser ?? account.imapUser) === account.imapUser;
   return {
     label: account.label,
     imapHost: account.imapHost,
@@ -64,6 +80,12 @@ function accountToForm(account: EmailAccount): FormState {
     imapUser: account.imapUser,
     imapPassword: "",
     imapTls: account.imapTls,
+    smtpHost: account.smtpHost ?? "",
+    smtpPort: account.smtpPort ? String(account.smtpPort) : "587",
+    smtpUser: account.smtpUser ?? "",
+    smtpPassword: "",
+    smtpSecure: account.smtpSecure,
+    smtpSameAsImap: sameAsImap,
     folder: account.folder,
     fromName: account.fromName,
     fromEmail: account.fromEmail,
@@ -85,6 +107,7 @@ export function EmailAccounts() {
   const [form, setForm] = useState<FormState>(emptyForm);
   const [deleteConfirm, setDeleteConfirm] = useState<EmailAccount | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [testingSmtpId, setTestingSmtpId] = useState<string | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Email Accounts" }]);
@@ -139,6 +162,23 @@ export function EmailAccounts() {
     setDialogOpen(true);
   }
 
+  function resolvedSmtp() {
+    if (form.smtpSameAsImap) {
+      return {
+        host: form.imapHost,
+        port: parseInt(form.smtpPort, 10),
+        user: form.imapUser,
+        password: form.imapPassword,
+      };
+    }
+    return {
+      host: form.smtpHost,
+      port: parseInt(form.smtpPort, 10),
+      user: form.smtpUser || form.imapUser,
+      password: form.smtpPassword,
+    };
+  }
+
   function submit() {
     const port = parseInt(form.imapPort, 10);
     const pollInterval = parseInt(form.pollIntervalSec, 10);
@@ -146,6 +186,28 @@ export function EmailAccounts() {
       pushToast({ tone: "warn", title: "imapPort must be a number" });
       return;
     }
+    const smtp = resolvedSmtp();
+    const smtpPayload: {
+      smtpHost: string | null;
+      smtpPort: number | null;
+      smtpUser: string | null;
+      smtpPassword?: string | null;
+      smtpSecure: boolean;
+    } = smtp.host
+      ? {
+          smtpHost: smtp.host,
+          smtpPort: Number.isInteger(smtp.port) ? smtp.port : 587,
+          smtpUser: smtp.user,
+          smtpSecure: form.smtpSecure,
+        }
+      : {
+          smtpHost: null,
+          smtpPort: null,
+          smtpUser: null,
+          smtpPassword: null,
+          smtpSecure: false,
+        };
+
     if (editing) {
       const data: EmailAccountUpdateRequest = {
         label: form.label,
@@ -159,8 +221,15 @@ export function EmailAccounts() {
         replyTo: form.replyTo || null,
         pollIntervalSec: pollInterval,
         active: form.active,
+        ...smtpPayload,
       };
       if (form.imapPassword) data.imapPassword = form.imapPassword;
+      if (smtp.host && !form.smtpSameAsImap && form.smtpPassword) {
+        data.smtpPassword = form.smtpPassword;
+      }
+      if (smtp.host && form.smtpSameAsImap && form.imapPassword) {
+        data.smtpPassword = form.imapPassword;
+      }
       updateMutation.mutate({ id: editing.id, data });
     } else {
       if (!form.imapPassword) {
@@ -180,7 +249,61 @@ export function EmailAccounts() {
         replyTo: form.replyTo || null,
         pollIntervalSec: pollInterval,
         active: form.active,
+        ...smtpPayload,
+        smtpPassword: smtp.host
+          ? form.smtpSameAsImap
+            ? form.imapPassword
+            : form.smtpPassword || null
+          : null,
       });
+    }
+  }
+
+  const [formTestingKind, setFormTestingKind] = useState<"imap" | "smtp" | null>(null);
+
+  async function testFormConnection(kind: "imap" | "smtp") {
+    setFormTestingKind(kind);
+    try {
+      const port = parseInt(kind === "imap" ? form.imapPort : form.smtpPort, 10);
+      if (!Number.isInteger(port)) {
+        pushToast({ tone: "warn", title: "Port must be a number" });
+        return;
+      }
+      const host = kind === "imap" ? form.imapHost : form.smtpSameAsImap ? form.imapHost : form.smtpHost;
+      const user =
+        kind === "imap"
+          ? form.imapUser
+          : form.smtpSameAsImap
+            ? form.imapUser
+            : form.smtpUser || form.imapUser;
+      const password =
+        kind === "imap"
+          ? form.imapPassword
+          : form.smtpSameAsImap
+            ? form.imapPassword
+            : form.smtpPassword;
+      if (!host || !user || !password) {
+        pushToast({ tone: "warn", title: `${kind.toUpperCase()} host, user, password required to test` });
+        return;
+      }
+      const result = await emailAccountsApi.testEphemeral({
+        kind,
+        host,
+        port,
+        user,
+        password,
+        tls: kind === "imap" ? form.imapTls : undefined,
+        secure: kind === "smtp" ? form.smtpSecure : undefined,
+      });
+      if (result.ok) {
+        pushToast({ title: `${kind.toUpperCase()} connection OK` });
+      } else {
+        pushToast({ tone: "warn", title: `${kind.toUpperCase()} failed`, body: result.error });
+      }
+    } catch (err) {
+      pushToast({ tone: "warn", title: "Test failed", body: (err as Error).message });
+    } finally {
+      setFormTestingKind(null);
     }
   }
 
@@ -189,14 +312,30 @@ export function EmailAccounts() {
     try {
       const result = await emailAccountsApi.testConnection(account.id);
       if (result.ok) {
-        pushToast({ title: `Connection OK — ${account.label}` });
+        pushToast({ title: `IMAP OK — ${account.label}` });
       } else {
-        pushToast({ tone: "warn", title: `Connection failed — ${account.label}`, body: result.error });
+        pushToast({ tone: "warn", title: `IMAP failed — ${account.label}`, body: result.error });
       }
     } catch (err) {
       pushToast({ tone: "warn", title: "Test failed", body: (err as Error).message });
     } finally {
       setTestingId(null);
+    }
+  }
+
+  async function testSmtp(account: EmailAccount) {
+    setTestingSmtpId(account.id);
+    try {
+      const result = await emailAccountsApi.testSmtp(account.id);
+      if (result.ok) {
+        pushToast({ title: `SMTP OK — ${account.label}` });
+      } else {
+        pushToast({ tone: "warn", title: `SMTP failed — ${account.label}`, body: result.error });
+      }
+    } catch (err) {
+      pushToast({ tone: "warn", title: "Test failed", body: (err as Error).message });
+    } finally {
+      setTestingSmtpId(null);
     }
   }
 
@@ -241,10 +380,19 @@ export function EmailAccounts() {
                   <div className="text-sm text-muted-foreground mt-2 grid gap-1 sm:grid-cols-[auto,1fr] sm:gap-x-4">
                     <span className="text-xs uppercase tracking-wide text-muted-foreground/70">User</span>
                     <span className="font-mono text-xs">{account.imapUser}</span>
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Server</span>
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">IMAP</span>
                     <span className="font-mono text-xs">
                       {account.imapHost}:{account.imapPort} · {account.folder}
                     </span>
+                    {account.smtpHost && (
+                      <>
+                        <span className="text-xs uppercase tracking-wide text-muted-foreground/70">SMTP</span>
+                        <span className="font-mono text-xs">
+                          {account.smtpHost}:{account.smtpPort}
+                          {account.smtpSecure ? " · TLS" : " · STARTTLS"}
+                        </span>
+                      </>
+                    )}
                     <span className="text-xs uppercase tracking-wide text-muted-foreground/70">From</span>
                     <span className="text-xs">
                       {account.fromName} &lt;{account.fromEmail}&gt;
@@ -280,8 +428,19 @@ export function EmailAccounts() {
                     disabled={testingId === account.id}
                   >
                     <Plug className="h-4 w-4 mr-1" />
-                    {testingId === account.id ? "Testing…" : "Test"}
+                    {testingId === account.id ? "…" : "IMAP"}
                   </Button>
+                  {account.smtpHost && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => testSmtp(account)}
+                      disabled={testingSmtpId === account.id}
+                    >
+                      <Plug className="h-4 w-4 mr-1" />
+                      {testingSmtpId === account.id ? "…" : "SMTP"}
+                    </Button>
+                  )}
                   <Button variant="ghost" size="icon-sm" onClick={() => openEdit(account)}>
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -296,37 +455,111 @@ export function EmailAccounts() {
       )}
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editing ? "Edit email account" : "New email account"}</DialogTitle>
             <DialogDescription>
-              IMAP credentials are encrypted before storage.
-              {editing && " Leave password blank to keep existing."}
+              Credentials encrypted before storage.
+              {editing && " Leave passwords blank to keep existing."}
             </DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Label" value={form.label} onChange={(v) => setForm({ ...form, label: v })} />
-            <Field label="Folder" value={form.folder} onChange={(v) => setForm({ ...form, folder: v })} />
-            <Field label="IMAP host" value={form.imapHost} onChange={(v) => setForm({ ...form, imapHost: v })} />
-            <Field label="IMAP port" value={form.imapPort} onChange={(v) => setForm({ ...form, imapPort: v })} />
-            <Field label="IMAP user" value={form.imapUser} onChange={(v) => setForm({ ...form, imapUser: v })} />
-            <Field
-              label={editing ? "IMAP password (blank = keep)" : "IMAP password"}
-              value={form.imapPassword}
-              type="password"
-              onChange={(v) => setForm({ ...form, imapPassword: v })}
-            />
-            <Field label="From name" value={form.fromName} onChange={(v) => setForm({ ...form, fromName: v })} />
-            <Field label="From email" value={form.fromEmail} onChange={(v) => setForm({ ...form, fromEmail: v })} />
-            <Field label="Reply-To (optional)" value={form.replyTo} onChange={(v) => setForm({ ...form, replyTo: v })} />
-            <Field
-              label="Poll interval (sec)"
-              value={form.pollIntervalSec}
-              onChange={(v) => setForm({ ...form, pollIntervalSec: v })}
-            />
-            <Toggle label="TLS" value={form.imapTls} onChange={(v) => setForm({ ...form, imapTls: v })} />
-            <Toggle label="Active" value={form.active} onChange={(v) => setForm({ ...form, active: v })} />
+
+          <div className="space-y-5">
+            <section className="grid grid-cols-2 gap-3">
+              <Field label="Label" value={form.label} onChange={(v) => setForm({ ...form, label: v })} />
+              <Field label="Folder" value={form.folder} onChange={(v) => setForm({ ...form, folder: v })} />
+              <Field label="From name" value={form.fromName} onChange={(v) => setForm({ ...form, fromName: v })} />
+              <Field label="From email" value={form.fromEmail} onChange={(v) => setForm({ ...form, fromEmail: v })} />
+              <Field label="Reply-To (optional)" value={form.replyTo} onChange={(v) => setForm({ ...form, replyTo: v })} />
+              <Field
+                label="Poll interval (sec)"
+                value={form.pollIntervalSec}
+                onChange={(v) => setForm({ ...form, pollIntervalSec: v })}
+              />
+              <Toggle label="Active" value={form.active} onChange={(v) => setForm({ ...form, active: v })} />
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Incoming mail (IMAP)</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => testFormConnection("imap")}
+                  disabled={formTestingKind !== null}
+                >
+                  <Plug className="h-4 w-4 mr-1" />
+                  {formTestingKind === "imap" ? "Testing…" : "Test IMAP"}
+                </Button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="IMAP host" value={form.imapHost} onChange={(v) => setForm({ ...form, imapHost: v })} />
+                <Field label="IMAP port" value={form.imapPort} onChange={(v) => setForm({ ...form, imapPort: v })} />
+                <Field label="IMAP user" value={form.imapUser} onChange={(v) => setForm({ ...form, imapUser: v })} />
+                <Field
+                  label={editing ? "IMAP password (blank = keep)" : "IMAP password"}
+                  value={form.imapPassword}
+                  type="password"
+                  onChange={(v) => setForm({ ...form, imapPassword: v })}
+                />
+                <Toggle label="TLS" value={form.imapTls} onChange={(v) => setForm({ ...form, imapTls: v })} />
+              </div>
+            </section>
+
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold">Outgoing mail (SMTP)</h3>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => testFormConnection("smtp")}
+                  disabled={formTestingKind !== null}
+                >
+                  <Plug className="h-4 w-4 mr-1" />
+                  {formTestingKind === "smtp" ? "Testing…" : "Test SMTP"}
+                </Button>
+              </div>
+              <Toggle
+                label="Same server as IMAP"
+                value={form.smtpSameAsImap}
+                onChange={(v) => setForm({ ...form, smtpSameAsImap: v })}
+              />
+              <div className="grid grid-cols-2 gap-3">
+                {!form.smtpSameAsImap && (
+                  <>
+                    <Field
+                      label="SMTP host"
+                      value={form.smtpHost}
+                      onChange={(v) => setForm({ ...form, smtpHost: v })}
+                    />
+                    <Field
+                      label="SMTP user (blank = IMAP user)"
+                      value={form.smtpUser}
+                      onChange={(v) => setForm({ ...form, smtpUser: v })}
+                    />
+                    <Field
+                      label={editing ? "SMTP password (blank = keep)" : "SMTP password (blank = reuse IMAP)"}
+                      value={form.smtpPassword}
+                      type="password"
+                      onChange={(v) => setForm({ ...form, smtpPassword: v })}
+                    />
+                  </>
+                )}
+                <Field label="SMTP port" value={form.smtpPort} onChange={(v) => setForm({ ...form, smtpPort: v })} />
+                <Toggle
+                  label="Secure (implicit TLS, port 465)"
+                  value={form.smtpSecure}
+                  onChange={(v) => setForm({ ...form, smtpSecure: v })}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Port 587 + Secure off = STARTTLS. Port 465 + Secure on = implicit TLS.
+              </p>
+            </section>
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               Cancel
