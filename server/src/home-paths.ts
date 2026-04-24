@@ -54,6 +54,11 @@ export function resolveDefaultBackupDir(): string {
   return path.resolve(resolvePaperclipInstanceRoot(), "data", "backups");
 }
 
+// v3: email attachment storage root
+export function resolveEmailAttachmentsRoot(): string {
+  return path.resolve(resolvePaperclipInstanceRoot(), "email-attachments");
+}
+
 export function resolveDefaultAgentWorkspaceDir(agentId: string): string {
   const trimmed = agentId.trim();
   if (!PATH_SEGMENT_RE.test(trimmed)) {

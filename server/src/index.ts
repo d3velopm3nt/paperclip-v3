@@ -33,6 +33,7 @@ import { createStorageServiceFromConfig } from "./storage/index.js";
 import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
+import { startEmailPollWorker } from "./workers/email-poll.js"; // v3:
 
 type BetterAuthSessionUser = {
   id: string;
@@ -544,6 +545,10 @@ export async function startServer(): Promise<StartedServer> {
   process.env.PAPERCLIP_LISTEN_PORT = String(listenPort);
   process.env.PAPERCLIP_API_URL = `http://${runtimeApiHost}:${listenPort}`;
   
+  // v3: start IMAP polling worker — reconciles active accounts every 60s
+  const emailPollWorker = startEmailPollWorker({ db: db as any });
+  void emailPollWorker; // keep handle alive for the process lifetime
+
   setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
     resolveSessionFromHeaders,
