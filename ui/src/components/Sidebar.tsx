@@ -13,6 +13,7 @@ import {
   Settings,
   Plug,
   BarChart3,
+  Mail,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -108,6 +109,11 @@ export function Sidebar() {
         <SidebarProjects />
 
         <SidebarAgents />
+
+        {/* v3: */}
+        <SidebarSection label="Email">
+          <SidebarNavItem to="/email/accounts" label="Accounts" icon={Mail} />
+        </SidebarSection>
 
         <SidebarSection label="Company">
           <SidebarNavItem to="/org" label="Org" icon={Network} />
