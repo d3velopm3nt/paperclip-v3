@@ -14,6 +14,7 @@ import {
   Plug,
   BarChart3,
   Mail,
+  ShieldCheck,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -114,6 +115,11 @@ export function Sidebar() {
         <SidebarSection label="Email">
           <SidebarNavItem to="/email/inbox" label="Inbox" icon={Inbox} />
           <SidebarNavItem to="/email/accounts" label="Accounts" icon={Mail} />
+        </SidebarSection>
+
+        {/* v3: */}
+        <SidebarSection label="Governance">
+          <SidebarNavItem to="/governance/action-policies" label="Policies" icon={ShieldCheck} />
         </SidebarSection>
 
         <SidebarSection label="Company">

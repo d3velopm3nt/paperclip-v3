@@ -28,6 +28,7 @@ import { CompanySkills } from "./pages/CompanySkills";
 import { McpServers } from "./pages/McpServers";
 import { EmailAccounts } from "./pages/EmailAccounts"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
+import { ActionPolicies } from "./pages/ActionPolicies"; // v3:
 import { Analytics } from "./pages/Analytics";
 import { CompanyExport } from "./pages/CompanyExport";
 import { CompanyImport } from "./pages/CompanyImport";
@@ -133,6 +134,7 @@ function boardRoutes() {
       <Route path="mcp-servers" element={<McpServers />} />
       <Route path="email/accounts" element={<EmailAccounts />} /> {/* v3: */}
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
+      <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="analytics" element={<Analytics />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
@@ -352,6 +354,7 @@ export function App() {
           {/* v3: */}
           <Route path="email/accounts" element={<UnprefixedBoardRedirect />} />
           <Route path="email/inbox" element={<UnprefixedBoardRedirect />} />
+          <Route path="governance/action-policies" element={<UnprefixedBoardRedirect />} />
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>

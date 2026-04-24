@@ -145,6 +145,9 @@ export const queryKeys = {
       ["email-messages", companyId, state ?? "__all__"] as const,
     detail: (id: string) => ["email-messages", "detail", id] as const,
   },
+  actionPolicies: {
+    list: (companyId: string) => ["action-policies", companyId] as const,
+  },
   agentKpis: {
     list: (agentId: string) => ["agent-kpis", agentId] as const,
     trends: (agentId: string) => ["agent-kpis", agentId, "trends"] as const,
