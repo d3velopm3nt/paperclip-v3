@@ -4,8 +4,10 @@
 
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { emailMessages, emailAttachments } from "@paperclipai/db";
+import { agents, emailAccounts, emailMessages, emailAttachments } from "@paperclipai/db";
 import { saveAttachment } from "./attachment-storage.js";
+import { clientService } from "./clients.js";
+import { planGateService } from "./plan-gate.js";
 import { logger } from "../middleware/logger.js";
 
 export interface ProcessEmailInput {
@@ -125,6 +127,26 @@ export function emailProcessorService(db: Db) {
         .where(eq(emailMessages.id, inserted!.id));
     }
 
+    // v3: route inbound email — match to a client + propose a plan via the gate.
+    // Failures here don't discard the email; the row stays at pending and
+    // operators can retry later.
+    try {
+      await routeInbound(db, inserted!.id, input.emailAccountId, fromAddr, subject);
+    } catch (err) {
+      logger.warn(
+        { err, emailMessageId: inserted!.id },
+        "email-processor: route/propose failed, leaving message in pending",
+      );
+      await db
+        .update(emailMessages)
+        .set({
+          processingState: "error",
+          errorText: (err as Error).message.slice(0, 1000),
+          processedAt: new Date(),
+        })
+        .where(eq(emailMessages.id, inserted!.id));
+    }
+
     return {
       emailMessageId: inserted!.id,
       duplicated: false,
@@ -133,6 +155,77 @@ export function emailProcessorService(db: Db) {
   }
 
   return { processRawMessage };
+}
+
+// v3: route an inserted email_messages row through client match + plan gate.
+// Minimal routing: propose a single `create_issue` plan so the user sees the
+// inbound request in the approvals queue. Real triage (reply vs delegate vs
+// clarify) is the next step once a triage-agent service is available.
+async function routeInbound(
+  db: Db,
+  emailMessageId: string,
+  emailAccountId: string,
+  fromAddr: string,
+  subject: string,
+): Promise<void> {
+  const [account] = await db
+    .select({ companyId: emailAccounts.companyId })
+    .from(emailAccounts)
+    .where(eq(emailAccounts.id, emailAccountId))
+    .limit(1);
+  if (!account) return;
+
+  const companyId = account.companyId;
+  const clientRec = await clientService(db).matchByEmail(companyId, fromAddr);
+
+  // Stamp matchedCompanyId + matchedClientId even before planning so the
+  // inbox can filter by client.
+  await db
+    .update(emailMessages)
+    .set({
+      matchedCompanyId: companyId,
+      matchedClientId: clientRec?.id ?? null,
+      processingState: "analyzing",
+    })
+    .where(eq(emailMessages.id, emailMessageId));
+
+  // Pick the company's triage agent: explicit triageAgentId if set, else the
+  // first agent with role='ceo'. If none exists, skip plan proposal — leave
+  // the email in analyzing so operators can fix the agent config and reroute.
+  const company = await db.query.companies
+    ? undefined
+    : undefined; // placeholder — use plain select below
+  const [triage] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.companyId, companyId), eq(agents.role, "ceo")))
+    .limit(1);
+  if (!triage) {
+    logger.warn({ companyId, emailMessageId }, "email-processor: no triage agent, skipping plan");
+    await db
+      .update(emailMessages)
+      .set({ processingState: "pending", errorText: "No triage agent configured" })
+      .where(eq(emailMessages.id, emailMessageId));
+    return;
+  }
+
+  const gate = planGateService(db);
+  await gate.proposePlan({
+    companyId,
+    agentId: triage.id,
+    actionType: "create_issue",
+    kind: "create_issue",
+    sourceEmailMessageId: emailMessageId,
+    clientId: clientRec?.id ?? null,
+    proposalText: `Create issue from inbound email: "${subject}" (from ${fromAddr})`,
+    proposalMeta: {
+      sourceEmail: { from: fromAddr, subject },
+      clientMatched: clientRec ? { id: clientRec.id, name: clientRec.name } : null,
+    },
+    confidence: "medium",
+  });
+  // proposePlan already flips the email to plan_proposed when
+  // sourceEmailMessageId is supplied, nothing else to do here.
 }
 
 export type EmailProcessorService = ReturnType<typeof emailProcessorService>;

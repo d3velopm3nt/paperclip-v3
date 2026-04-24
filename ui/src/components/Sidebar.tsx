@@ -15,6 +15,7 @@ import {
   BarChart3,
   Mail,
   ShieldCheck,
+  UsersRound,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -123,6 +124,7 @@ export function Sidebar() {
         </SidebarSection>
 
         <SidebarSection label="Company">
+          <SidebarNavItem to="/clients" label="Clients" icon={UsersRound} /> {/* v3: */}
           <SidebarNavItem to="/org" label="Org" icon={Network} />
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
           <SidebarNavItem to="/mcp-servers" label="MCPs" icon={Plug} />

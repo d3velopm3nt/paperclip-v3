@@ -18,11 +18,14 @@ export function actionPolicyRoutes(db: Db) {
   });
 
   // POST /api/companies/:companyId/action-policies
+  // Scope defaults to "company" when omitted, with scopeRefId=companyId.
   router.post("/companies/:companyId/action-policies", async (req, res) => {
     const { companyId } = req.params;
     assertCompanyAccess(req, companyId);
     const body = req.body as {
       actionType?: string;
+      scope?: "company" | "client" | "project" | "agent";
+      scopeRefId?: string;
       requiresApproval?: boolean;
       immediateEmail?: boolean;
       paramsJson?: Record<string, unknown>;
@@ -30,7 +33,12 @@ export function actionPolicyRoutes(db: Db) {
     if (!body.actionType || typeof body.actionType !== "string") {
       throw badRequest("actionType required");
     }
+    const scope = body.scope ?? "company";
+    const scopeRefId = body.scopeRefId ?? (scope === "company" ? companyId : undefined);
+    if (!scopeRefId) throw badRequest("scopeRefId required for non-company scope");
     const row = await svc.create(companyId, {
+      scope,
+      scopeRefId,
       actionType: body.actionType,
       requiresApproval: body.requiresApproval,
       immediateEmail: body.immediateEmail,

@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   actionPoliciesApi,
   type ActionPolicy,
+  type PolicyScope,
 } from "../api/actionPolicies";
+import { clientsApi, type Client } from "../api/clients";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
@@ -43,6 +45,9 @@ export function ActionPolicies() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [newActionType, setNewActionType] = useState("");
+  const [newScope, setNewScope] = useState<PolicyScope>("company");
+  const [newScopeRefId, setNewScopeRefId] = useState<string>("");
+  const [scopeFilter, setScopeFilter] = useState<PolicyScope | "all">("all");
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Governance" }, { label: "Action Policies" }]);
@@ -53,6 +58,15 @@ export function ActionPolicies() {
     queryFn: () => actionPoliciesApi.list(companyId),
     enabled: !!companyId,
   });
+
+  const clientsQuery = useQuery({
+    queryKey: queryKeys.clients.list(companyId),
+    queryFn: () => clientsApi.list(companyId),
+    enabled: !!companyId,
+  });
+  const clientsById: Record<string, Client> = Object.fromEntries(
+    (clientsQuery.data ?? []).map((c) => [c.id, c]),
+  );
 
   function invalidate() {
     queryClient.invalidateQueries({ queryKey: queryKeys.actionPolicies.list(companyId) });
@@ -68,12 +82,20 @@ export function ActionPolicies() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (actionType: string) =>
-      actionPoliciesApi.create(companyId, { actionType, requiresApproval: true, immediateEmail: false }),
+    mutationFn: () =>
+      actionPoliciesApi.create(companyId, {
+        actionType: newActionType,
+        scope: newScope,
+        scopeRefId: newScope === "company" ? companyId : newScopeRefId,
+        requiresApproval: true,
+        immediateEmail: false,
+      }),
     onSuccess: () => {
       invalidate();
       setAddOpen(false);
       setNewActionType("");
+      setNewScope("company");
+      setNewScopeRefId("");
       pushToast({ title: "Policy added" });
     },
     onError: (err: Error) => pushToast({ tone: "warn", title: "Create failed", body: err.message }),
@@ -99,7 +121,9 @@ export function ActionPolicies() {
 
   if (!companyId) return <div className="p-6 text-sm text-muted-foreground">Select a company.</div>;
   if (listQuery.isLoading) return <PageSkeleton />;
-  const policies = listQuery.data ?? [];
+  const allPolicies = listQuery.data ?? [];
+  const policies =
+    scopeFilter === "all" ? allPolicies : allPolicies.filter((p) => p.scope === scopeFilter);
 
   return (
     <div className="p-6 space-y-6">
@@ -124,6 +148,22 @@ export function ActionPolicies() {
         </div>
       </div>
 
+      <div className="flex items-center gap-2 flex-wrap">
+        {(["all", "company", "client", "project", "agent"] as const).map((scope) => (
+          <button
+            key={scope}
+            onClick={() => setScopeFilter(scope)}
+            className={`text-xs px-2.5 py-1 rounded-full border transition-colors capitalize ${
+              scopeFilter === scope
+                ? "border-foreground/40 bg-foreground/10"
+                : "border-border hover:border-foreground/30"
+            }`}
+          >
+            {scope}
+          </button>
+        ))}
+      </div>
+
       {policies.length === 0 ? (
         <Card className="p-8 text-center">
           <ShieldCheck className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
@@ -135,6 +175,7 @@ export function ActionPolicies() {
             <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="text-left font-medium px-4 py-2">Action</th>
+                <th className="text-left font-medium px-2 py-2">Scope</th>
                 <th className="text-center font-medium px-2 py-2" title="Plan-gate blocks action until approved">
                   <div className="inline-flex items-center gap-1"><LockKeyhole className="h-3 w-3" /> Approval</div>
                 </th>
@@ -150,6 +191,7 @@ export function ActionPolicies() {
                 <PolicyRow
                   key={p.id}
                   policy={p}
+                  scopeLabel={scopeLabel(p, clientsById, companyId)}
                   onToggleApproval={(value) =>
                     updateMutation.mutate({ id: p.id, patch: { requiresApproval: value } })
                   }
@@ -175,7 +217,7 @@ export function ActionPolicies() {
               Provide the action type string the agent will use (e.g. <code>reply_to_sender</code>).
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
+          <div className="space-y-3">
             <label className="flex flex-col gap-1 text-sm">
               <span className="text-muted-foreground">Action type</span>
               <Input
@@ -184,12 +226,57 @@ export function ActionPolicies() {
                 onChange={(e) => setNewActionType(e.target.value.trim())}
               />
             </label>
+            <label className="flex flex-col gap-1 text-sm">
+              <span className="text-muted-foreground">Scope</span>
+              <select
+                className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                value={newScope}
+                onChange={(e) => {
+                  setNewScope(e.target.value as PolicyScope);
+                  setNewScopeRefId("");
+                }}
+              >
+                <option value="company">Company (whole company)</option>
+                <option value="client">Client</option>
+                <option value="project">Project</option>
+                <option value="agent">Agent</option>
+              </select>
+            </label>
+            {newScope === "client" && (
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">Client</span>
+                <select
+                  className="h-9 rounded-md border border-border bg-background px-2 text-sm"
+                  value={newScopeRefId}
+                  onChange={(e) => setNewScopeRefId(e.target.value)}
+                >
+                  <option value="">Select a client…</option>
+                  {(clientsQuery.data ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {(newScope === "project" || newScope === "agent") && (
+              <label className="flex flex-col gap-1 text-sm">
+                <span className="text-muted-foreground">{newScope} id (uuid)</span>
+                <Input
+                  value={newScopeRefId}
+                  placeholder="paste the id"
+                  onChange={(e) => setNewScopeRefId(e.target.value.trim())}
+                />
+              </label>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>Cancel</Button>
             <Button
-              disabled={!newActionType || createMutation.isPending}
-              onClick={() => createMutation.mutate(newActionType)}
+              disabled={
+                !newActionType ||
+                createMutation.isPending ||
+                (newScope !== "company" && !newScopeRefId)
+              }
+              onClick={() => createMutation.mutate()}
             >
               Add
             </Button>
@@ -200,14 +287,26 @@ export function ActionPolicies() {
   );
 }
 
+function scopeLabel(p: ActionPolicy, clientsById: Record<string, Client>, companyId: string): string {
+  if (p.scope === "company") return "company";
+  if (p.scope === "client") {
+    const name = clientsById[p.scopeRefId]?.name;
+    return name ? `client: ${name}` : `client: ${p.scopeRefId.slice(0, 8)}…`;
+  }
+  if (p.scopeRefId === companyId) return p.scope;
+  return `${p.scope}: ${p.scopeRefId.slice(0, 8)}…`;
+}
+
 function PolicyRow({
   policy,
+  scopeLabel: scopeText,
   onToggleApproval,
   onToggleImmediate,
   onParamsCommit,
   onDelete,
 }: {
   policy: ActionPolicy;
+  scopeLabel: string;
   onToggleApproval: (value: boolean) => void;
   onToggleImmediate: (value: boolean) => void;
   onParamsCommit: (next: Record<string, unknown>) => void;
@@ -240,6 +339,11 @@ function PolicyRow({
       <td className="px-4 py-3 align-top">
         <div className="font-mono text-sm">{policy.actionType}</div>
         {help && <div className="text-xs text-muted-foreground mt-0.5 max-w-md">{help}</div>}
+      </td>
+      <td className="px-2 py-3 align-top">
+        <span className="inline-block text-xs px-2 py-0.5 rounded-full bg-muted/60 text-muted-foreground">
+          {scopeText}
+        </span>
       </td>
       <td className="px-2 py-3 text-center align-top">
         <input

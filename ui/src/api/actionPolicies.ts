@@ -1,9 +1,13 @@
 // v3: per-company plan-gate action policies
 import { api } from "./client";
 
+export type PolicyScope = "company" | "client" | "project" | "agent";
+
 export interface ActionPolicy {
   id: string;
   companyId: string;
+  scope: PolicyScope;
+  scopeRefId: string;
   actionType: string;
   requiresApproval: boolean;
   immediateEmail: boolean;
@@ -14,6 +18,8 @@ export interface ActionPolicy {
 
 export interface ActionPolicyCreateRequest {
   actionType: string;
+  scope?: PolicyScope;
+  scopeRefId?: string;
   requiresApproval?: boolean;
   immediateEmail?: boolean;
   paramsJson?: Record<string, unknown>;

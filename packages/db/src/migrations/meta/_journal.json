@@ -379,6 +379,13 @@
       "when": 1777027322740,
       "tag": "0053_tricky_vector",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1777042881276,
+      "tag": "0054_worthless_photon",
+      "breakpoints": true
     }
   ]
 }

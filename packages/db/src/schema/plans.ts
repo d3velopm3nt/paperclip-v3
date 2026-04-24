@@ -36,6 +36,10 @@ export const plans = pgTable(
     companyId: uuid("company_id")
       .notNull()
       .references(() => companies.id, { onDelete: "cascade" }),
+    // v3: scope hints used by plan-gate to resolve which policy applied
+    clientId: uuid("client_id"),
+    projectId: uuid("project_id"),
+    actionType: text("action_type"),
     kind: text("kind").notNull(),
     revision: integer("revision").notNull().default(1),
     parentPlanId: uuid("parent_plan_id"),

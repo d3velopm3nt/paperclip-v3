@@ -148,6 +148,15 @@ export const queryKeys = {
   actionPolicies: {
     list: (companyId: string) => ["action-policies", companyId] as const,
   },
+  clients: {
+    list: (companyId: string) => ["clients", companyId] as const,
+    detail: (id: string) => ["clients", "detail", id] as const,
+  },
+  plans: {
+    list: (companyId: string, decision?: string) =>
+      ["plans", companyId, decision ?? "__all__"] as const,
+    detail: (id: string) => ["plans", "detail", id] as const,
+  },
   agentKpis: {
     list: (agentId: string) => ["agent-kpis", agentId] as const,
     trends: (agentId: string) => ["agent-kpis", agentId, "trends"] as const,

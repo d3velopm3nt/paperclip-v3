@@ -32,6 +32,8 @@ export const emailMessages = pgTable(
     processingState: text("processing_state").notNull().default("pending"),
     matchedCompanyId: uuid("matched_company_id").references(() => companies.id),
     matchedAgentId: uuid("matched_agent_id").references(() => agents.id),
+    // v3: client resolved from sender domain — enables per-client routing & policies
+    matchedClientId: uuid("matched_client_id"),
     issueId: uuid("issue_id").references(() => issues.id),
     approvalId: uuid("approval_id").references(() => approvals.id),
     attachmentsPath: text("attachments_path"),

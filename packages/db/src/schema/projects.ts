@@ -8,6 +8,8 @@ export const projects = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull().references(() => companies.id),
+    // v3: optional client association for scoped policies + routing
+    clientId: uuid("client_id"),
     goalId: uuid("goal_id").references(() => goals.id),
     name: text("name").notNull(),
     description: text("description"),

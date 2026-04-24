@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { applyPendingMigrations } from "../client.js";
 import {
   getEmbeddedPostgresTestSupport,
@@ -23,48 +23,70 @@ afterEach(async () => {
 
 describeIf("action_policies schema", () => {
   it(
-    "inserts a policy per company and enforces uniqueness on (companyId, actionType)",
+    "inserts scoped policies and enforces uniqueness on (scope, scopeRefId, actionType)",
     async () => {
-    const dbh = await startEmbeddedPostgresTestDatabase("paperclip-action-policies-");
-    cleanups.push(dbh.cleanup);
-    const sql = postgres(dbh.connectionString);
-    const db = drizzle(sql);
-    await applyPendingMigrations(dbh.connectionString);
+      const dbh = await startEmbeddedPostgresTestDatabase("paperclip-action-policies-");
+      cleanups.push(dbh.cleanup);
+      const sql = postgres(dbh.connectionString);
+      const db = drizzle(sql);
+      await applyPendingMigrations(dbh.connectionString);
 
-    const [company] = await db.insert(companies).values({ name: "Develtech", issuePrefix: "DEV" }).returning();
+      const [company] = await db
+        .insert(companies)
+        .values({ name: "Develtech", issuePrefix: "DEV" })
+        .returning();
 
-    const [policy] = await db
-      .insert(actionPolicies)
-      .values({
-        companyId: company.id,
-        actionType: "send_email",
-        requiresApproval: true,
-        immediateEmail: false,
-      })
-      .returning();
-
-    expect(policy.requiresApproval).toBe(true);
-
-    // Uniqueness: second insert for same (company, actionType) must fail
-    await expect(
-      db
+      const [policy] = await db
         .insert(actionPolicies)
         .values({
           companyId: company.id,
+          scope: "company",
+          scopeRefId: company.id,
+          actionType: "send_email",
+          requiresApproval: true,
+          immediateEmail: false,
+        })
+        .returning();
+
+      expect(policy.requiresApproval).toBe(true);
+      expect(policy.scope).toBe("company");
+
+      // Duplicate (scope, scopeRefId, actionType) must fail.
+      await expect(
+        db
+          .insert(actionPolicies)
+          .values({
+            companyId: company.id,
+            scope: "company",
+            scopeRefId: company.id,
+            actionType: "send_email",
+            requiresApproval: false,
+          })
+          .returning(),
+      ).rejects.toThrow();
+
+      // Same actionType at a different scope is allowed.
+      const differentScopeRef = "00000000-0000-0000-0000-000000000001";
+      const [clientScoped] = await db
+        .insert(actionPolicies)
+        .values({
+          companyId: company.id,
+          scope: "client",
+          scopeRefId: differentScopeRef,
           actionType: "send_email",
           requiresApproval: false,
         })
-        .returning(),
-    ).rejects.toThrow();
+        .returning();
+      expect(clientScoped.scope).toBe("client");
 
-    const rows = await db
-      .select()
-      .from(actionPolicies)
-      .where(eq(actionPolicies.companyId, company.id));
-    expect(rows).toHaveLength(1);
+      const rows = await db
+        .select()
+        .from(actionPolicies)
+        .where(and(eq(actionPolicies.companyId, company.id), eq(actionPolicies.actionType, "send_email")));
+      expect(rows).toHaveLength(2);
 
-    await sql.end();
-  },
+      await sql.end();
+    },
     20_000,
   );
 });
