@@ -238,26 +238,37 @@ export function EmailAccounts() {
                     </Badge>
                     {account.imapTls && <Badge variant="outline">TLS</Badge>}
                   </div>
-                  <div className="text-sm text-muted-foreground mt-1 space-y-0.5">
-                    <div>
-                      {account.imapUser}@{account.imapHost}:{account.imapPort} · {account.folder}
-                    </div>
-                    <div>
-                      From: {account.fromName} &lt;{account.fromEmail}&gt;
+                  <div className="text-sm text-muted-foreground mt-2 grid gap-1 sm:grid-cols-[auto,1fr] sm:gap-x-4">
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">User</span>
+                    <span className="font-mono text-xs">{account.imapUser}</span>
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Server</span>
+                    <span className="font-mono text-xs">
+                      {account.imapHost}:{account.imapPort} · {account.folder}
+                    </span>
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">From</span>
+                    <span className="text-xs">
+                      {account.fromName} &lt;{account.fromEmail}&gt;
                       {account.replyTo ? ` · Reply-To: ${account.replyTo}` : ""}
-                    </div>
-                    <div>Poll every {account.pollIntervalSec}s</div>
+                    </span>
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Poll</span>
+                    <span className="text-xs">every {account.pollIntervalSec}s</span>
                     {account.lastPolledAt && (
-                      <div className="flex items-center gap-1 text-xs">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Last poll: {new Date(account.lastPolledAt).toLocaleString()}
-                      </div>
+                      <>
+                        <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Last poll</span>
+                        <span className="flex items-center gap-1 text-xs">
+                          <CheckCircle2 className="h-3 w-3" />
+                          {new Date(account.lastPolledAt).toLocaleString()}
+                        </span>
+                      </>
                     )}
                     {account.lastErrorText && (
-                      <div className="flex items-center gap-1 text-xs text-destructive">
-                        <XCircle className="h-3 w-3" />
-                        {account.lastErrorText}
-                      </div>
+                      <>
+                        <span className="text-xs uppercase tracking-wide text-muted-foreground/70">Error</span>
+                        <span className="flex items-center gap-1 text-xs text-destructive">
+                          <XCircle className="h-3 w-3" />
+                          {account.lastErrorText}
+                        </span>
+                      </>
                     )}
                   </div>
                 </div>
