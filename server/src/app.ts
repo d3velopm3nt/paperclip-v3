@@ -36,6 +36,7 @@ import { agentKpiRoutes } from "./routes/agent-kpis.js";
 import { agentExperimentRoutes } from "./routes/agent-experiments.js";
 import { skillChangeRoutes } from "./routes/skill-changes.js";
 import { emailAccountRoutes } from "./routes/email-accounts.js"; // v3:
+import { emailMessageRoutes } from "./routes/email-messages.js"; // v3:
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -167,6 +168,7 @@ export async function createApp(
   api.use(agentExperimentRoutes(db));
   api.use(skillChangeRoutes(db));
   api.use(emailAccountRoutes(db)); // v3:
+  api.use(emailMessageRoutes(db)); // v3:
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

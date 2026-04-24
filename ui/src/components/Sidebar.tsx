@@ -112,6 +112,7 @@ export function Sidebar() {
 
         {/* v3: */}
         <SidebarSection label="Email">
+          <SidebarNavItem to="/email/inbox" label="Inbox" icon={Inbox} />
           <SidebarNavItem to="/email/accounts" label="Accounts" icon={Mail} />
         </SidebarSection>
 
