@@ -53,8 +53,21 @@ export function planRoutes(db: Db) {
     }
     const actor = (req as { actor?: { userId?: string } }).actor;
     await svc.recordDecision(plan.id, decision, actor?.userId ?? null, body.note);
+
+    // Auto-execute on approve so the user sees the issue immediately.
+    let executionError: string | null = null;
+    let createdIssueId: string | null = null;
+    if (decision === "approved") {
+      try {
+        const result = await svc.executePlan(plan.id);
+        createdIssueId = result.issueId ?? null;
+      } catch (err) {
+        executionError = err instanceof Error ? err.message : String(err);
+      }
+    }
+
     const [updated] = await db.select().from(plans).where(eq(plans.id, plan.id)).limit(1);
-    res.json(updated);
+    res.json({ ...updated, executionError, createdIssueId });
   });
 
   return router;

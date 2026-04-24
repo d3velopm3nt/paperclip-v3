@@ -30,6 +30,7 @@ import { EmailAccounts } from "./pages/EmailAccounts"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
 import { ActionPolicies } from "./pages/ActionPolicies"; // v3:
 import { Clients } from "./pages/Clients"; // v3:
+import { Plans } from "./pages/Plans"; // v3:
 import { Analytics } from "./pages/Analytics";
 import { CompanyExport } from "./pages/CompanyExport";
 import { CompanyImport } from "./pages/CompanyImport";
@@ -137,6 +138,7 @@ function boardRoutes() {
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
+      <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
       <Route path="analytics" element={<Analytics />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />
@@ -358,6 +360,7 @@ export function App() {
           <Route path="email/inbox" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/action-policies" element={<UnprefixedBoardRedirect />} />
           <Route path="clients" element={<UnprefixedBoardRedirect />} />
+          <Route path="governance/plans" element={<UnprefixedBoardRedirect />} />
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>

@@ -10,8 +10,9 @@
 
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { approvals, plans, emailMessages } from "@paperclipai/db";
+import { approvals, issues, plans, emailMessages } from "@paperclipai/db";
 import { actionPolicyService, type ActionPolicyRow, type PolicyScope } from "./action-policies.js";
+import { issueService } from "./issues.js";
 import { logger } from "../middleware/logger.js";
 
 export type Confidence = "low" | "medium" | "high";
@@ -232,7 +233,78 @@ export function planGateService(db: Db) {
       .where(eq(plans.id, planId));
   }
 
-  return { evaluateGate, proposePlan, recordDecision, markExecuted };
+  // Dispatches the approved plan. Phase 2 only implements create_issue; other
+  // kinds log and mark failed so they show up in the UI but don't silently
+  // succeed. Caller should ensure plan.decision === 'approved' before invoking.
+  async function executePlan(planId: string): Promise<{ issueId?: string }> {
+    const [plan] = await db.select().from(plans).where(eq(plans.id, planId)).limit(1);
+    if (!plan) throw new Error(`Plan not found: ${planId}`);
+    if (plan.decision !== "approved") {
+      throw new Error(`Plan not approved: ${planId} (decision=${plan.decision})`);
+    }
+    if (plan.executionStatus !== "pending") {
+      throw new Error(`Plan already executed: ${planId} (status=${plan.executionStatus})`);
+    }
+
+    try {
+      if (plan.kind === "create_issue") {
+        const meta = (plan.proposalMeta ?? {}) as Record<string, unknown>;
+        const srcEmail = (meta.sourceEmail ?? {}) as { subject?: string; from?: string };
+        const title = srcEmail.subject?.trim() || plan.proposalText.slice(0, 200);
+        // Pull the source email body if linked so the issue has context.
+        let description = plan.proposalText;
+        if (plan.sourceEmailMessageId) {
+          const [msg] = await db
+            .select({ body: emailMessages.body, fromAddr: emailMessages.fromAddr })
+            .from(emailMessages)
+            .where(eq(emailMessages.id, plan.sourceEmailMessageId))
+            .limit(1);
+          if (msg) {
+            description = `From: ${msg.fromAddr}\n\n${msg.body}`;
+          }
+        }
+        const created = await issueService(db).create(plan.companyId, {
+          title,
+          description,
+          clientId: plan.clientId ?? null,
+          createdByAgentId: plan.agentId,
+        });
+        // Link the issue back to the plan + email for audit/inbox display.
+        await db
+          .update(plans)
+          .set({
+            issueId: created.id,
+            executionStatus: "success",
+            executedAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .where(eq(plans.id, planId));
+        if (plan.sourceEmailMessageId) {
+          await db
+            .update(emailMessages)
+            .set({
+              issueId: created.id,
+              processingState: "executed",
+              processedAt: new Date(),
+            })
+            .where(eq(emailMessages.id, plan.sourceEmailMessageId));
+        }
+        logger.info({ planId, issueId: created.id }, "plan-gate: executed create_issue");
+        return { issueId: created.id };
+      }
+
+      // Unsupported kinds — mark as failed with a clear error.
+      const msg = `plan kind '${plan.kind}' is not dispatched by Phase 2 executor`;
+      await markExecuted(planId, { success: false, error: msg });
+      throw new Error(msg);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await markExecuted(planId, { success: false, error: message });
+      throw err;
+    }
+  }
+
+  return { evaluateGate, proposePlan, recordDecision, markExecuted, executePlan };
 }
 
 export type PlanGateService = ReturnType<typeof planGateService>;

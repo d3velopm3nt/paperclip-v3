@@ -120,6 +120,7 @@ export function Sidebar() {
 
         {/* v3: */}
         <SidebarSection label="Governance">
+          <SidebarNavItem to="/governance/plans" label="Plans" icon={ShieldCheck} />
           <SidebarNavItem to="/governance/action-policies" label="Policies" icon={ShieldCheck} />
         </SidebarSection>
 
