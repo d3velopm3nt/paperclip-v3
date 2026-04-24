@@ -1,5 +1,4 @@
 // v3: email accounts page — list, create, edit, delete, test-connection
-import * as React from "react";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -15,7 +14,6 @@ import { queryKeys } from "../lib/queryKeys";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -25,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Mail, Plus, Pencil, Trash2, Plug, CheckCircle2, XCircle, Server, Send, Folder, Timer, User } from "lucide-react";
+import { Mail, Plus, Pencil, Trash2, Plug, XCircle } from "lucide-react";
 
 interface FormState {
   label: string;
@@ -369,60 +367,38 @@ export function EmailAccounts() {
         <div className="grid gap-3">
           {accounts.map((account) => (
             <Card key={account.id} className="p-4 hover:border-border/80 transition-colors">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0 space-y-2.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-base">{account.label}</span>
-                    <Badge variant={account.active ? "default" : "secondary"} className="h-5">
-                      {account.active ? "active" : "paused"}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">
-                      {account.fromName} &lt;{account.fromEmail}&gt;
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <InfoPill icon={User} label={account.imapUser} mono />
-                    <InfoPill
-                      icon={Server}
-                      label={`IMAP · ${account.imapHost}:${account.imapPort}${account.imapTls ? " · TLS" : ""}`}
-                      mono
+              <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4">
+                <div
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground"
+                  aria-hidden
+                >
+                  <Mail className="h-5 w-5" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium truncate">{account.label}</span>
+                    <span
+                      className={`h-2 w-2 rounded-full ${account.active ? "bg-emerald-500" : "bg-muted-foreground/40"}`}
+                      title={account.active ? "Active" : "Paused"}
                     />
-                    {account.smtpHost && (
-                      <InfoPill
-                        icon={Send}
-                        label={`SMTP · ${account.smtpHost}:${account.smtpPort}${account.smtpSecure ? " · TLS" : " · STARTTLS"}`}
-                        mono
-                      />
-                    )}
-                    <InfoPill icon={Folder} label={account.folder} />
-                    <InfoPill icon={Timer} label={`${account.pollIntervalSec}s`} />
                   </div>
-                  {(account.lastPolledAt || account.lastErrorText) && (
-                    <div className="flex items-center gap-3 text-xs">
-                      {account.lastPolledAt && (
-                        <span className="flex items-center gap-1 text-muted-foreground">
-                          <CheckCircle2 className="h-3 w-3" />
-                          Last poll {new Date(account.lastPolledAt).toLocaleString()}
-                        </span>
-                      )}
-                      {account.lastErrorText && (
-                        <span className="flex items-center gap-1 text-destructive">
-                          <XCircle className="h-3 w-3" />
-                          {account.lastErrorText}
-                        </span>
-                      )}
+                  <div className="text-xs text-muted-foreground truncate">{account.fromEmail}</div>
+                  {account.lastErrorText && (
+                    <div className="mt-1 flex items-center gap-1 text-xs text-destructive truncate">
+                      <XCircle className="h-3 w-3 shrink-0" />
+                      <span className="truncate">{account.lastErrorText}</span>
                     </div>
                   )}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => testConnection(account)}
                     disabled={testingId === account.id}
                   >
-                    <Plug className="h-4 w-4 mr-1" />
-                    {testingId === account.id ? "…" : "IMAP"}
+                    <Plug className="h-4 w-4 sm:mr-1" />
+                    <span className="hidden sm:inline">{testingId === account.id ? "…" : "IMAP"}</span>
                   </Button>
                   {account.smtpHost && (
                     <Button
@@ -431,8 +407,8 @@ export function EmailAccounts() {
                       onClick={() => testSmtp(account)}
                       disabled={testingSmtpId === account.id}
                     >
-                      <Plug className="h-4 w-4 mr-1" />
-                      {testingSmtpId === account.id ? "…" : "SMTP"}
+                      <Plug className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">{testingSmtpId === account.id ? "…" : "SMTP"}</span>
                     </Button>
                   )}
                   <Button variant="ghost" size="icon-sm" onClick={() => openEdit(account)}>
@@ -588,25 +564,6 @@ export function EmailAccounts() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function InfoPill({
-  icon: Icon,
-  label,
-  mono = false,
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  mono?: boolean;
-}) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-0.5 text-xs text-foreground/80 ${mono ? "font-mono" : ""}`}
-    >
-      <Icon className="h-3 w-3 text-muted-foreground" />
-      {label}
-    </span>
   );
 }
 
