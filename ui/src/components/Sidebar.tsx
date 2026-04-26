@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   UsersRound,
   Activity,
+  Hash,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -118,6 +119,7 @@ export function Sidebar() {
         {/* v3: */}
         <SidebarSection label="Email">
           <SidebarNavItem to="/email/inbox" label="Inbox" icon={Inbox} />
+          <SidebarNavItem to="/rooms" label="Rooms" icon={Hash} />
           <SidebarNavItem
             to="/email/workflows"
             label="Workflows"

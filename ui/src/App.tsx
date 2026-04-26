@@ -31,6 +31,8 @@ import { EmailAccountDetail } from "./pages/EmailAccountDetail"; // v3:
 import { EmailWorkflow } from "./pages/EmailWorkflow"; // v3:
 import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
+import { Rooms } from "./pages/Rooms"; // v3: operator messaging
+import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
 import { ActionPolicies } from "./pages/ActionPolicies"; // v3:
 import { Clients } from "./pages/Clients"; // v3:
 import { Plans } from "./pages/Plans"; // v3:
@@ -142,6 +144,8 @@ function boardRoutes() {
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
       <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
       <Route path="email/workflows" element={<EmailWorkflows />} /> {/* v3: */}
+      <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
+      <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
