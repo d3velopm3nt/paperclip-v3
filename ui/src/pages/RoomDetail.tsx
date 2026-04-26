@@ -1,19 +1,23 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { roomsApi, type OperatorMessage, type RoomMember } from "../api/rooms";
+import { agentsApi } from "../api/agents";
+import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Bot, User } from "lucide-react";
+import { ArrowLeft, Bot, User, Plus } from "lucide-react";
 
 export function RoomDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { selectedCompanyId } = useCompany();
+  const [selectedAgentId, setSelectedAgentId] = useState("");
 
   const { data: room, isLoading } = useQuery({
     queryKey: ["room", id],
@@ -35,9 +39,23 @@ export function RoomDetail() {
     ]);
   }, [setBreadcrumbs, room?.name]);
 
+  const { data: agents = [] } = useQuery({
+    queryKey: ["agents", selectedCompanyId],
+    queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
   const removeMember = useMutation({
     mutationFn: (memberId: string) => roomsApi.removeMember(id!, memberId),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["room", id] }),
+  });
+
+  const addMember = useMutation({
+    mutationFn: (agentId: string) => roomsApi.addMember(id!, { agentId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["room", id] });
+      setSelectedAgentId("");
+    },
   });
 
   const toggleApproval = useMutation({
@@ -71,23 +89,53 @@ export function RoomDetail() {
         {room.members.length === 0 && (
           <p className="text-xs text-muted-foreground">No members yet.</p>
         )}
-        {room.members.map((m: RoomMember) => (
-          <div key={m.id} className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-sm">
-              <Bot className="w-4 h-4 text-muted-foreground" />
-              <span>{m.isOperator ? "Operator" : (m.agentId ?? "Unknown")}</span>
+        {room.members.map((m: RoomMember) => {
+          const agent = agents.find((a) => a.id === m.agentId);
+          return (
+            <div key={m.id} className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm">
+                <Bot className="w-4 h-4 text-muted-foreground" />
+                <span>{m.isOperator ? "Operator" : (agent?.name ?? m.agentId ?? "Unknown")}</span>
+              </div>
+              {!m.isOperator && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => removeMember.mutate(m.id)}
+                >
+                  Remove
+                </Button>
+              )}
             </div>
-            {!m.isOperator && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => removeMember.mutate(m.id)}
-              >
-                Remove
-              </Button>
-            )}
+          );
+        })}
+
+        {/* Add member */}
+        {agents.length > 0 && (
+          <div className="flex gap-2 pt-1 border-t border-border">
+            <select
+              className="flex-1 text-sm rounded-md border border-input bg-background px-2 py-1"
+              value={selectedAgentId}
+              onChange={(e) => setSelectedAgentId(e.target.value)}
+            >
+              <option value="">Add agent…</option>
+              {agents
+                .filter((a) => !room.members.some((m) => m.agentId === a.id))
+                .map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+            </select>
+            <Button
+              size="sm"
+              disabled={!selectedAgentId || addMember.isPending}
+              onClick={() => addMember.mutate(selectedAgentId)}
+            >
+              <Plus className="w-3 h-3 mr-1" /> Add
+            </Button>
           </div>
-        ))}
+        )}
       </Card>
 
       {/* Settings */}

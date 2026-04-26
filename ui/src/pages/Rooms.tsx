@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Hash } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export function Rooms() {
   const { selectedCompanyId } = useCompany();
@@ -43,7 +44,19 @@ export function Rooms() {
     },
   });
 
-  if (isLoading) return <div className="p-6 text-sm text-muted-foreground">Loading rooms…</div>;
+  if (isLoading) {
+    return (
+      <div className="p-6 max-w-2xl space-y-4">
+        <div className="flex items-center justify-between mb-6">
+          <Skeleton className="h-7 w-24" />
+          <Skeleton className="h-8 w-16" />
+        </div>
+        {[1, 2, 3].map((i) => (
+          <Skeleton key={i} className="h-14 w-full rounded-lg" />
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-2xl">
