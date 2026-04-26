@@ -15,11 +15,6 @@ interface TerminalLine {
   text: string;
 }
 
-let lineIdCounter = 0;
-function nextId() {
-  return ++lineIdCounter;
-}
-
 export function Terminal({ projectId, className }: TerminalProps) {
   const [lines, setLines] = useState<TerminalLine[]>([]);
   const [cmd, setCmd] = useState("");
@@ -27,6 +22,9 @@ export function Terminal({ projectId, className }: TerminalProps) {
 
   const esRef = useRef<EventSource | null>(null);
   const outputRef = useRef<HTMLDivElement>(null);
+  const lineIdRef = useRef(0);
+  const cmdRef = useRef(cmd);
+  useEffect(() => { cmdRef.current = cmd; }, [cmd]);
 
   // Auto-scroll to bottom whenever lines change
   useEffect(() => {
@@ -36,7 +34,7 @@ export function Terminal({ projectId, className }: TerminalProps) {
   }, [lines]);
 
   const appendLine = useCallback((kind: LineKind, text: string) => {
-    setLines((prev) => [...prev, { id: nextId(), kind, text }]);
+    setLines((prev) => [...prev, { id: ++lineIdRef.current, kind, text }]);
   }, []);
 
   const abort = useCallback(() => {
@@ -48,7 +46,7 @@ export function Terminal({ projectId, className }: TerminalProps) {
   }, []);
 
   const run = useCallback(() => {
-    const trimmed = cmd.trim();
+    const trimmed = cmdRef.current.trim();
     if (!trimmed || running) return;
 
     // Close any existing connection
@@ -78,7 +76,7 @@ export function Terminal({ projectId, className }: TerminalProps) {
     es.addEventListener("exit", (e: MessageEvent) => {
       let code: number | null = null;
       try {
-        const parsed = JSON.parse(e.data) as { code: number };
+        const parsed = JSON.parse(e.data) as { code: number | null };
         code = parsed.code;
       } catch {
         // ignore parse errors
@@ -95,7 +93,7 @@ export function Terminal({ projectId, className }: TerminalProps) {
       esRef.current = null;
       setRunning(false);
     };
-  }, [cmd, running, projectId, appendLine]);
+  }, [running, projectId, appendLine]);
 
   // Ctrl+C support
   const handleKeyDown = useCallback(
@@ -123,14 +121,14 @@ export function Terminal({ projectId, className }: TerminalProps) {
   return (
     <div
       className={cn(
-        "flex flex-col rounded-lg overflow-hidden bg-black font-mono text-sm",
+        "flex flex-col rounded-lg overflow-hidden bg-black font-mono text-sm border border-zinc-700",
         className,
       )}
     >
       {/* Output area */}
       <div
         ref={outputRef}
-        className="min-h-[200px] max-h-[500px] overflow-y-auto p-3 flex-1 space-y-0.5"
+        className="min-h-[200px] overflow-y-auto p-3 flex-1 space-y-0.5"
       >
         {lines.map((line) => (
           <div
