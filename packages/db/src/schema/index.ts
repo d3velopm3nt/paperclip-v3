@@ -80,3 +80,9 @@ export { planDecisionTokens } from "./plan_decision_tokens.js";
 // v3: workflow viewer
 export { workflowRuns } from "./workflow_runs.js";
 export { workflowStageResults } from "./workflow_stage_results.js";
+
+// v3: operator messaging
+export { rooms } from "./rooms.js";
+export { roomMembers } from "./room_members.js";
+export { operatorMessages } from "./operator_messages.js";
+export { messageThreads } from "./message_threads.js";

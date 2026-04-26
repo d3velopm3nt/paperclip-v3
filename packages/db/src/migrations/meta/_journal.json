@@ -442,6 +442,13 @@
       "when": 1777095000000,
       "tag": "0062_plan_definition_of_done",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1777207253327,
+      "tag": "0063_smooth_lady_vermin",
+      "breakpoints": true
     }
   ]
 }
