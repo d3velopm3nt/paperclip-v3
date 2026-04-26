@@ -211,6 +211,8 @@ export function repoRoutes(db: Db) {
     const result = await getProjectAndCwd(req.params.id!, res);
     if (!result) return;
 
+    assertCompanyAccess(req, result.project.companyId);
+
     const cmd = req.query.cmd;
     if (typeof cmd !== "string" || cmd.trim() === "") {
       res.status(400).json({ error: "cmd query param required" });

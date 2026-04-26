@@ -100,7 +100,7 @@ export function RepoTab({ projectId, isBoard }: RepoTabProps) {
   const { data: fileData, isLoading: fileLoading, error: fileError } = useQuery({
     queryKey: ["repo", projectId, "file", selectedFile],
     queryFn: () => repoApi.file(projectId, selectedFile!),
-    enabled: selectedFile !== null,
+    enabled: subView === "files" && selectedFile !== null,
   });
 
   // ── Sub-view switcher ──────────────────────────────────────────────────
