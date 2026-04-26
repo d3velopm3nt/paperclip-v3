@@ -41,6 +41,7 @@ import { actionPolicyRoutes } from "./routes/action-policies.js"; // v3:
 import { clientRoutes } from "./routes/clients.js"; // v3:
 import { planRoutes } from "./routes/plans.js"; // v3:
 import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
+import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -177,6 +178,7 @@ export async function createApp(
   api.use(clientRoutes(db)); // v3:
   api.use(planRoutes(db)); // v3:
   api.use(workflowRunRoutes(db)); // v3:
+  api.use(roomRoutes(db)); // v3: operator messaging
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);
