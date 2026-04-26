@@ -17,14 +17,23 @@ const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
 describeEmbeddedPostgres("operatorMessagingService.parseMentions", () => {
-  it("extracts agent names and room slugs from text", async () => {
-    const tempDb = await startEmbeddedPostgresTestDatabase("paperclip-om-parse-");
-    const db = createDb(tempDb.connectionString);
+  let db!: ReturnType<typeof createDb>;
+  let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+
+  beforeAll(async () => {
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-om-parse-");
+    db = createDb(tempDb.connectionString);
+  }, 30_000);
+
+  afterAll(async () => {
+    await tempDb?.cleanup();
+  });
+
+  it("extracts agent names and room slugs from text", () => {
     const svc = operatorMessagingService(db);
     const result = svc.parseMentions("Hey @ceo-agent and @dev-team please look at this");
     expect(result.agentNames).toContain("ceo-agent");
     expect(result.roomSlugs).toContain("dev-team");
-    await tempDb.cleanup();
   });
 });
 
