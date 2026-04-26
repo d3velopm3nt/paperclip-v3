@@ -449,6 +449,13 @@
       "when": 1777207253327,
       "tag": "0063_smooth_lady_vermin",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1777242478590,
+      "tag": "0064_tidy_talon",
+      "breakpoints": true
     }
   ]
 }

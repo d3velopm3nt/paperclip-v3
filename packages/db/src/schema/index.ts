@@ -86,3 +86,6 @@ export { rooms } from "./rooms.js";
 export { roomMembers } from "./room_members.js";
 export { operatorMessages } from "./operator_messages.js";
 export { messageThreads } from "./message_threads.js";
+
+// v3: chat
+export { chatThreads } from "./chat_threads.js";
