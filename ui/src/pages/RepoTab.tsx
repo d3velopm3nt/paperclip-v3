@@ -28,7 +28,7 @@ function FileTreeNode({ node, depth, selectedFile, onSelectFile }: FileTreeNodeP
     return (
       <button
         className={cn(
-          "w-full text-left text-xs px-2 py-0.5 truncate hover:bg-accent/50",
+          "w-full text-left text-xs px-2 py-0.5 truncate rounded hover:bg-accent/50",
           selectedFile === node.path && "bg-accent"
         )}
         style={{ paddingLeft: `${indent + 8}px` }}
@@ -43,7 +43,7 @@ function FileTreeNode({ node, depth, selectedFile, onSelectFile }: FileTreeNodeP
   return (
     <div>
       <button
-        className="w-full text-left text-xs px-2 py-0.5 hover:bg-accent/50 flex items-center gap-1"
+        className="w-full text-left text-xs px-2 py-0.5 rounded hover:bg-accent/50 flex items-center gap-1"
         style={{ paddingLeft: `${indent + 8}px` }}
         onClick={() => setOpen((o) => !o)}
       >
@@ -86,18 +86,18 @@ export function RepoTab({ projectId, isBoard }: RepoTabProps) {
   const { data: diffData, isLoading: diffLoading } = useQuery({
     queryKey: ["repo", projectId, "show", selectedSha],
     queryFn: () => repoApi.show(projectId, selectedSha!),
-    enabled: selectedSha !== null,
+    enabled: subView === "commits" && selectedSha !== null,
   });
 
   // Tree query
-  const { data: tree, isLoading: treeLoading } = useQuery({
+  const { data: tree, isLoading: treeLoading, error: treeError } = useQuery({
     queryKey: ["repo", projectId, "tree"],
     queryFn: () => repoApi.tree(projectId),
     enabled: subView === "files",
   });
 
   // File content query
-  const { data: fileData, isLoading: fileLoading } = useQuery({
+  const { data: fileData, isLoading: fileLoading, error: fileError } = useQuery({
     queryKey: ["repo", projectId, "file", selectedFile],
     queryFn: () => repoApi.file(projectId, selectedFile!),
     enabled: selectedFile !== null,
@@ -158,7 +158,7 @@ export function RepoTab({ projectId, isBoard }: RepoTabProps) {
                   <span className="text-xs truncate">{commit.message}</span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  {commit.author} · {commit.date}
+                  {commit.author} · {new Date(commit.date).toLocaleString()}
                 </div>
               </button>
             ))}
@@ -182,6 +182,9 @@ export function RepoTab({ projectId, isBoard }: RepoTabProps) {
         <div className="h-[600px] border border-border rounded-md overflow-hidden flex gap-0">
           {/* Left panel — file tree */}
           <div className="w-56 shrink-0 border-r border-border overflow-y-auto py-1">
+            {treeError && (
+              <p className="px-3 py-2 text-xs text-destructive">Failed to load file tree.</p>
+            )}
             {treeLoading && (
               <p className="px-3 py-2 text-xs text-muted-foreground">Loading…</p>
             )}
@@ -198,7 +201,9 @@ export function RepoTab({ projectId, isBoard }: RepoTabProps) {
 
           {/* Right panel — file content */}
           <div className="flex-1 overflow-y-auto p-3">
-            {selectedFile === null ? (
+            {fileError ? (
+              <p className="text-xs text-destructive">Failed to load file.</p>
+            ) : selectedFile === null ? (
               <p className="text-sm text-muted-foreground">Select a file to view its content.</p>
             ) : fileLoading ? (
               <p className="text-xs text-muted-foreground">Loading file…</p>
