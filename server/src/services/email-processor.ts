@@ -708,18 +708,48 @@ async function routeOperatorReply(
 
   const planMatch = subject.match(PLAN_TAG_RE);
   if (!planMatch) {
+    // No [plan-<id>] tag → treat as free-form operator message.
+    // Route via OperatorMessageService (mention → agent, room, or auto-route).
+    const [voiceAcct] = await db
+      .select({ id: emailAccounts.id })
+      .from(emailAccounts)
+      .where(and(eq(emailAccounts.companyId, companyId), eq(emailAccounts.role, "agent_voice")))
+      .limit(1);
+
+    if (voiceAcct && msg) {
+      const { operatorMessagingService } = await import("./operator-messaging.js");
+      const [srcMsg] = await db
+        .select({
+          body: emailMessages.body,
+          subject: emailMessages.subject,
+          messageIdHeader: emailMessages.messageIdHeader,
+        })
+        .from(emailMessages)
+        .where(eq(emailMessages.id, emailMessageId))
+        .limit(1);
+      if (srcMsg) {
+        await operatorMessagingService(db).handleInbound(companyId, voiceAcct.id, {
+          platform: "email",
+          from: _fromAddr,
+          body: srcMsg.body,
+          subject: srcMsg.subject || undefined,
+          threadKey: srcMsg.messageIdHeader || undefined,
+          raw: { emailMessageId, subject, fromAddr: _fromAddr },
+        });
+      }
+    }
+
     await db
       .update(emailMessages)
       .set({
-        processingState: "ignored",
+        processingState: "executed",
         matchedCompanyId: companyId,
         processedAt: new Date(),
-        errorText: "Operator reply on agent_voice but no [plan-<id>] tag — ignoring.",
       })
       .where(eq(emailMessages.id, emailMessageId));
     logger.info(
-      { emailMessageId, subject },
-      "email-processor: agent_voice reply with no plan tag — ignored",
+      { emailMessageId, subject, companyId },
+      "email-processor: untagged agent_voice message routed via operator-messaging",
     );
     return;
   }
