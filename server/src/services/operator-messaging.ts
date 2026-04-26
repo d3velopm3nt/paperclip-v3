@@ -17,11 +17,13 @@ import {
   rooms,
 } from "@paperclipai/db";
 import { logger } from "../middleware/logger.js";
+import { publishLiveEvent } from "./live-events.js";
+import { chatService } from "./chat.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface InboundMessage {
-  platform: "email" | "telegram" | "sms";
+  platform: "email" | "telegram" | "sms" | "chat";
   from: string;
   body: string;
   subject?: string;
@@ -94,8 +96,11 @@ export function operatorMessagingService(db: Db) {
   // ── Mention parsing ────────────────────────────────────────────────────────
 
   function parseMentions(text: string): { agentNames: string[]; roomSlugs: string[] } {
-    const matches = [...text.matchAll(/@([\w-]+)/g)].map((m) => m[1]!.toLowerCase());
-    return { agentNames: matches, roomSlugs: matches };
+    const agentNames = [...text.matchAll(/@([\w-]+)/g)].map((m) => m[1]!.toLowerCase());
+    const hashRooms = [...text.matchAll(/#([\w-]+)/g)].map((m) => m[1]!.toLowerCase());
+    // @mentions also try rooms for backward compat (email/telegram use @room-slug convention)
+    const roomSlugs = [...new Set([...hashRooms, ...agentNames])];
+    return { agentNames, roomSlugs };
   }
 
   // ── Agent resolution ───────────────────────────────────────────────────────
@@ -199,6 +204,7 @@ export function operatorMessagingService(db: Db) {
     body: string,
     raw: unknown,
     fromAgentId?: string | null,
+    opts?: { source?: string; chatThreadId?: string | null },
   ): Promise<string> {
     const [row] = await db
       .insert(operatorMessages)
@@ -208,6 +214,8 @@ export function operatorMessagingService(db: Db) {
         roomId,
         direction,
         platform,
+        source: opts?.source ?? platform,
+        chatThreadId: opts?.chatThreadId ?? null,
         body,
         rawPayload: raw as Record<string, unknown> | null,
         fromAgentId: fromAgentId ?? null,
@@ -278,6 +286,22 @@ export function operatorMessagingService(db: Db) {
           .set({ issueId })
           .where(eq(operatorMessages.id, msgId));
         await wakeAgent(companyId, member.agentId!, issueId, "room-message");
+        if (msg.platform === "chat") {
+          const [agentRow] = await db
+            .select({ name: agents.name })
+            .from(agents)
+            .where(eq(agents.id, member.agentId!))
+            .limit(1);
+          publishLiveEvent({
+            companyId,
+            type: "chat.agent.typing",
+            payload: {
+              agentId: member.agentId!,
+              agentName: agentRow?.name ?? "Agent",
+              chatThreadId: msg.threadKey ?? "",
+            },
+          });
+        }
       }
       logger.info({ companyId, roomId: room.id, slug }, "operator-messaging: room fanout");
       return;
@@ -309,6 +333,22 @@ export function operatorMessagingService(db: Db) {
       );
       if (msg.threadKey) await storeThreadKey(msgId, msg.platform, msg.threadKey);
       await wakeAgent(companyId, agent.id, issueId, "direct-operator-message");
+      if (msg.platform === "chat") {
+        const [agentRow] = await db
+          .select({ name: agents.name })
+          .from(agents)
+          .where(eq(agents.id, agent.id))
+          .limit(1);
+        publishLiveEvent({
+          companyId,
+          type: "chat.agent.typing",
+          payload: {
+            agentId: agent.id,
+            agentName: agentRow?.name ?? "Agent",
+            chatThreadId: msg.threadKey ?? "",
+          },
+        });
+      }
       logger.info({ companyId, agentId: agent.id, name }, "operator-messaging: direct route");
       return;
     }
@@ -341,6 +381,22 @@ export function operatorMessagingService(db: Db) {
     );
     if (msg.threadKey) await storeThreadKey(msgId, msg.platform, msg.threadKey);
     await wakeAgent(companyId, agentId, issueId, "operator-message-auto-routed");
+    if (msg.platform === "chat") {
+      const [agentRow] = await db
+        .select({ name: agents.name })
+        .from(agents)
+        .where(eq(agents.id, agentId))
+        .limit(1);
+      publishLiveEvent({
+        companyId,
+        type: "chat.agent.typing",
+        payload: {
+          agentId,
+          agentName: agentRow?.name ?? "Agent",
+          chatThreadId: msg.threadKey ?? "",
+        },
+      });
+    }
     logger.info({ companyId, agentId }, "operator-messaging: auto-routed");
   }
 
@@ -365,6 +421,53 @@ export function operatorMessagingService(db: Db) {
       platform = thread?.platform ?? "email";
     }
     platform ??= "email";
+
+    // Chat platform: store directly + emit live event, no external adapter
+    if (platform === "chat") {
+      const chatSvc = chatService(db);
+      const agentThread = await chatSvc.getOrCreateAgentThread(companyId, agentId);
+
+      const [agentRow] = await db
+        .select({ name: agents.name })
+        .from(agents)
+        .where(eq(agents.id, agentId))
+        .limit(1);
+      const agentName = agentRow?.name ?? "Agent";
+
+      const msgId = await storeMessage(
+        companyId,
+        issueId,
+        null,
+        "outbound",
+        "chat",
+        body,
+        null,
+        agentId,
+        { source: "chat", chatThreadId: agentThread.id },
+      );
+
+      publishLiveEvent({
+        companyId,
+        type: "chat.message.new",
+        payload: {
+          id: msgId,
+          body,
+          direction: "outbound",
+          fromAgentId: agentId,
+          agentName,
+          chatThreadId: agentThread.id,
+          createdAt: new Date().toISOString(),
+        },
+      });
+      publishLiveEvent({
+        companyId,
+        type: "chat.agent.done",
+        payload: { agentId, agentName, chatThreadId: agentThread.id },
+      });
+      logger.info({ companyId, agentId, issueId }, "operator-messaging: sent to operator via chat");
+      return;
+    }
+
     const adapter = getAdapter(platform);
     if (!adapter) {
       logger.warn({ platform }, "operator-messaging: no adapter registered");
