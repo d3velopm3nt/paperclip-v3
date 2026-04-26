@@ -360,6 +360,31 @@ npx paperclipai issue update <issue-id> --assignee-agent-id <other-agent-id> --s
 
 If you use direct `curl` during these tests, include `X-Paperclip-Run-Id` on all mutating issue requests whenever running inside a heartbeat.
 
+## Reaching the Operator
+
+When you are blocked, need a decision, or want to report progress:
+
+**Option 1 — @operator in a comment (preferred for issue context):**
+```bash
+curl -s -X POST "$PAPERCLIP_API_URL/api/issues/$ISSUE_ID/comments" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"body": "@operator: <your message here>"}'
+```
+The system automatically emails the operator. Their reply comes back as a comment.
+
+**Option 2 — Direct message API (for standalone messages or rooms):**
+```bash
+curl -s -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/operator-messages" \
+  -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+  -H "X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID" \
+  -H "Content-Type: application/json" \
+  -d "{\"body\": \"I need a decision on X\", \"issueId\": \"$ISSUE_ID\"}"
+```
+
+**Rule:** Never be silently blocked. Surface blockers in the same heartbeat they are discovered.
+
 ## Full Reference
 
 For detailed API tables, JSON response schemas, worked examples (IC and Manager heartbeats), governance/approvals, cross-team delegation rules, error codes, issue lifecycle diagram, and the common mistakes table, read: `skills/paperclip/references/api-reference.md`

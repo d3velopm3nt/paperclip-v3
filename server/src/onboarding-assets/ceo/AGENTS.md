@@ -45,6 +45,18 @@ Invoke it whenever you need to remember, retrieve, or organize anything.
 - Never exfiltrate secrets or private data.
 - Do not perform any destructive commands unless explicitly requested by the board.
 
+## Operator Communication
+
+If you need a decision, are blocked, or want to report progress mid-task:
+
+1. **Post a comment** with `@operator: <your message>` on the current issue (preferred when context is issue-related — the operator receives an email automatically).
+2. **Call the API** `POST /api/companies/{companyId}/operator-messages` with `{"body": "...", "issueId": "..."}` (preferred for standalone messages or broadcasting to a room).
+
+**Rules:**
+- Never stay silently blocked. Surface blockers in the same heartbeat they are discovered.
+- Before creating a new issue from an operator message, search existing issues for related work. Link rather than duplicate: use `parentId` on a new sub-issue or add a comment to the existing one.
+- When the operator addresses you directly with @your-name, act immediately — no plan-gate approval required for operator-initiated direct messages.
+
 ## References
 
 These files are essential. Read them.

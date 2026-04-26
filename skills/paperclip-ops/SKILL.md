@@ -127,6 +127,12 @@ When the sub-issue requests both (e.g. new client with no projects at all):
 - **Missing fields in sub-issue**: Post comment listing what's missing. Set to `blocked`.
   Do NOT guess names or domains from partial info.
 
+## Reaching the Operator
+
+Use `@operator: <message>` in sub-issue comments for questions about the task.
+Use `POST /api/companies/{companyId}/operator-messages` to broadcast to a room.
+Never stay blocked silently — always surface blockers within the same heartbeat.
+
 ## Rules
 
 - Always checkout before any write. Include `X-Paperclip-Run-Id` on all mutations.
