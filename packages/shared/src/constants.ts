@@ -317,6 +317,9 @@ export const LIVE_EVENT_TYPES = [
   "plugin.ui.updated",
   "plugin.worker.crashed",
   "plugin.worker.restarted",
+  "chat.message.new",
+  "chat.agent.typing",
+  "chat.agent.done",
 ] as const;
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
 
