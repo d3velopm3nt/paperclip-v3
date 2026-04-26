@@ -24,10 +24,11 @@ import { projectRouteRef, cn } from "../lib/utils";
 import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
+import { RepoTab } from "./RepoTab";
 
 /* ── Top-level tab types ── */
 
-type ProjectBaseTab = "overview" | "list" | "configuration" | "budget";
+type ProjectBaseTab = "overview" | "list" | "configuration" | "budget" | "repo";
 type ProjectPluginTab = `plugin:${string}`;
 type ProjectTab = ProjectBaseTab | ProjectPluginTab;
 
@@ -43,6 +44,7 @@ function resolveProjectTab(pathname: string, projectId: string): ProjectTab | nu
   if (tab === "overview") return "overview";
   if (tab === "configuration") return "configuration";
   if (tab === "budget") return "budget";
+  if (tab === "repo") return "repo";
   if (tab === "issues") return "list";
   return null;
 }
@@ -563,6 +565,7 @@ export function ProjectDetail() {
             { value: "overview", label: "Overview" },
             { value: "configuration", label: "Configuration" },
             { value: "budget", label: "Budget" },
+            { value: "repo", label: "Repo" },
             ...pluginTabItems.map((item) => ({
               value: item.value,
               label: item.label,
@@ -612,6 +615,13 @@ export function ProjectDetail() {
           />
         </div>
       ) : null}
+
+      {activeTab === "repo" && project?.id && (
+        <RepoTab
+          projectId={project.id}
+          isBoard={true}
+        />
+      )}
 
       {activePluginTab && (
         <PluginSlotMount
