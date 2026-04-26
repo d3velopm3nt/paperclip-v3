@@ -33,6 +33,7 @@ import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
 import { Rooms } from "./pages/Rooms"; // v3: operator messaging
 import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
+import { Channels } from "./pages/Channels"; // v3: channels
 import { ActionPolicies } from "./pages/ActionPolicies"; // v3:
 import { Clients } from "./pages/Clients"; // v3:
 import { Plans } from "./pages/Plans"; // v3:
@@ -146,6 +147,7 @@ function boardRoutes() {
       <Route path="email/workflows" element={<EmailWorkflows />} /> {/* v3: */}
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
+      <Route path="channels" element={<Channels />} /> {/* v3: channels */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
@@ -378,6 +380,7 @@ export function App() {
           <Route path="governance/plans" element={<UnprefixedBoardRedirect />} />
           <Route path="rooms" element={<UnprefixedBoardRedirect />} />
           <Route path="rooms/:id" element={<UnprefixedBoardRedirect />} />
+          <Route path="channels" element={<UnprefixedBoardRedirect />} />
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>

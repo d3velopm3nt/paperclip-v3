@@ -352,8 +352,19 @@ export function operatorMessagingService(db: Db) {
     agentId: string,
     body: string,
     issueId: string | null,
-    platform: "email" = "email",
+    platform?: string,
   ): Promise<void> {
+    // Auto-detect platform from existing thread if not specified
+    if (!platform && issueId) {
+      const [thread] = await db
+        .select({ platform: messageThreads.platform })
+        .from(messageThreads)
+        .innerJoin(operatorMessages, eq(operatorMessages.id, messageThreads.operatorMessageId))
+        .where(eq(operatorMessages.issueId, issueId))
+        .limit(1);
+      platform = thread?.platform ?? "email";
+    }
+    platform ??= "email";
     const adapter = getAdapter(platform);
     if (!adapter) {
       logger.warn({ platform }, "operator-messaging: no adapter registered");

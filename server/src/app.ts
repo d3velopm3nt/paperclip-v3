@@ -43,6 +43,7 @@ import { planRoutes } from "./routes/plans.js"; // v3:
 import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: operator messaging
+import { telegramRoutes, registerTelegramAdapterIfConfigured } from "./routes/telegram.js"; // v3: telegram
 import { repoRoutes } from "./routes/repo.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
@@ -182,7 +183,9 @@ export async function createApp(
   api.use(workflowRunRoutes(db)); // v3:
   api.use(roomRoutes(db)); // v3: operator messaging
   api.use(operatorMessageRoutes(db)); // v3: operator messaging
+  api.use(telegramRoutes(db)); // v3: telegram channel
   api.use(repoRoutes(db)); // v3: project repo tab
+  registerTelegramAdapterIfConfigured(); // v3: register telegram adapter at startup
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

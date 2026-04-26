@@ -19,6 +19,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "governance", // v3:
   "clients", // v3:
   "rooms", // v3:
+  "channels", // v3:
 ]);
 
 const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "cli-auth", "docs", "instance"]);
