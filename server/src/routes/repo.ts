@@ -186,7 +186,7 @@ export function repoRoutes(db: Db) {
     const resolvedCwd = path.resolve(result.cwd);
     const resolvedFile = path.resolve(resolvedCwd, filePath);
 
-    if (!resolvedFile.startsWith(resolvedCwd + path.sep) && resolvedFile !== resolvedCwd) {
+    if (!resolvedFile.startsWith(resolvedCwd + "/") && resolvedFile !== resolvedCwd) {
       res.status(400).json({ error: "Path outside workspace" });
       return;
     }
