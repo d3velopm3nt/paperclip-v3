@@ -182,4 +182,9 @@ export const queryKeys = {
     dashboard: (pluginId: string) => ["plugins", pluginId, "dashboard"] as const,
     logs: (pluginId: string) => ["plugins", pluginId, "logs"] as const,
   },
+  chat: {
+    threads: (companyId: string) => ["chat", "threads", companyId] as const,
+    messages: (companyId: string, threadId: string) =>
+      ["chat", "messages", companyId, threadId] as const,
+  },
 };
