@@ -472,6 +472,9 @@ export function ProjectDetail() {
     if (cachedTab === "budget") {
       return <Navigate to={`/projects/${canonicalProjectRef}/budget`} replace />;
     }
+    if (cachedTab === "repo") {
+      return <Navigate to={`/projects/${canonicalProjectRef}/repo`} replace />;
+    }
     if (isProjectPluginTab(cachedTab)) {
       return <Navigate to={`/projects/${canonicalProjectRef}?tab=${encodeURIComponent(cachedTab)}`} replace />;
     }
@@ -497,6 +500,8 @@ export function ProjectDetail() {
       navigate(`/projects/${canonicalProjectRef}/budget`);
     } else if (tab === "configuration") {
       navigate(`/projects/${canonicalProjectRef}/configuration`);
+    } else if (tab === "repo") {
+      navigate(`/projects/${canonicalProjectRef}/repo`);
     } else {
       navigate(`/projects/${canonicalProjectRef}/issues`);
     }
