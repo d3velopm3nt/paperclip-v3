@@ -647,6 +647,12 @@ async function routeOperatorReply(
   _fromAddr: string,
   subject: string,
 ): Promise<void> {
+  // Try thread continuation first — the reply's References chain will include
+  // the original inbound client email's Message-ID (which is in the DB with an
+  // issueId), even though the AI's outbound reply is not stored.
+  const threadHandled = await tryContinueThread(db, emailMessageId);
+  if (threadHandled) return;
+
   const [msg] = await db
     .select({ body: emailMessages.body, fromAddr: emailMessages.fromAddr })
     .from(emailMessages)

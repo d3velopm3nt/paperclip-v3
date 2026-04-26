@@ -32,6 +32,7 @@ import { instanceSettingsService } from "./instance-settings.js";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
+import { logger } from "../middleware/logger.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -1061,6 +1062,30 @@ export function issueService(db: Db) {
           await syncIssueLabels(updated.id, existing.companyId, nextLabelIds, tx);
         }
         const [enriched] = await withIssueLabels(tx, [updated]);
+        return enriched;
+      }).then(async (enriched) => {
+        // When a child issue goes done, wake the parent issue's assignee so
+        // the parent agent (e.g. CEO triage) can synthesize and respond.
+        if (enriched && issueData.status === "done" && existing.parentId) {
+          const [parent] = await db
+            .select({ assigneeAgentId: issues.assigneeAgentId, id: issues.id })
+            .from(issues)
+            .where(eq(issues.id, existing.parentId))
+            .limit(1);
+          if (parent?.assigneeAgentId) {
+            const { heartbeatService } = await import("./heartbeat.js");
+            heartbeatService(db).wakeup(parent.assigneeAgentId, {
+              source: "assignment",
+              triggerDetail: "system",
+              reason: "child-issue-done",
+              payload: { parentIssueId: parent.id, childIssueId: id },
+              contextSnapshot: { parentIssueId: parent.id, childIssueId: id },
+              requestedByActorType: "system",
+            }).catch((err: unknown) => {
+              logger.warn({ err, parentIssueId: parent.id, childIssueId: id }, "issues: child-done wakeup failed");
+            });
+          }
+        }
         return enriched;
       });
     },

@@ -49,6 +49,17 @@ export interface ProposePlanInput {
   confidence?: Confidence;
   /** Acceptance criteria — required for kind='create_issue'. */
   definitionOfDone?: string[];
+  /**
+   * For kind='create_issue': the triage issue that spawned this plan.
+   * The created issue will be a child of this issue (parentId), and when it
+   * goes done the parent's assignee is woken automatically.
+   */
+  parentIssueId?: string | null;
+  /**
+   * For kind='create_issue': which agent to assign the created issue to.
+   * Defaults to the proposing agent (agentId) if omitted.
+   */
+  assigneeAgentId?: string | null;
 }
 
 /** Thrown when a create_issue plan is missing the readiness fields. */
@@ -150,7 +161,11 @@ export function planGateService(db: Db) {
           kind: input.kind,
           sourceEmailMessageId: input.sourceEmailMessageId ?? null,
           proposalText: input.proposalText,
-          proposalMeta: input.proposalMeta ?? {},
+          proposalMeta: {
+            ...(input.proposalMeta ?? {}),
+            ...(input.parentIssueId ? { parentIssueId: input.parentIssueId } : {}),
+            ...(input.assigneeAgentId ? { assigneeAgentId: input.assigneeAgentId } : {}),
+          },
           definitionOfDone: input.definitionOfDone ?? [],
           confidence: input.confidence ?? "medium",
           updatedAt: new Date(),
@@ -334,9 +349,6 @@ export function planGateService(db: Db) {
         const meta = (plan.proposalMeta ?? {}) as Record<string, unknown>;
         const srcEmail = (meta.sourceEmail ?? {}) as { subject?: string; from?: string };
         const title = srcEmail.subject?.trim() || plan.proposalText.slice(0, 200);
-        // Issue description = the proposal text (the plan the operator
-        // approved). The full email stays in /email/inbox — we reference
-        // its id so the UI can deep-link, but we don't duplicate the body.
         const parts: string[] = [plan.proposalText];
         if (plan.sourceEmailMessageId) {
           parts.push("");
@@ -345,11 +357,21 @@ export function planGateService(db: Db) {
           );
         }
         const description = parts.join("\n");
+
+        // parentIssueId / assigneeAgentId may come from proposalMeta (set by
+        // the proposing agent when delegating to a specialist).
+        const parentIssueId = typeof meta.parentIssueId === "string" ? meta.parentIssueId : null;
+        const assigneeAgentId = typeof meta.assigneeAgentId === "string" ? meta.assigneeAgentId : null;
+
         const created = await issueService(db).create(plan.companyId, {
           title,
           description,
           clientId: plan.clientId ?? null,
           createdByAgentId: plan.agentId,
+          ...(parentIssueId ? { parentId: parentIssueId } : {}),
+          ...(assigneeAgentId
+            ? { assigneeAgentId, status: "in_progress" }
+            : {}),
         });
         // Link the issue back to the plan + email for audit/inbox display.
         await db
