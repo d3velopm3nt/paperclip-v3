@@ -1508,6 +1508,37 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     })();
 
+    // @operator detection — notify operator via agent_voice when agent mentions them.
+    const OPERATOR_MENTION_RE = /@operator\b/i;
+    if (OPERATOR_MENTION_RE.test(req.body.body) && actor.agentId) {
+      (async () => {
+        const { emailAccounts } = await import("@paperclipai/db");
+        const { and, eq } = await import("drizzle-orm");
+        const [voiceAcct] = await db
+          .select({ id: emailAccounts.id })
+          .from(emailAccounts)
+          .where(
+            and(
+              eq(emailAccounts.companyId, currentIssue.companyId),
+              eq(emailAccounts.role, "agent_voice"),
+            ),
+          )
+          .limit(1);
+        if (voiceAcct) {
+          const { operatorMessagingService } = await import("../services/operator-messaging.js");
+          await operatorMessagingService(db).sendToOperator(
+            currentIssue.companyId,
+            voiceAcct.id,
+            actor.agentId!,
+            req.body.body,
+            id,
+          );
+        }
+      })().catch((err) =>
+        logger.warn({ err, issueId: id }, "issues: @operator notification failed"),
+      );
+    }
+
     res.status(201).json(comment);
   });
 
