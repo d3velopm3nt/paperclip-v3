@@ -71,6 +71,9 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     db = createDb(tempDb.connectionString);
     attachmentRoot = mkdtempSync(path.join(tmpdir(), "paperclip-home-"));
     process.env.PAPERCLIP_HOME = attachmentRoot;
+    // Disable async workflow re-evaluation — it races with afterEach truncate.
+    process.env.PAPERCLIP_DISABLE_WORKFLOW_EVAL = "1";
+    process.env.PAPERCLIP_DISABLE_HEARTBEAT_RUN_EXEC = "1";
   }, 30_000);
 
   afterEach(async () => {
@@ -87,6 +90,8 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
   afterAll(async () => {
     if (previousHome === undefined) delete process.env.PAPERCLIP_HOME;
     else process.env.PAPERCLIP_HOME = previousHome;
+    delete process.env.PAPERCLIP_DISABLE_WORKFLOW_EVAL;
+    delete process.env.PAPERCLIP_DISABLE_HEARTBEAT_RUN_EXEC;
     try { rmSync(attachmentRoot, { recursive: true, force: true }); } catch { /* ignore */ }
     await tempDb?.cleanup();
   });
@@ -154,7 +159,14 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     expect(firstMsg.issueId).toBeTruthy();
     const triageIssueId = firstMsg.issueId!;
 
-    // Clear wakeup queue so we can assert the reply queues a new wakeup.
+    // Clear wakeup queue + issue execution lock so the reply path does a fresh
+    // wakeup with reason='thread-reply' (otherwise heartbeatService coalesces
+    // into the still-locked first run with reason='issue_execution_same_name').
+    // In production the first run completes + releases the lock between calls;
+    // tests bypass run execution via PAPERCLIP_DISABLE_HEARTBEAT_RUN_EXEC=1, so
+    // we have to release manually.
+    await db.execute(sql`UPDATE issues SET execution_run_id = NULL, execution_agent_name_key = NULL, execution_locked_at = NULL`);
+    await db.execute(sql`UPDATE heartbeat_runs SET status = 'succeeded', finished_at = now(), wakeup_request_id = NULL WHERE status IN ('queued','running')`);
     await db.delete(agentWakeupRequests);
 
     const reply = await processor.processRawMessage({
@@ -199,6 +211,16 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
       rawBytes: buildEmail({ messageId: "<approve-1@test>", subject: "Build feature X" }),
     });
 
+    // Seed client + project so the create_issue plan has full readiness.
+    const [client] = await db
+      .insert(clients)
+      .values({ companyId: company.id, name: "Innotrack", emailDomain: "innotrack.test" })
+      .returning();
+    const [project] = await db
+      .insert(projects)
+      .values({ companyId: company.id, name: "Feature X", clientId: client.id })
+      .returning();
+
     const gate = planGateService(db);
     const proposed = await gate.proposePlan({
       companyId: company.id,
@@ -207,6 +229,9 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
       actionType: "create_issue",
       proposalText: "Plan: build feature X with frontend + backend changes.",
       sourceEmailMessageId: inbound.emailMessageId,
+      clientId: client.id,
+      projectId: project.id,
+      definitionOfDone: ["feature X built", "tests pass", "shipped"],
       proposalMeta: { sourceEmail: { from: "client@innotrack.test", subject: "Build feature X" } },
       confidence: "high",
     });
@@ -235,8 +260,8 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     const proposed = await gate.proposePlan({
       companyId: company.id,
       agentId: agent.id,
-      kind: "create_issue",
-      actionType: "create_issue",
+      kind: "request_clarification",
+      actionType: "request_clarification",
       proposalText: "Test plan",
     });
     // Backdate the token so it's already expired.
@@ -256,14 +281,42 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     const proposed = await gate.proposePlan({
       companyId: company.id,
       agentId: agent.id,
-      kind: "create_issue",
-      actionType: "create_issue",
+      kind: "request_clarification",
+      actionType: "request_clarification",
       proposalText: "Test plan",
     });
     const tokens = planDecisionTokenService(db);
     const { token } = await tokens.issue(proposed.planId);
     await tokens.redeem(token);
     await expect(tokens.redeem(token)).rejects.toThrow(/already used/i);
+  }, 30_000);
+
+  it("create_issue plan without clientId/projectId/DoD throws PlanReadinessError", async () => {
+    const { company, agent } = await seed();
+    const { planGateService: pgs, PlanReadinessError } = await import("../services/plan-gate.ts");
+    const gate = pgs(db);
+    await expect(
+      gate.proposePlan({
+        companyId: company.id,
+        agentId: agent.id,
+        kind: "create_issue",
+        actionType: "create_issue",
+        proposalText: "Build it",
+      }),
+    ).rejects.toBeInstanceOf(PlanReadinessError);
+    // None of the readiness fields are set → all three should appear in `missing`.
+    try {
+      await gate.proposePlan({
+        companyId: company.id,
+        agentId: agent.id,
+        kind: "create_issue",
+        actionType: "create_issue",
+        proposalText: "Build it",
+      });
+    } catch (err) {
+      const e = err as InstanceType<typeof PlanReadinessError>;
+      expect(e.missing).toEqual(["clientId", "projectId", "definitionOfDone"]);
+    }
   }, 30_000);
 
   it("client/project auto-link: single non-archived project for matched client → plan picks it up", async () => {

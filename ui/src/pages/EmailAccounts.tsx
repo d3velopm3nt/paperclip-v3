@@ -426,6 +426,11 @@ export function EmailAccounts() {
                     </span>
                   </div>
                   <div className="text-xs text-muted-foreground truncate">{account.fromEmail}</div>
+                  {account.role === "agent_voice" && (
+                    <div className="text-[11px] text-muted-foreground/80 truncate mt-0.5">
+                      Outbound only — sends operator/team notifications. Not polled, no triage.
+                    </div>
+                  )}
                   {account.lastErrorText && (
                     <div className="mt-1 flex items-center gap-1 text-xs text-destructive truncate">
                       <XCircle className="h-3 w-3 shrink-0" />
@@ -434,15 +439,17 @@ export function EmailAccounts() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0 flex-wrap" onClick={(e) => e.stopPropagation()}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => testConnection(account)}
-                    disabled={testingId === account.id}
-                  >
-                    <Plug className="h-4 w-4 sm:mr-1" />
-                    <span className="hidden sm:inline">{testingId === account.id ? "…" : "IMAP"}</span>
-                  </Button>
+                  {account.role !== "agent_voice" && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => testConnection(account)}
+                      disabled={testingId === account.id}
+                    >
+                      <Plug className="h-4 w-4 sm:mr-1" />
+                      <span className="hidden sm:inline">{testingId === account.id ? "…" : "IMAP"}</span>
+                    </Button>
+                  )}
                   {account.smtpHost && (
                     <Button
                       variant="outline"

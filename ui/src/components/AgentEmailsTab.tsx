@@ -1,23 +1,19 @@
-// v3: inbox view of processed inbound email for the selected company.
-import { useEffect, useState } from "react";
+// v3: emails tab on the agent detail page — inbox (received) and sent (matched inbound) toggle.
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@/lib/router";
 import { useToast } from "../context/ToastContext";
-import { useConfirm } from "../components/ConfirmDialogProvider";
+import { useConfirm } from "./ConfirmDialogProvider";
 import {
   emailMessagesApi,
   type EmailMessageDetail,
   type EmailMessageSummary,
 } from "../api/emailMessages";
-import { useCompany } from "../context/CompanyContext";
-import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
-import { PageSkeleton } from "../components/PageSkeleton";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
-  Inbox as InboxIcon,
   Mail,
   Paperclip,
   RefreshCw,
@@ -28,11 +24,11 @@ import {
   ArrowLeft,
   Activity,
   Trash2,
-  Bot,
-  Users,
+  Inbox,
+  Send,
 } from "lucide-react";
 
-type MailboxTab = "inbound" | "agent_voice";
+type Direction = "received" | "sent";
 
 const STATE_FILTERS = [
   { key: "__all__", label: "All" },
@@ -76,40 +72,55 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function EmailInbox() {
-  const { selectedCompanyId, selectedCompany } = useCompany();
-  const { setBreadcrumbs } = useBreadcrumbs();
-  const companyId = selectedCompanyId!;
-  const [mailbox, setMailbox] = useState<MailboxTab>("inbound");
+export function AgentEmailsTab({
+  agentId,
+  companyId,
+}: {
+  agentId: string;
+  companyId: string;
+}) {
+  const [direction, setDirection] = useState<Direction>("received");
   const [stateFilter, setStateFilter] = useState<string>("__all__");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const qc = useQueryClient();
+  const { pushToast } = useToast();
+  const confirm = useConfirm();
 
-  useEffect(() => {
-    setBreadcrumbs([{ label: "Email Inbox" }]);
-  }, [setBreadcrumbs]);
-
+  // Received = replies from clients arriving in agent_voice inbox
+  // Sent     = inbound client emails matched to this agent (emails agent triaged/responded to)
   const listQuery = useQuery({
-    queryKey: [...queryKeys.emailMessages.list(companyId, stateFilter), mailbox],
+    queryKey: [
+      ...queryKeys.emailMessages.list(companyId, stateFilter),
+      "agent-emails",
+      direction,
+      agentId,
+    ],
     queryFn: () =>
-      emailMessagesApi.list(
-        companyId,
-        stateFilter === "__all__" ? undefined : stateFilter,
-        mailbox,
-      ),
+      direction === "received"
+        ? emailMessagesApi.list(
+            companyId,
+            stateFilter === "__all__" ? undefined : stateFilter,
+            "agent_voice",
+          )
+        : emailMessagesApi.list(
+            companyId,
+            stateFilter === "__all__" ? undefined : stateFilter,
+            "inbound",
+            agentId,
+          ),
     enabled: !!companyId,
     refetchInterval: 15_000,
   });
 
   const detailQuery = useQuery({
-    queryKey: selectedId ? queryKeys.emailMessages.detail(selectedId) : ["email-messages", "detail", "none"],
+    queryKey: selectedId
+      ? queryKeys.emailMessages.detail(selectedId)
+      : ["email-messages", "detail", "none"],
     queryFn: () => emailMessagesApi.get(selectedId!),
     enabled: !!selectedId,
   });
 
-  const qc = useQueryClient();
-  const { pushToast } = useToast();
-  const confirm = useConfirm();
   const reprocessMutation = useMutation({
     mutationFn: (id: string) => emailMessagesApi.reprocess(id),
     onSuccess: (_data, id) => {
@@ -146,58 +157,52 @@ export function EmailInbox() {
     );
   });
 
-  if (!companyId) return <div className="p-6 text-sm text-muted-foreground">Select a company.</div>;
-  if (listQuery.isLoading) return <PageSkeleton />;
+  function switchDirection(d: Direction) {
+    setDirection(d);
+    setSelectedId(null);
+    setStateFilter("__all__");
+  }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <div className="flex items-center justify-between p-6 pb-3 border-b border-border">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold">
-            <InboxIcon className="h-6 w-6" />
-            Email Inbox
-            {selectedCompany && (
-              <span className="text-sm font-normal text-muted-foreground">· {selectedCompany.name}</span>
-            )}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            {mailbox === "inbound"
-              ? "Client messages captured by the IMAP monitor."
-              : "Agent voice messages — questions sent and replies received."}
-          </p>
+    <div className="flex flex-col min-h-0" style={{ height: "calc(100vh - 220px)" }}>
+      <div className="flex items-center justify-between pb-3 border-b border-border">
+        <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+          <button
+            onClick={() => switchDirection("received")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+              direction === "received"
+                ? "bg-foreground/10 text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+            }`}
+          >
+            <Inbox className="h-3.5 w-3.5" />
+            Received
+          </button>
+          <button
+            onClick={() => switchDirection("sent")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-border transition-colors ${
+              direction === "sent"
+                ? "bg-foreground/10 text-foreground font-medium"
+                : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+            }`}
+          >
+            <Send className="h-3.5 w-3.5" />
+            Sent
+          </button>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-border overflow-hidden text-sm">
-            <button
-              onClick={() => { setMailbox("inbound"); setSelectedId(null); setStateFilter("__all__"); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                mailbox === "inbound"
-                  ? "bg-foreground/10 text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-              }`}
-            >
-              <Users className="h-3.5 w-3.5" />
-              Client Mail
-            </button>
-            <button
-              onClick={() => { setMailbox("agent_voice"); setSelectedId(null); setStateFilter("__all__"); }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-border transition-colors ${
-                mailbox === "agent_voice"
-                  ? "bg-foreground/10 text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-              }`}
-            >
-              <Bot className="h-3.5 w-3.5" />
-              Agent Mail
-            </button>
-          </div>
+          <p className="text-xs text-muted-foreground">
+            {direction === "received"
+              ? "Replies received on the agent voice inbox"
+              : "Client emails this agent was assigned to handle"}
+          </p>
           <Button variant="outline" size="sm" onClick={() => listQuery.refetch()}>
             <RefreshCw className="h-4 w-4 mr-1" /> Refresh
           </Button>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 px-6 py-3 border-b border-border flex-wrap">
+      <div className="flex items-center gap-2 py-3 border-b border-border flex-wrap">
         {STATE_FILTERS.map((f) => (
           <button
             key={f.key}
@@ -221,9 +226,15 @@ export function EmailInbox() {
         </div>
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col sm:flex-row">
-        <div className={`flex-1 min-h-0 overflow-y-auto ${selectedId ? "hidden sm:block sm:max-w-md sm:border-r sm:border-border" : ""}`}>
-          {messages.length === 0 ? (
+      <div className="flex-1 min-h-0 flex flex-col sm:flex-row overflow-hidden">
+        <div
+          className={`flex-1 min-h-0 overflow-y-auto ${
+            selectedId ? "hidden sm:block sm:max-w-md sm:border-r sm:border-border" : ""
+          }`}
+        >
+          {listQuery.isLoading ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : messages.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
               <Mail className="h-10 w-10 mx-auto mb-3 opacity-40" />
               No messages {stateFilter !== "__all__" ? `in ${stateFilter}` : ""}.
@@ -231,7 +242,7 @@ export function EmailInbox() {
           ) : (
             <ul className="divide-y divide-border">
               {messages.map((m) => (
-                <MessageRow
+                <AgentEmailRow
                   key={m.id}
                   message={m}
                   selected={m.id === selectedId}
@@ -244,7 +255,7 @@ export function EmailInbox() {
 
         {selectedId && (
           <div className="flex-1 min-h-0 overflow-y-auto bg-muted/20">
-            <MessageDetail
+            <AgentEmailDetail
               detail={detailQuery.data ?? null}
               loading={detailQuery.isLoading}
               onBack={() => setSelectedId(null)}
@@ -255,14 +266,12 @@ export function EmailInbox() {
                   title: "Delete email + history?",
                   body: (
                     <div className="space-y-2 text-sm">
-                      <p>
-                        This permanently removes the email and everything derived from it:
-                      </p>
+                      <p>Permanently removes the email and all derived data:</p>
                       <ul className="list-disc pl-5 space-y-0.5 text-muted-foreground">
                         <li>Plans, approvals, decision tokens</li>
                         <li>Workflow runs + stage results</li>
-                        <li>Wakeup requests for the triage agent</li>
-                        <li>Linked triage issue + its comments (if no other email points to it)</li>
+                        <li>Wakeup requests</li>
+                        <li>Linked triage issue + comments (if no other email references it)</li>
                         <li>Email attachments on disk</li>
                       </ul>
                       <p className="text-destructive">This cannot be undone.</p>
@@ -282,7 +291,7 @@ export function EmailInbox() {
   );
 }
 
-function MessageRow({
+function AgentEmailRow({
   message,
   selected,
   onClick,
@@ -323,7 +332,7 @@ function MessageRow({
   );
 }
 
-function MessageDetail({
+function AgentEmailDetail({
   detail,
   loading,
   onBack,

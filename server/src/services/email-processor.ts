@@ -18,6 +18,8 @@ import { saveAttachment } from "./attachment-storage.js";
 import { clientService } from "./clients.js";
 import { issueService } from "./issues.js";
 import { sendEmailFromAccount } from "./email-sender.js";
+import { workflowEngine } from "./workflow-engine.js";
+import { inboundEmailWorkflow } from "./workflows/inbound-email.js";
 import { logger } from "../middleware/logger.js";
 
 export interface ProcessEmailInput {
@@ -146,6 +148,18 @@ export function emailProcessorService(db: Db) {
     // operators can retry later.
     try {
       await routeInbound(db, inserted!.id, input.emailAccountId, fromAddr, toAddrs, subject);
+      // Workflow eval is for inbound triage only. Agent-voice replies and
+      // other non-triage paths set matchedAgentId/issueId by other means.
+      // Skip workflow for self-loop emails (ignored by routeInbound loop guard).
+      const [acctState] = await db
+        .select({ role: emailAccounts.role, processingState: emailMessages.processingState })
+        .from(emailAccounts)
+        .innerJoin(emailMessages, eq(emailMessages.id, inserted!.id))
+        .where(eq(emailAccounts.id, input.emailAccountId))
+        .limit(1);
+      if (acctState?.role === "inbound" && acctState?.processingState !== "ignored") {
+        workflowEngine(db).runFireAndForget(inboundEmailWorkflow, inserted!.id);
+      }
     } catch (err) {
       logger.warn(
         { err, emailMessageId: inserted!.id },
@@ -166,6 +180,136 @@ export function emailProcessorService(db: Db) {
       duplicated: false,
       attachmentCount,
     };
+  }
+
+  async function deleteWithHistory(emailMessageId: string): Promise<{
+    deletedPlans: number;
+    deletedWorkflowRuns: number;
+    deletedComments: number;
+    deletedIssue: boolean;
+  }> {
+    const [email] = await db
+      .select({ id: emailMessages.id, issueId: emailMessages.issueId })
+      .from(emailMessages)
+      .where(eq(emailMessages.id, emailMessageId))
+      .limit(1);
+    if (!email) throw new Error(`email not found: ${emailMessageId}`);
+
+    const {
+      approvals,
+      approvalComments,
+      plans,
+      planDecisionTokens,
+      workflowRuns,
+      agentWakeupRequests,
+      issueComments,
+      issues,
+    } = await import("@paperclipai/db");
+    const { sql } = await import("drizzle-orm");
+
+    return db.transaction(async (tx) => {
+      // 1. Plans referencing this email — collect ids first.
+      const planRows = await tx
+        .select({ id: plans.id })
+        .from(plans)
+        .where(eq(plans.sourceEmailMessageId, emailMessageId));
+      const planIds = planRows.map((r) => r.id);
+
+      // 2. Approvals + their comments + plan_decision_tokens (tokens cascade
+      //    with plans, but explicit delete keeps the order safe). Approval
+      //    comments do NOT cascade, so they have to come down first.
+      if (planIds.length > 0) {
+        await tx.delete(planDecisionTokens).where(inArray(planDecisionTokens.planId, planIds));
+        const approvalRows = await tx
+          .select({ id: approvals.id })
+          .from(approvals)
+          .where(inArray(approvals.planId, planIds));
+        const approvalIds = approvalRows.map((r) => r.id);
+        if (approvalIds.length > 0) {
+          await tx.delete(approvalComments).where(inArray(approvalComments.approvalId, approvalIds));
+        }
+        // Detach email_messages.approval_id (no cascade) so the approval delete
+        // doesn't blow up on a sibling email pointing at the same approval.
+        if (approvalIds.length > 0) {
+          await tx
+            .update(emailMessages)
+            .set({ approvalId: null })
+            .where(inArray(emailMessages.approvalId, approvalIds));
+        }
+        await tx.delete(approvals).where(inArray(approvals.planId, planIds));
+        await tx.delete(plans).where(inArray(plans.id, planIds));
+      }
+
+      // 3. Workflow runs for this source — cascade drops stage results.
+      const runs = await tx
+        .select({ id: workflowRuns.id })
+        .from(workflowRuns)
+        .where(eq(workflowRuns.sourceId, emailMessageId));
+      if (runs.length > 0) {
+        await tx.delete(workflowRuns).where(eq(workflowRuns.sourceId, emailMessageId));
+      }
+
+      // 4. Agent wakeup requests that reference this email or its triage issue.
+      //    heartbeat_runs has FK → agent_wakeup_requests (no cascade), so
+      //    nullify heartbeat_runs.wakeup_request_id first.
+      const { heartbeatRuns: hbRuns } = await import("@paperclipai/db");
+      const wakeupIdRows = await tx
+        .select({ id: agentWakeupRequests.id })
+        .from(agentWakeupRequests)
+        .where(
+          email.issueId
+            ? sql`${agentWakeupRequests.payload}->>'emailMessageId' = ${emailMessageId} OR ${agentWakeupRequests.payload}->>'issueId' = ${email.issueId}`
+            : sql`${agentWakeupRequests.payload}->>'emailMessageId' = ${emailMessageId}`,
+        );
+      const wakeupIds = wakeupIdRows.map((r) => r.id);
+      if (wakeupIds.length > 0) {
+        await tx
+          .update(hbRuns)
+          .set({ wakeupRequestId: null })
+          .where(inArray(hbRuns.wakeupRequestId, wakeupIds));
+        await tx.delete(agentWakeupRequests).where(inArray(agentWakeupRequests.id, wakeupIds));
+      }
+
+      // 5. Triage issue cleanup — delete only if no OTHER emails reference
+      //    this issue (avoid orphaning a thread someone still needs).
+      let deletedIssue = false;
+      let deletedComments = 0;
+      if (email.issueId) {
+        // Detach this email first so the orphan check is honest.
+        await tx
+          .update(emailMessages)
+          .set({ issueId: null })
+          .where(eq(emailMessages.id, emailMessageId));
+
+        const otherEmails = await tx
+          .select({ id: emailMessages.id })
+          .from(emailMessages)
+          .where(eq(emailMessages.issueId, email.issueId));
+        if (otherEmails.length === 0) {
+          const cs = await tx
+            .delete(issueComments)
+            .where(eq(issueComments.issueId, email.issueId))
+            .returning({ id: issueComments.id });
+          deletedComments = cs.length;
+          await tx.delete(issues).where(eq(issues.id, email.issueId));
+          deletedIssue = true;
+        }
+      }
+
+      // 6. Finally, delete the email row (cascades email_attachments).
+      await tx.delete(emailMessages).where(eq(emailMessages.id, emailMessageId));
+
+      logger.info(
+        { emailMessageId, deletedPlans: planIds.length, deletedRuns: runs.length, deletedIssue, deletedComments },
+        "email-processor: deleted with history",
+      );
+      return {
+        deletedPlans: planIds.length,
+        deletedWorkflowRuns: runs.length,
+        deletedComments,
+        deletedIssue,
+      };
+    });
   }
 
   async function reprocess(emailMessageId: string): Promise<void> {
@@ -195,9 +339,18 @@ export function emailProcessorService(db: Db) {
       .where(eq(emailMessages.id, emailMessageId));
 
     await routeInbound(db, row.id, row.emailAccountId, row.fromAddr, row.toAddrs ?? [], row.subject);
+    const [acctState2] = await db
+      .select({ role: emailAccounts.role, processingState: emailMessages.processingState })
+      .from(emailAccounts)
+      .innerJoin(emailMessages, eq(emailMessages.id, row.id))
+      .where(eq(emailAccounts.id, row.emailAccountId))
+      .limit(1);
+    if (acctState2?.role === "inbound" && acctState2?.processingState !== "ignored") {
+      workflowEngine(db).runFireAndForget(inboundEmailWorkflow, row.id);
+    }
   }
 
-  return { processRawMessage, reprocess };
+  return { processRawMessage, reprocess, deleteWithHistory };
 }
 
 // v3: route an inserted email_messages row through client match + plan gate.
@@ -212,17 +365,12 @@ async function routeInbound(
   toAddrs: string[],
   subject: string,
 ): Promise<void> {
-  // Threading: if this email is a reply to one we've processed before, append
-  // it to that thread's existing triage issue (as a comment) and wake the same
-  // agent — don't create a brand new triage issue. The plan-gate approval flow
-  // on the original plan continues normally.
-  const didThread = await tryContinueThread(db, emailMessageId);
-  if (didThread) return;
   const [account] = await db
     .select({
       companyId: emailAccounts.companyId,
       address: emailAccounts.fromEmail,
       label: emailAccounts.label,
+      role: emailAccounts.role,
       triageAgentId: emailAccounts.triageAgentId,
       teamEmails: emailAccounts.teamEmails,
       autoAcknowledge: emailAccounts.autoAcknowledge,
@@ -234,6 +382,47 @@ async function routeInbound(
     .where(eq(emailAccounts.id, emailAccountId))
     .limit(1);
   if (!account) return;
+
+  // Loop guard: if the sender is one of our own agent_voice accounts (the AI
+  // sending a questions/plan email that landed back in an inbound inbox), skip
+  // everything — no triage, no auto-ack. Scope to agent_voice only: operator
+  // replies (inbound → agent_voice) must NOT be blocked, they carry [plan-id]
+  // tags and must reach routeOperatorReply.
+  const ownAgentVoiceAddresses = await db
+    .select({ fromEmail: emailAccounts.fromEmail })
+    .from(emailAccounts)
+    .where(and(eq(emailAccounts.companyId, account.companyId), eq(emailAccounts.role, "agent_voice")));
+  const ownSet = new Set(ownAgentVoiceAddresses.map((r) => r.fromEmail.toLowerCase()));
+  if (ownSet.has(fromAddr.toLowerCase())) {
+    await db
+      .update(emailMessages)
+      .set({
+        processingState: "ignored",
+        matchedCompanyId: account.companyId,
+        processedAt: new Date(),
+        errorText: `Self-loop: from=${fromAddr} is one of our agent_voice accounts.`,
+      })
+      .where(eq(emailMessages.id, emailMessageId));
+    logger.info(
+      { emailMessageId, fromAddr, emailAccountId },
+      "email-processor: ignored self-loop email (from own account)",
+    );
+    return;
+  }
+
+  // Threading: if this email is a reply to one we've processed before, append
+  // it to that thread's existing triage issue (as a comment) and wake the same
+  // agent — don't create a brand new triage issue. The plan-gate approval flow
+  // on the original plan continues normally.
+  const didThread = await tryContinueThread(db, emailMessageId);
+  if (didThread) return;
+  // Agent-voice accounts receive operator replies, not client requests.
+  // Route them to a separate handler that can recognise approval/rejection
+  // tags or treat the body as a follow-up comment on the linked triage issue.
+  if (account.role !== "inbound") {
+    await routeOperatorReply(db, emailMessageId, account.companyId, fromAddr, subject);
+    return;
+  }
 
   // Send acknowledgement reply to sender if enabled. Uses reply_from override
   // if set, otherwise the inbox itself. Fire-and-forget — failures log only.
@@ -315,12 +504,18 @@ async function routeInbound(
   const clientLine = clientRec ? `${clientRec.name} (id=${clientRec.id})` : "(no client matched)";
   const projectLine = autoProject ? `${autoProject.name} (id=${autoProject.id})` : "(none — pick one if needed)";
 
+  const ackNote = account.autoAcknowledge
+    ? "An automatic acknowledgement was sent to the sender so they know the email arrived. **This ack is courtesy only — it is NOT your response.** You still must propose a plan or ask clarifying questions below."
+    : "No acknowledgement was sent. Your plan / questions will be the first response the sender sees.";
+
   const description = [
     `# Task: triage inbound email and propose a plan`,
     ``,
     `A client email has arrived on **${account.address}** (${account.label}).`,
     `Review its content, the client history, and — if a project is linked — the codebase.`,
-    `Then propose ONE of the following plan kinds via the API so the operator can approve.`,
+    `Then propose ONE of the plan kinds below via the API so the operator can approve.`,
+    ``,
+    `> ${ackNote}`,
     ``,
     `## Email`,
     `- Email message id: \`${emailMessageId}\``,
@@ -332,31 +527,52 @@ async function routeInbound(
     `- Client: ${clientLine}`,
     `- Project: ${projectLine}`,
     ``,
-    `## How to respond`,
+    `## You MUST do one of these — not none`,
     ``,
     `Call \`POST /api/companies/${companyId}/plans\` with a JSON body:`,
     ``,
     `\`\`\`json`,
     `{`,
     `  "agentId": "${triageAgentId}",`,
-    `  "kind": "create_issue" | "reply_to_sender" | "request_clarification",`,
+    `  "kind": "create_issue" | "reply_to_sender" | "request_clarification" | "request_operator_input",`,
     `  "proposalText": "<your full plan / reply / questions>",`,
     `  "confidence": "low" | "medium" | "high",`,
     `  "clientId": ${clientRec ? `"${clientRec.id}"` : "null"},`,
     `  "projectId": ${autoProject ? `"${autoProject.id}"` : "null"},`,
     `  "sourceEmailMessageId": "${emailMessageId}",`,
+    `  "definitionOfDone": ["acceptance criterion 1", "criterion 2", "..."],`,
     `  "proposalMeta": {`,
-    `    "reply": { "text": "(for reply_to_sender / request_clarification: body to send)" }`,
+    `    "reply": {`,
+    `      "text": "(plain-text body — required for reply_to_sender / request_clarification)",`,
+    `      "html": "(optional HTML body — preferred; uses simple inline styles for email clients)"`,
+    `    },`,
+    `    "questions": [  // for request_operator_input only`,
+    `      { "id": "client", "kind": "client", "question": "Which client?", "suggestedAnswer": "..." },`,
+    `      { "id": "project", "kind": "project", "question": "Which project?", "suggestedAnswer": "..." },`,
+    `      { "id": "dod", "kind": "dod", "question": "What's the definition of done?" }`,
+    `    ]`,
     `  }`,
     `}`,
     `\`\`\``,
     ``,
     `### Decision guide`,
-    `- **create_issue** — you have enough info to scope the work. proposalText = the full plan (goals, steps, agents, skills, estimate).`,
-    `- **request_clarification** — you need more info from the sender. proposalText = short rationale; proposalMeta.reply.text = the email we send back.`,
-    `- **reply_to_sender** — direct answer / acknowledgement without creating internal work. proposalText = why you're replying; proposalMeta.reply.text = the email body.`,
+    `- **create_issue** — you have enough info to scope work. **REQUIRED:** clientId + projectId + non-empty definitionOfDone. proposalText = the full plan (goals, steps, agents, skills, estimate). Server will reject with 422 if any of these are missing.`,
+    `- **request_clarification** — you need info from the **sender** (the client). proposalText = short rationale for the operator; proposalMeta.reply.text/html = the actual email we send to the client (be specific: 2-4 questions, not generic "tell us more").`,
+    `- **request_operator_input** — you need info from the **operator** (the human running this app) — typically: which existing client/project to attach to, what counts as done, scope confirmation. proposalText = why you need input; proposalMeta.questions = the questions list. The operator gets a styled email + can reply directly.`,
+    `- **reply_to_sender** — direct answer / status update without creating internal work. proposalText = why; proposalMeta.reply.text/html = the email body.`,
     ``,
-    `The operator will review via /governance/plans and approve. Do NOT take direct action outside the plan-gate.`,
+    `### Readiness checklist for create_issue`,
+    `Before you submit kind="create_issue", you must have:`,
+    `  1. **clientId** — pick existing client or, if new, propose request_operator_input asking the operator to create one (or to confirm using an existing).`,
+    `  2. **projectId** — same: existing or operator-confirmed new project.`,
+    `  3. **definitionOfDone** — concrete acceptance criteria (e.g. "homepage hero text updated", "deployed to production"). At least 1 entry.`,
+    `If any are missing, do NOT submit create_issue. Submit request_operator_input instead and wait for the reply.`,
+    ``,
+    `### Important rules`,
+    `- The auto-acknowledgement is NOT a plan. Do not skip this step because an ack was sent.`,
+    `- Always include proposalMeta.reply.text (and reply.html if you can) for clarification / reply kinds — that is what gets emailed.`,
+    `- Use plain text for .text and well-formed HTML with inline styles for .html. The dispatcher will send both as a multipart email.`,
+    `- Operator reviews via /governance/plans and approves. Do NOT email the sender directly outside the plan-gate.`,
   ].join("\n");
 
   try {
@@ -382,19 +598,23 @@ async function routeInbound(
       })
       .where(eq(emailMessages.id, emailMessageId));
 
-    // Wake the triage agent directly — issueService.create doesn't call the
-    // assignment-wakeup hook (that only fires from route handlers), so without
-    // this the agent idles until the next heartbeat poll.
-    await db.insert(agentWakeupRequests).values({
-      companyId,
-      agentId: triageAgentId,
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "email-triage",
-      payload: { issueId: issue.id, emailMessageId },
-      status: "queued",
-      requestedByActorType: "system",
-    });
+    // Wake the triage agent via heartbeatService — this also creates the
+    // heartbeat_runs row + acquires the issue execution lock + runs budget
+    // and policy gates. Inserting agent_wakeup_requests directly skips all
+    // of that and the agent never runs.
+    const { heartbeatService } = await import("./heartbeat.js");
+    try {
+      await heartbeatService(db).wakeup(triageAgentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "email-triage",
+        payload: { issueId: issue.id, emailMessageId },
+        contextSnapshot: { issueId: issue.id, emailMessageId },
+        requestedByActorType: "system",
+      });
+    } catch (err) {
+      logger.warn({ err, triageAgentId, issueId: issue.id }, "email-processor: triage wakeup failed");
+    }
 
     logger.info(
       { emailMessageId, issueId: issue.id, triageAgentId },
@@ -412,7 +632,175 @@ async function routeInbound(
   }
 }
 
-export // Continue an existing triage thread when the inbound email is a reply.
+export // Operator replies arrive on agent_voice accounts (e.g. someone replied to a
+// plan-pending notification, or used the "Ask a question" mailto link).
+// Recognise [plan-<id>] subject tags and treat the body as either a decision
+// or a follow-up comment on the triage issue.
+const PLAN_TAG_RE = /\[plan-([0-9a-f-]{36})\]/i;
+const APPROVE_RE = /^\s*(approve[d]?|yes|ok|👍)\s*[!.]?\s*$/im;
+const REJECT_RE = /^\s*(reject(ed)?|no|nope|👎)\s*[!.]?\s*$/im;
+
+async function routeOperatorReply(
+  db: Db,
+  emailMessageId: string,
+  companyId: string,
+  _fromAddr: string,
+  subject: string,
+): Promise<void> {
+  const [msg] = await db
+    .select({ body: emailMessages.body, fromAddr: emailMessages.fromAddr })
+    .from(emailMessages)
+    .where(eq(emailMessages.id, emailMessageId))
+    .limit(1);
+
+  const planMatch = subject.match(PLAN_TAG_RE);
+  if (!planMatch) {
+    await db
+      .update(emailMessages)
+      .set({
+        processingState: "ignored",
+        matchedCompanyId: companyId,
+        processedAt: new Date(),
+        errorText: "Operator reply on agent_voice but no [plan-<id>] tag — ignoring.",
+      })
+      .where(eq(emailMessages.id, emailMessageId));
+    logger.info(
+      { emailMessageId, subject },
+      "email-processor: agent_voice reply with no plan tag — ignored",
+    );
+    return;
+  }
+
+  const planId = planMatch[1]!;
+  const { plans } = await import("@paperclipai/db");
+  const [plan] = await db
+    .select({
+      id: plans.id,
+      decision: plans.decision,
+      sourceEmailMessageId: plans.sourceEmailMessageId,
+      companyId: plans.companyId,
+    })
+    .from(plans)
+    .where(eq(plans.id, planId))
+    .limit(1);
+  if (!plan) {
+    await db
+      .update(emailMessages)
+      .set({
+        processingState: "error",
+        matchedCompanyId: companyId,
+        processedAt: new Date(),
+        errorText: `Plan ${planId} not found`,
+      })
+      .where(eq(emailMessages.id, emailMessageId));
+    return;
+  }
+
+  const body = (msg?.body ?? "").trim();
+  const stripped = body.replace(/^>.*$/gm, "").trim(); // drop quoted reply lines
+
+  // 1. Decision keyword: approve / reject — only when plan still pending.
+  if (plan.decision === "pending") {
+    const isApprove = APPROVE_RE.test(stripped);
+    const isReject = REJECT_RE.test(stripped);
+    if (isApprove || isReject) {
+      const decision = isApprove ? "approved" : "rejected";
+      const { planGateService } = await import("./plan-gate.js");
+      const gate = planGateService(db);
+      try {
+        await gate.recordDecision(plan.id, decision, null, `Decided via email reply from ${msg?.fromAddr ?? "operator"}`);
+        if (decision === "approved") {
+          try { await gate.executePlan(plan.id); }
+          catch (err) {
+            logger.warn({ err, planId }, "email-processor: post-approval execute failed");
+          }
+        }
+        await db
+          .update(emailMessages)
+          .set({
+            processingState: "executed",
+            matchedCompanyId: companyId,
+            processedAt: new Date(),
+          })
+          .where(eq(emailMessages.id, emailMessageId));
+        logger.info({ emailMessageId, planId, decision }, "email-processor: applied operator email decision");
+        return;
+      } catch (err) {
+        logger.warn({ err, planId, decision }, "email-processor: failed to record decision");
+      }
+    }
+  }
+
+  // 2. Otherwise: treat as a follow-up note. Attach to the triage issue if
+  // the plan has one, so the agent sees the operator's question on next wake.
+  if (plan.sourceEmailMessageId) {
+    const [src] = await db
+      .select({ issueId: emailMessages.issueId })
+      .from(emailMessages)
+      .where(eq(emailMessages.id, plan.sourceEmailMessageId))
+      .limit(1);
+    if (src?.issueId) {
+      const commentBody = [
+        `**Operator follow-up via email** (re: plan \`${planId}\`)`,
+        ``,
+        `From: ${msg?.fromAddr ?? "(unknown)"}`,
+        `Subject: ${subject}`,
+        ``,
+        `> ${stripped.slice(0, 1500) || "(empty)"}`,
+        ``,
+        `Re-read the email thread + this note. Update the plan via POST /api/companies/${companyId}/plans if needed, or reply for more clarification.`,
+      ].join("\n");
+      await db.insert(issueComments).values({
+        companyId,
+        issueId: src.issueId,
+        body: commentBody,
+        authorUserId: "operator-email-reply",
+      });
+      // Wake the assignee so the agent processes the note immediately.
+      const [issue] = await db.select({ assigneeAgentId: issues.assigneeAgentId })
+        .from(issues).where(eq(issues.id, src.issueId)).limit(1);
+      if (issue?.assigneeAgentId) {
+        const { heartbeatService } = await import("./heartbeat.js");
+        try {
+          await heartbeatService(db).wakeup(issue.assigneeAgentId, {
+            source: "assignment",
+            triggerDetail: "system",
+            reason: "operator-reply",
+            payload: { issueId: src.issueId, planId, emailMessageId },
+            contextSnapshot: { issueId: src.issueId, emailMessageId },
+            requestedByActorType: "system",
+          });
+        } catch (err) {
+          logger.warn({ err, agentId: issue.assigneeAgentId, issueId: src.issueId }, "email-processor: operator-reply wakeup failed");
+        }
+      }
+      await db
+        .update(emailMessages)
+        .set({
+          processingState: "plan_proposed",
+          matchedCompanyId: companyId,
+          issueId: src.issueId,
+          processedAt: new Date(),
+        })
+        .where(eq(emailMessages.id, emailMessageId));
+      logger.info({ emailMessageId, planId, issueId: src.issueId }, "email-processor: routed operator reply to triage issue");
+      return;
+    }
+  }
+
+  // No issue to attach to — just mark ignored with explanation.
+  await db
+    .update(emailMessages)
+    .set({
+      processingState: "ignored",
+      matchedCompanyId: companyId,
+      processedAt: new Date(),
+      errorText: `Plan ${planId} has no source issue — operator reply could not be routed.`,
+    })
+    .where(eq(emailMessages.id, emailMessageId));
+}
+
+// Continue an existing triage thread when the inbound email is a reply.
 // Returns true if we attached the email to a prior issue and woke its agent;
 // false means the caller should take the normal "new triage issue" path.
 async function tryContinueThread(db: Db, emailMessageId: string): Promise<boolean> {
@@ -493,19 +881,22 @@ async function tryContinueThread(db: Db, emailMessageId: string): Promise<boolea
     authorUserId: "email-thread",
   });
 
-  // Wake the assigned agent if any — direct insert into the wakeup queue so
-  // we don't need to import the heartbeat service here.
+  // Wake the assigned agent via heartbeatService so it actually runs (raw
+  // wakeup-table insert doesn't create the heartbeat_runs row).
   if (issue.assigneeAgentId) {
-    await db.insert(agentWakeupRequests).values({
-      companyId: issue.companyId,
-      agentId: issue.assigneeAgentId,
-      source: "assignment",
-      triggerDetail: "system",
-      reason: "thread-reply",
-      payload: { issueId: issue.id, emailMessageId },
-      status: "queued",
-      requestedByActorType: "system",
-    });
+    const { heartbeatService } = await import("./heartbeat.js");
+    try {
+      await heartbeatService(db).wakeup(issue.assigneeAgentId, {
+        source: "assignment",
+        triggerDetail: "system",
+        reason: "thread-reply",
+        payload: { issueId: issue.id, emailMessageId },
+        contextSnapshot: { issueId: issue.id, emailMessageId },
+        requestedByActorType: "system",
+      });
+    } catch (err) {
+      logger.warn({ err, agentId: issue.assigneeAgentId, issueId: issue.id }, "email-processor: thread-reply wakeup failed");
+    }
   }
 
   logger.info(

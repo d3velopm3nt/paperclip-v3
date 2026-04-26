@@ -76,3 +76,7 @@ export { actionPolicies } from "./action_policies.js";
 // v3: plan gate
 export { plans } from "./plans.js";
 export { planDecisionTokens } from "./plan_decision_tokens.js";
+
+// v3: workflow viewer
+export { workflowRuns } from "./workflow_runs.js";
+export { workflowStageResults } from "./workflow_stage_results.js";

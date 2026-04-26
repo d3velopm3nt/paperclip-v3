@@ -1897,6 +1897,10 @@ export function heartbeatService(db: Db) {
   }
 
   async function startNextQueuedRunForAgent(agentId: string) {
+    // Test-only escape hatch: skip actually claiming + spawning runs so unit
+    // tests can assert that wakeup/heartbeat_runs rows are written without
+    // racing the real adapter executor against transactional teardown.
+    if (process.env.PAPERCLIP_DISABLE_HEARTBEAT_RUN_EXEC === "1") return [];
     return withAgentStartLock(agentId, async () => {
       const agent = await getAgent(agentId);
       if (!agent) return [];

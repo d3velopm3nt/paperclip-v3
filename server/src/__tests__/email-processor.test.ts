@@ -76,6 +76,7 @@ describeEmbeddedPostgres("email-processor service", () => {
     db = createDb(tempDb.connectionString);
     attachmentRoot = mkdtempSync(path.join(tmpdir(), "paperclip-home-"));
     process.env.PAPERCLIP_HOME = attachmentRoot;
+    process.env.PAPERCLIP_DISABLE_WORKFLOW_EVAL = "1";
   }, 20_000);
 
   afterEach(async () => {
@@ -88,6 +89,7 @@ describeEmbeddedPostgres("email-processor service", () => {
   afterAll(async () => {
     if (previousHome === undefined) delete process.env.PAPERCLIP_HOME;
     else process.env.PAPERCLIP_HOME = previousHome;
+    delete process.env.PAPERCLIP_DISABLE_WORKFLOW_EVAL;
     try { rmSync(attachmentRoot, { recursive: true, force: true }); } catch { /* ignore */ }
     await tempDb?.cleanup();
   });

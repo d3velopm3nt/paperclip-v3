@@ -28,6 +28,8 @@ import { CompanySkills } from "./pages/CompanySkills";
 import { McpServers } from "./pages/McpServers";
 import { EmailAccounts } from "./pages/EmailAccounts"; // v3:
 import { EmailAccountDetail } from "./pages/EmailAccountDetail"; // v3:
+import { EmailWorkflow } from "./pages/EmailWorkflow"; // v3:
+import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
 import { ActionPolicies } from "./pages/ActionPolicies"; // v3:
 import { Clients } from "./pages/Clients"; // v3:
@@ -138,6 +140,8 @@ function boardRoutes() {
       <Route path="email/accounts" element={<EmailAccounts />} /> {/* v3: */}
       <Route path="email/accounts/:id" element={<EmailAccountDetail />} /> {/* v3: */}
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
+      <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
+      <Route path="email/workflows" element={<EmailWorkflows />} /> {/* v3: */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
@@ -361,6 +365,8 @@ export function App() {
           <Route path="email/accounts" element={<UnprefixedBoardRedirect />} />
           <Route path="email/accounts/:id" element={<UnprefixedBoardRedirect />} />
           <Route path="email/inbox" element={<UnprefixedBoardRedirect />} />
+          <Route path="email/inbox/:id/workflow" element={<UnprefixedBoardRedirect />} />
+          <Route path="email/workflows" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/action-policies" element={<UnprefixedBoardRedirect />} />
           <Route path="clients" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/plans" element={<UnprefixedBoardRedirect />} />

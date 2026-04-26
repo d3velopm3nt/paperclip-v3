@@ -26,6 +26,7 @@ import { AgentConfigForm } from "../components/AgentConfigForm";
 import { AgentMemoryTab } from "../components/AgentMemoryTab";
 import { AgentPerformanceTab } from "../components/AgentPerformanceTab";
 import { AgentMcpTab } from "../components/AgentMcpTab";
+import { AgentEmailsTab } from "../components/AgentEmailsTab";
 import { PageTabBar } from "../components/PageTabBar";
 import { adapterLabels, roleLabels, help } from "../components/agent-config-primitives";
 import { MarkdownEditor } from "../components/MarkdownEditor";
@@ -225,7 +226,7 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget" | "memory" | "performance" | "mcps";
+type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget" | "memory" | "performance" | "mcps" | "emails";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
@@ -235,6 +236,7 @@ function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "memory") return "memory";
   if (value === "performance") return "performance";
   if (value === "mcps") return "mcps";
+  if (value === "emails") return "emails";
   if (value === "runs") return value;
   return "dashboard";
 }
@@ -663,7 +665,9 @@ export function AgentDetail() {
                     ? "performance"
                     : activeView === "mcps"
                       ? "mcps"
-                      : "dashboard";
+                      : activeView === "emails"
+                        ? "emails"
+                        : "dashboard";
     if (routeAgentRef !== canonicalAgentRef || urlTab !== canonicalTab) {
       navigate(`/agents/${canonicalAgentRef}/${canonicalTab}`, { replace: true });
       return;
@@ -928,6 +932,7 @@ export function AgentDetail() {
               { value: "memory", label: "Memory" },
               { value: "performance", label: "Performance" },
               { value: "mcps", label: "MCPs" },
+              { value: "emails", label: "Emails" },
               { value: "budget", label: "Budget" },
             ]}
             value={activeView}
@@ -1067,6 +1072,10 @@ export function AgentDetail() {
           companyId={resolvedCompanyId}
           companyPrefix={companyPrefix}
         />
+      )}
+
+      {activeView === "emails" && resolvedCompanyId && (
+        <AgentEmailsTab agentId={agent.id} companyId={resolvedCompanyId} />
       )}
 
       {activeView === "budget" && resolvedCompanyId ? (

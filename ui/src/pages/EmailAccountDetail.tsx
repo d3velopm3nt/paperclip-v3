@@ -220,15 +220,17 @@ export function EmailAccountDetail() {
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => testImapMutation.mutate()}
-            disabled={testImapMutation.isPending}
-          >
-            <Plug className="h-4 w-4 mr-1" />
-            {testImapMutation.isPending ? "Testing…" : "Test IMAP"}
-          </Button>
+          {account.role !== "agent_voice" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => testImapMutation.mutate()}
+              disabled={testImapMutation.isPending}
+            >
+              <Plug className="h-4 w-4 mr-1" />
+              {testImapMutation.isPending ? "Testing…" : "Test IMAP"}
+            </Button>
+          )}
           {account.smtpHost && (
             <Button
               variant="outline"
@@ -246,6 +248,13 @@ export function EmailAccountDetail() {
           </Button>
         </div>
       </div>
+
+      {account.role === "agent_voice" && (
+        <Card className="p-3 border-violet-500/30 bg-violet-500/5 text-sm">
+          <strong>Agent voice account.</strong> Outbound only — used for plan notifications + replies on
+          behalf of inbound inboxes. <em>Not polled, no triage workflow runs against this account.</em>
+        </Card>
+      )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)} className="space-y-4">
         <PageTabBar

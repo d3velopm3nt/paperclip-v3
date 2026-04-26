@@ -40,6 +40,7 @@ import { emailMessageRoutes } from "./routes/email-messages.js"; // v3:
 import { actionPolicyRoutes } from "./routes/action-policies.js"; // v3:
 import { clientRoutes } from "./routes/clients.js"; // v3:
 import { planRoutes } from "./routes/plans.js"; // v3:
+import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -175,6 +176,7 @@ export async function createApp(
   api.use(actionPolicyRoutes(db)); // v3:
   api.use(clientRoutes(db)); // v3:
   api.use(planRoutes(db)); // v3:
+  api.use(workflowRunRoutes(db)); // v3:
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

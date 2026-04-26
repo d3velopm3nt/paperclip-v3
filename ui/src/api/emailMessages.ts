@@ -37,8 +37,12 @@ export interface EmailMessageDetail extends EmailMessageSummary {
 }
 
 export const emailMessagesApi = {
-  list: (companyId: string, state?: string) => {
-    const qs = state ? `?state=${encodeURIComponent(state)}` : "";
+  list: (companyId: string, state?: string, accountRole?: string, matchedAgentId?: string) => {
+    const params = new URLSearchParams();
+    if (state) params.set("state", state);
+    if (accountRole) params.set("accountRole", accountRole);
+    if (matchedAgentId) params.set("matchedAgentId", matchedAgentId);
+    const qs = params.size ? `?${params.toString()}` : "";
     return api.get<EmailMessageSummary[]>(
       `/companies/${encodeURIComponent(companyId)}/email-messages${qs}`,
     );
@@ -49,4 +53,11 @@ export const emailMessagesApi = {
     `/api/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
   reprocess: (id: string) =>
     api.post<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}/reprocess`, {}),
+  remove: (id: string) =>
+    api.delete<{
+      deletedPlans: number;
+      deletedWorkflowRuns: number;
+      deletedComments: number;
+      deletedIssue: boolean;
+    }>(`/email-messages/${encodeURIComponent(id)}`),
 };

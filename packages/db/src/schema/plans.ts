@@ -62,6 +62,9 @@ export const plans = pgTable(
     executedAt: timestamp("executed_at", { withTimezone: true }),
     executionStatus: text("execution_status").notNull().default("pending"),
     executionError: text("execution_error"),
+    // v3: gate for create_issue plans — must be a non-empty array (acceptance
+    // criteria) before the plan can be approved + executed.
+    definitionOfDone: jsonb("definition_of_done").$type<string[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

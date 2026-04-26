@@ -14,6 +14,8 @@ import { approvals, issues, plans, emailMessages, emailAccounts, companies } fro
 import { actionPolicyService, type ActionPolicyRow, type PolicyScope } from "./action-policies.js";
 import { issueService } from "./issues.js";
 import { sendEmailFromAccount } from "./email-sender.js";
+import { workflowEngine } from "./workflow-engine.js";
+import { inboundEmailWorkflow } from "./workflows/inbound-email.js";
 import { logger } from "../middleware/logger.js";
 
 export type Confidence = "low" | "medium" | "high";
@@ -38,13 +40,23 @@ export interface ProposePlanInput {
   companyId: string;
   agentId: string;
   actionType: string;
-  kind: string; // plans.kind — create_issue | reply_to_sender | ...
+  kind: string; // plans.kind — create_issue | reply_to_sender | request_clarification | request_operator_input
   proposalText: string;
   proposalMeta?: Record<string, unknown>;
   clientId?: string | null;
   projectId?: string | null;
   sourceEmailMessageId?: string | null;
   confidence?: Confidence;
+  /** Acceptance criteria — required for kind='create_issue'. */
+  definitionOfDone?: string[];
+}
+
+/** Thrown when a create_issue plan is missing the readiness fields. */
+export class PlanReadinessError extends Error {
+  constructor(public missing: string[]) {
+    super(`Plan not ready: missing ${missing.join(", ")}`);
+    this.name = "PlanReadinessError";
+  }
 }
 
 export interface ProposedPlan {
@@ -105,6 +117,18 @@ export function planGateService(db: Db) {
   // evaluateGate returned REQUIRES_PLAN, but proposePlan can also be called
   // unconditionally for explicitly gated actions.
   async function proposePlan(input: ProposePlanInput): Promise<ProposedPlan> {
+    // Readiness gate — create_issue plans must carry the full spec before
+    // they can be proposed. Other kinds (clarifications, replies, operator
+    // questions) are how the agent gathers what's missing.
+    if (input.kind === "create_issue") {
+      const missing: string[] = [];
+      if (!input.clientId) missing.push("clientId");
+      if (!input.projectId) missing.push("projectId");
+      const dod = input.definitionOfDone ?? [];
+      if (dod.length === 0) missing.push("definitionOfDone");
+      if (missing.length > 0) throw new PlanReadinessError(missing);
+    }
+
     const evaluation = await evaluateGate({
       companyId: input.companyId,
       actionType: input.actionType,
@@ -127,6 +151,7 @@ export function planGateService(db: Db) {
           sourceEmailMessageId: input.sourceEmailMessageId ?? null,
           proposalText: input.proposalText,
           proposalMeta: input.proposalMeta ?? {},
+          definitionOfDone: input.definitionOfDone ?? [],
           confidence: input.confidence ?? "medium",
           updatedAt: new Date(),
         })
@@ -182,12 +207,52 @@ export function planGateService(db: Db) {
 
       return { planId: plan!.id, approvalId: approval!.id, immediateEmail };
     }).then(async (result) => {
+      // request_operator_input plans are themselves the action — the agent
+      // chose to ask the operator a question. There's nothing to approve;
+      // dispatch the questions email immediately and skip the
+      // "Plan pending approval" notification (which would otherwise add a
+      // confusing approve/reject email on top of the questions email).
+      if (input.kind === "request_operator_input") {
+        await db
+          .update(plans)
+          .set({
+            decision: "approved",
+            decidedAt: new Date(),
+            decisionNote: "Auto-approved: request_operator_input is informational, not gated.",
+            updatedAt: new Date(),
+          })
+          .where(eq(plans.id, result.planId));
+        await db
+          .update(approvals)
+          .set({
+            status: "approved",
+            decidedAt: new Date(),
+            decisionNote: "Auto-approved: request_operator_input.",
+            updatedAt: new Date(),
+          })
+          .where(and(eq(approvals.planId, result.planId), eq(approvals.type, "plan")));
+        try {
+          await executePlan(result.planId);
+        } catch (err) {
+          logger.warn({ err, planId: result.planId }, "plan-gate: request_operator_input dispatch failed");
+        }
+        if (input.sourceEmailMessageId) {
+          workflowEngine(db).runFireAndForget(inboundEmailWorkflow, input.sourceEmailMessageId);
+        }
+        return result;
+      }
+
       // Fire-and-forget: notify team via agent_voice account. Failures don't
       // block plan creation — just logged so operators can still see the plan
       // in the UI.
       notifyTeamOfPlan(db, result.planId, input).catch((err) =>
         logger.warn({ err, planId: result.planId }, "plan-gate: notification failed"),
       );
+      // Re-evaluate the inbound-email workflow so the viewer reflects the
+      // newly proposed plan + token without waiting for a manual refresh.
+      if (input.sourceEmailMessageId) {
+        workflowEngine(db).runFireAndForget(inboundEmailWorkflow, input.sourceEmailMessageId);
+      }
       return result;
     });
   }
@@ -225,6 +290,15 @@ export function planGateService(db: Db) {
         })
         .where(and(eq(approvals.planId, planId), eq(approvals.type, "plan")));
     });
+    // Re-evaluate the inbound-email workflow if this plan was tied to one.
+    const [plan] = await db
+      .select({ sourceEmailMessageId: plans.sourceEmailMessageId })
+      .from(plans)
+      .where(eq(plans.id, planId))
+      .limit(1);
+    if (plan?.sourceEmailMessageId) {
+      workflowEngine(db).runFireAndForget(inboundEmailWorkflow, plan.sourceEmailMessageId);
+    }
   }
 
   async function markExecuted(
@@ -298,7 +372,93 @@ export function planGateService(db: Db) {
             .where(eq(emailMessages.id, plan.sourceEmailMessageId));
         }
         logger.info({ planId, issueId: created.id }, "plan-gate: executed create_issue");
+        if (plan.sourceEmailMessageId) {
+          workflowEngine(db).runFireAndForget(inboundEmailWorkflow, plan.sourceEmailMessageId);
+        }
         return { issueId: created.id };
+      }
+
+      if (plan.kind === "request_operator_input") {
+        // Sends a styled HTML email to the operator (teamEmails / company
+        // ownerEmail) listing the questions the agent needs answered before
+        // it can propose a real create_issue plan. Uses the agent_voice
+        // account so the operator's reply lands back via Phase C3 routing.
+        const meta = (plan.proposalMeta ?? {}) as Record<string, unknown>;
+        const questions = Array.isArray(meta.questions)
+          ? (meta.questions as Array<{ id?: string; question: string; suggestedAnswer?: string; kind?: string }>)
+          : [];
+        if (questions.length === 0) {
+          throw new Error("request_operator_input plan needs proposalMeta.questions[]");
+        }
+
+        // Find the company's agent_voice account.
+        const [voice] = await db
+          .select()
+          .from(emailAccounts)
+          .where(and(eq(emailAccounts.companyId, plan.companyId), eq(emailAccounts.role, "agent_voice")))
+          .limit(1);
+        if (!voice) throw new Error("no agent_voice account configured for company");
+
+        // Resolve recipients — inbound account team_emails for the source
+        // email, falling back to company ownerEmail.
+        let recipients: string[] = [];
+        if (plan.sourceEmailMessageId) {
+          const [src] = await db
+            .select({ accountId: emailMessages.emailAccountId })
+            .from(emailMessages)
+            .where(eq(emailMessages.id, plan.sourceEmailMessageId))
+            .limit(1);
+          if (src) {
+            const [inbound] = await db
+              .select({ teamEmails: emailAccounts.teamEmails })
+              .from(emailAccounts)
+              .where(eq(emailAccounts.id, src.accountId))
+              .limit(1);
+            if (inbound?.teamEmails?.length) recipients = inbound.teamEmails;
+          }
+        }
+        if (recipients.length === 0) {
+          const [company] = await db
+            .select({ ownerEmail: companies.ownerEmail })
+            .from(companies)
+            .where(eq(companies.id, plan.companyId))
+            .limit(1);
+          if (company?.ownerEmail) recipients = [company.ownerEmail];
+        }
+        if (recipients.length === 0) {
+          throw new Error("no recipients for operator input request (set company ownerEmail or inbox teamEmails)");
+        }
+
+        const subject = `[plan-${plan.id}] Need your input — ${plan.proposalText.slice(0, 60)}`;
+        const text = renderOperatorInputText(plan.id, plan.proposalText, questions);
+        const html = renderOperatorInputHtml(plan.id, plan.proposalText, questions);
+
+        const sent = await sendEmailFromAccount(db, {
+          accountId: voice.id,
+          to: recipients,
+          subject,
+          text,
+          html,
+        });
+
+        await db
+          .update(plans)
+          .set({
+            executionStatus: "success",
+            executedAt: new Date(),
+            updatedAt: new Date(),
+            proposalMeta: {
+              ...meta,
+              sentEmail: { messageId: sent.messageId, to: recipients, subject, sentAt: new Date().toISOString() },
+            },
+          })
+          .where(eq(plans.id, planId));
+
+        logger.info({ planId, recipients }, "plan-gate: sent request_operator_input");
+        if (plan.sourceEmailMessageId) {
+          workflowEngine(db).runFireAndForget(inboundEmailWorkflow, plan.sourceEmailMessageId);
+        }
+        return {};
       }
 
       if (plan.kind === "reply_to_sender" || plan.kind === "request_clarification") {
@@ -352,13 +512,21 @@ export function planGateService(db: Db) {
             ? "Could you please provide more detail about your request?"
             : "Thanks — we have received your message.");
         const to = reply.to?.trim() || msg.fromAddr;
+        // Always send HTML — use the agent-provided HTML if any, otherwise
+        // wrap the text body in a clean baked-in template so the client sees
+        // a styled email even when the agent only supplied plain text.
+        const html = reply.html?.trim() || renderClientReplyHtml({
+          subject,
+          text: body,
+          isClarification: plan.kind === "request_clarification",
+        });
 
         const sent = await sendEmailFromAccount(db, {
           accountId: senderAccountId,
           to,
           subject,
           text: body,
-          html: reply.html,
+          html,
           inReplyTo: msg.messageIdHeader || null,
           references: msg.messageIdHeader ? [msg.messageIdHeader] : null,
         });
@@ -395,6 +563,7 @@ export function planGateService(db: Db) {
           { planId, kind: plan.kind, messageId: sent.messageId },
           "plan-gate: executed email reply",
         );
+        workflowEngine(db).runFireAndForget(inboundEmailWorkflow, plan.sourceEmailMessageId);
         return {};
       }
 
@@ -606,6 +775,84 @@ function renderPlanNotificationHtml(v: PlanNotificationVars): string {
       </td></tr>
     </table>
     <div style="font-size:11px;color:#a1a1aa;padding-top:12px;">Approve / Reject links are single-use and expire in 24 hours.</div>
+  </td></tr>
+</table>
+</body></html>`;
+}
+
+function renderClientReplyHtml(v: { subject: string; text: string; isClarification: boolean }): string {
+  const safeText = escapeHtml(v.text)
+    // Convert paragraphs (double newline) to <p>, single newlines to <br>.
+    .split(/\n{2,}/)
+    .map((p) => `<p style="margin:0 0 14px 0;">${p.replace(/\n/g, "<br>")}</p>`)
+    .join("");
+  const headerLabel = v.isClarification ? "We need a little more info" : "Thanks for your message";
+  return `<!doctype html>
+<html><body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#18181b;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f4f5;padding:24px 12px;">
+  <tr><td align="center">
+    <table role="presentation" width="560" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e4e4e7;border-radius:10px;overflow:hidden;">
+      <tr><td style="padding:18px 24px 6px 24px;">
+        <div style="font-size:11px;color:#71717a;text-transform:uppercase;letter-spacing:0.05em;">${escapeHtml(headerLabel)}</div>
+        <h1 style="margin:6px 0 0 0;font-size:18px;line-height:1.3;">${escapeHtml(v.subject)}</h1>
+      </td></tr>
+      <tr><td style="padding:14px 24px 22px 24px;font-size:14px;line-height:1.6;color:#27272a;">
+        ${safeText}
+      </td></tr>
+    </table>
+    <div style="font-size:11px;color:#a1a1aa;padding-top:10px;">Sent on behalf of the team via Paperclip.</div>
+  </td></tr>
+</table>
+</body></html>`;
+}
+
+function renderOperatorInputText(planId: string, proposalText: string, questions: Array<{ question: string; suggestedAnswer?: string; kind?: string }>): string {
+  const lines: string[] = [
+    `The triage agent needs your input before it can finalise the plan.`,
+    ``,
+    `Why: ${proposalText}`,
+    ``,
+    `Questions (reply with answers below each — keep the [plan-${planId}] tag in the subject so we can route your reply):`,
+    ``,
+  ];
+  questions.forEach((q, i) => {
+    lines.push(`${i + 1}. ${q.question}`);
+    if (q.suggestedAnswer) lines.push(`   suggested: ${q.suggestedAnswer}`);
+    lines.push(`   answer: `);
+    lines.push(``);
+  });
+  lines.push(`Reply approved / rejected if you would rather decide directly without answering.`);
+  return lines.join("\n");
+}
+
+function renderOperatorInputHtml(planId: string, proposalText: string, questions: Array<{ question: string; suggestedAnswer?: string; kind?: string }>): string {
+  const items = questions
+    .map((q, i) => `
+      <li style="margin:0 0 14px 0;">
+        <div style="font-weight:600;margin-bottom:4px;">${i + 1}. ${escapeHtml(q.question)}</div>
+        ${q.suggestedAnswer ? `<div style="font-size:12px;color:#71717a;margin-bottom:4px;">Suggested: ${escapeHtml(q.suggestedAnswer)}</div>` : ""}
+        ${q.kind ? `<div style="font-size:11px;color:#a1a1aa;text-transform:uppercase;letter-spacing:0.04em;">${escapeHtml(q.kind)}</div>` : ""}
+      </li>`)
+    .join("");
+  return `<!doctype html>
+<html><body style="margin:0;padding:0;background:#f4f4f5;font-family:-apple-system,BlinkMacSystemFont,sans-serif;color:#18181b;">
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f4f4f5;padding:24px 12px;">
+  <tr><td align="center">
+    <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" style="max-width:600px;background:#fff;border:1px solid #e4e4e7;border-radius:10px;">
+      <tr><td style="padding:20px 24px 8px 24px;">
+        <div style="font-size:11px;color:#71717a;text-transform:uppercase;letter-spacing:0.05em;">Need your input</div>
+        <h1 style="margin:6px 0 0 0;font-size:18px;line-height:1.3;">${escapeHtml(proposalText)}</h1>
+      </td></tr>
+      <tr><td style="padding:8px 24px 4px 24px;font-size:13px;color:#52525b;">
+        Reply to this email with answers under each question. Keep <code style="background:#f4f4f5;padding:1px 4px;border-radius:3px;">[plan-${planId}]</code> in the subject so we can route the reply back to the agent.
+      </td></tr>
+      <tr><td style="padding:14px 24px;">
+        <ol style="margin:0;padding-left:20px;">${items}</ol>
+      </td></tr>
+      <tr><td style="padding:8px 24px 22px 24px;font-size:12px;color:#71717a;border-top:1px solid #f4f4f5;">
+        Or reply with just <strong>approved</strong> / <strong>rejected</strong> to decide without answering.
+      </td></tr>
+    </table>
   </td></tr>
 </table>
 </body></html>`;

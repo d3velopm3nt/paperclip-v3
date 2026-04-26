@@ -13,27 +13,36 @@ import { emailProcessorService } from "../services/email-processor.js";
 export function emailMessageRoutes(db: Db) {
   const router = Router();
 
-  // GET /api/companies/:companyId/email-messages?state=pending&limit=100
+  // GET /api/companies/:companyId/email-messages?state=pending&accountRole=inbound&limit=100
   router.get("/companies/:companyId/email-messages", async (req, res) => {
     const { companyId } = req.params;
     assertCompanyAccess(req, companyId);
     const state = typeof req.query.state === "string" ? req.query.state : null;
+    const accountRole = typeof req.query.accountRole === "string" ? req.query.accountRole : null;
+    const matchedAgentId = typeof req.query.matchedAgentId === "string" ? req.query.matchedAgentId : null;
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 100));
 
     // email_messages has no companyId — join via email_accounts.
-    const accountRows = await db
-      .select({ id: emailAccounts.id, label: emailAccounts.label })
+    const accountQuery = db
+      .select({ id: emailAccounts.id, label: emailAccounts.label, role: emailAccounts.role })
       .from(emailAccounts)
-      .where(eq(emailAccounts.companyId, companyId));
+      .where(
+        accountRole
+          ? and(eq(emailAccounts.companyId, companyId), eq(emailAccounts.role, accountRole))
+          : eq(emailAccounts.companyId, companyId),
+      );
+    const accountRows = await accountQuery;
     if (accountRows.length === 0) {
       res.json([]);
       return;
     }
     const accountIds = accountRows.map((r) => r.id);
 
-    const whereClause = state
-      ? and(inArray(emailMessages.emailAccountId, accountIds), eq(emailMessages.processingState, state))
-      : inArray(emailMessages.emailAccountId, accountIds);
+    const whereClause = and(
+      inArray(emailMessages.emailAccountId, accountIds),
+      ...(state ? [eq(emailMessages.processingState, state)] : []),
+      ...(matchedAgentId ? [eq(emailMessages.matchedAgentId, matchedAgentId)] : []),
+    );
 
     const rows = await db
       .select()
@@ -119,6 +128,26 @@ export function emailMessageRoutes(db: Db) {
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(att.filename)}"`);
     }
     createReadStream(resolved).pipe(res);
+  });
+
+  // DELETE /api/email-messages/:id — removes the email and all derived
+  // history (plans, approvals, tokens, workflow runs, wakeup requests, and
+  // the linked triage issue + comments if no other email references it).
+  // Use with care; intended for clearing corrupt test data.
+  router.delete("/email-messages/:id", async (req, res) => {
+    const { id } = req.params;
+    const [msg] = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    const result = await emailProcessorService(db).deleteWithHistory(id);
+    res.json(result);
   });
 
   // POST /api/email-messages/:id/reprocess — resets state + re-runs routing.

@@ -5,13 +5,14 @@ import type { Db } from "@paperclipai/db";
 import { approvals, emailAccounts, plans } from "@paperclipai/db";
 import { badRequest, notFound, unprocessable } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
-import { planGateService } from "../services/plan-gate.js";
+import { planGateService, PlanReadinessError } from "../services/plan-gate.js";
 import { planDecisionTokenService } from "../services/plan-decision-tokens.js";
 
 const VALID_KINDS = new Set([
   "create_issue",
   "reply_to_sender",
   "request_clarification",
+  "request_operator_input",
 ]);
 const VALID_CONFIDENCE = new Set(["low", "medium", "high"]);
 
@@ -76,19 +77,34 @@ export function planRoutes(db: Db) {
     if (!VALID_CONFIDENCE.has(confidence)) {
       throw unprocessable("confidence must be low | medium | high");
     }
-    const proposed = await svc.proposePlan({
-      companyId,
-      agentId: body.agentId,
-      kind: body.kind,
-      actionType: body.actionType ?? body.kind,
-      proposalText: body.proposalText,
-      proposalMeta: body.proposalMeta ?? {},
-      confidence: confidence as "low" | "medium" | "high",
-      clientId: body.clientId ?? null,
-      projectId: body.projectId ?? null,
-      sourceEmailMessageId: body.sourceEmailMessageId ?? null,
-    });
-    res.status(201).json(proposed);
+    try {
+      const proposed = await svc.proposePlan({
+        companyId,
+        agentId: body.agentId,
+        kind: body.kind,
+        actionType: body.actionType ?? body.kind,
+        proposalText: body.proposalText,
+        proposalMeta: body.proposalMeta ?? {},
+        confidence: confidence as "low" | "medium" | "high",
+        clientId: body.clientId ?? null,
+        projectId: body.projectId ?? null,
+        sourceEmailMessageId: body.sourceEmailMessageId ?? null,
+        definitionOfDone: Array.isArray((body as { definitionOfDone?: unknown }).definitionOfDone)
+          ? ((body as { definitionOfDone?: string[] }).definitionOfDone ?? [])
+          : undefined,
+      });
+      res.status(201).json(proposed);
+    } catch (err) {
+      if (err instanceof PlanReadinessError) {
+        res.status(422).json({
+          error: err.message,
+          missing: err.missing,
+          hint: "Use kind='request_operator_input' (or 'request_clarification') to gather what's missing before re-submitting create_issue.",
+        });
+        return;
+      }
+      throw err;
+    }
   });
 
   // POST /api/plans/:id/decision { decision: 'approved'|'rejected'|'revision_requested', note? }

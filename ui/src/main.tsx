@@ -16,6 +16,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initPluginBridge } from "./plugins/bridge-init";
 import { PluginLauncherProvider } from "./plugins/launchers";
+import { ConfirmDialogProvider } from "./components/ConfirmDialogProvider";
 import "@mdxeditor/editor/style.css";
 import "./index.css";
 
@@ -50,7 +51,9 @@ createRoot(document.getElementById("root")!).render(
                       <PanelProvider>
                         <PluginLauncherProvider>
                           <DialogProvider>
-                            <App />
+                            <ConfirmDialogProvider>
+                              <App />
+                            </ConfirmDialogProvider>
                           </DialogProvider>
                         </PluginLauncherProvider>
                       </PanelProvider>

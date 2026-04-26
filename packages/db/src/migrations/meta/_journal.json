@@ -428,6 +428,20 @@
       "when": 1777080000000,
       "tag": "0060_plan_decision_tokens",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1777090000000,
+      "tag": "0061_workflow_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1777095000000,
+      "tag": "0062_plan_definition_of_done",
+      "breakpoints": true
     }
   ]
 }

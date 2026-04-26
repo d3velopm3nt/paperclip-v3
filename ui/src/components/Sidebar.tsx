@@ -16,6 +16,7 @@ import {
   Mail,
   ShieldCheck,
   UsersRound,
+  Activity,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -27,6 +28,7 @@ import { useCompany } from "../context/CompanyContext";
 import { heartbeatsApi } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { useInboxBadge } from "../hooks/useInboxBadge";
+import { useWorkflowBadge } from "../hooks/useWorkflowBadge";
 import { Button } from "@/components/ui/button";
 import { PluginSlotOutlet } from "@/plugins/slots";
 
@@ -34,6 +36,7 @@ export function Sidebar() {
   const { openNewIssue } = useDialog();
   const { selectedCompanyId, selectedCompany } = useCompany();
   const inboxBadge = useInboxBadge(selectedCompanyId);
+  const workflowBadge = useWorkflowBadge(selectedCompanyId);
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.liveRuns(selectedCompanyId!),
     queryFn: () => heartbeatsApi.liveRunsForCompany(selectedCompanyId!),
@@ -115,6 +118,14 @@ export function Sidebar() {
         {/* v3: */}
         <SidebarSection label="Email">
           <SidebarNavItem to="/email/inbox" label="Inbox" icon={Inbox} />
+          <SidebarNavItem
+            to="/email/workflows"
+            label="Workflows"
+            icon={Activity}
+            badge={workflowBadge.total > 0 ? workflowBadge.total : undefined}
+            badgeTone={workflowBadge.hasFailed ? "danger" : "default"}
+            alert={workflowBadge.hasFailed}
+          />
           <SidebarNavItem to="/email/accounts" label="Accounts" icon={Mail} />
         </SidebarSection>
 
