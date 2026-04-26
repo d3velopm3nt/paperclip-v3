@@ -43,6 +43,7 @@ import { planRoutes } from "./routes/plans.js"; // v3:
 import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: operator messaging
+import { repoRoutes } from "./routes/repo.js";
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -181,6 +182,7 @@ export async function createApp(
   api.use(workflowRunRoutes(db)); // v3:
   api.use(roomRoutes(db)); // v3: operator messaging
   api.use(operatorMessageRoutes(db)); // v3: operator messaging
+  api.use(repoRoutes(db)); // v3: project repo tab
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);
