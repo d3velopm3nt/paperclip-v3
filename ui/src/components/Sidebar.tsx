@@ -19,6 +19,7 @@ import {
   Activity,
   Hash,
   Radio,
+  MessageSquare,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -122,6 +123,7 @@ export function Sidebar() {
           <SidebarNavItem to="/email/inbox" label="Inbox" icon={Inbox} />
           <SidebarNavItem to="/rooms" label="Rooms" icon={Hash} />
           <SidebarNavItem to="/channels" label="Channels" icon={Radio} />
+          <SidebarNavItem to="/chat" label="Chat" icon={MessageSquare} /> {/* v3: chat */}
           <SidebarNavItem
             to="/email/workflows"
             label="Workflows"

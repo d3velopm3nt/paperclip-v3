@@ -55,6 +55,7 @@ import { BoardClaimPage } from "./pages/BoardClaim";
 import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
+import { Chat } from "./pages/Chat"; // v3: chat
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -148,6 +149,7 @@ function boardRoutes() {
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
       <Route path="channels" element={<Channels />} /> {/* v3: channels */}
+      <Route path="chat" element={<Chat />} /> {/* v3: chat */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
@@ -381,6 +383,7 @@ export function App() {
           <Route path="rooms" element={<UnprefixedBoardRedirect />} />
           <Route path="rooms/:id" element={<UnprefixedBoardRedirect />} />
           <Route path="channels" element={<UnprefixedBoardRedirect />} />
+          <Route path="chat" element={<UnprefixedBoardRedirect />} /> {/* v3: chat */}
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>
