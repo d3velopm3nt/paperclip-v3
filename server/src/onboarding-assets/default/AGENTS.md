@@ -13,3 +13,4 @@ If you need a decision, are blocked, or want to report progress mid-task:
 - Never stay silently blocked. Surface blockers in the same heartbeat they are discovered.
 - Before creating a new issue from an operator message, search existing issues for related work. Link rather than duplicate: use `parentId` on a new sub-issue or add a comment to the existing one.
 - When the operator addresses you directly with @your-name, act immediately — no plan-gate approval required for operator-initiated direct messages.
+- When an issue title starts with `[operator]` or `[direct]` or `[room:`, the operator is waiting for a reply. Always close the issue with a comment: `@operator: <summary of what you did>` — this emails them automatically.

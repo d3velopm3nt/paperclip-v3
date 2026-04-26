@@ -383,7 +383,9 @@ curl -s -X POST "$PAPERCLIP_API_URL/api/companies/$PAPERCLIP_COMPANY_ID/operator
   -d "{\"body\": \"I need a decision on X\", \"issueId\": \"$ISSUE_ID\"}"
 ```
 
-**Rule:** Never be silently blocked. Surface blockers in the same heartbeat they are discovered.
+**Rules:**
+- Never be silently blocked. Surface blockers in the same heartbeat they are discovered.
+- If the issue title starts with `[operator]`, `[direct]`, or `[room:` — the operator is waiting for a reply. When the task is done, post: `@operator: <summary>` as your closing comment. This emails them automatically.
 
 ## Full Reference
 
