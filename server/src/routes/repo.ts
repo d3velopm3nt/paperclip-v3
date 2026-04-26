@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Response } from "express";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import fs from "node:fs";
@@ -51,7 +51,7 @@ async function gitLog(cwd: string) {
   const { stdout } = await execFileAsync(
     "git",
     ["log", "-100", "--format=%H\x1f%h\x1f%an\x1f%aI\x1f%s\x1e"],
-    { cwd },
+    { cwd, maxBuffer: 10 * 1024 * 1024 },
   );
 
   return stdout
@@ -65,7 +65,7 @@ async function gitLog(cwd: string) {
 }
 
 async function gitTree(cwd: string): Promise<TreeNode[]> {
-  const { stdout } = await execFileAsync("git", ["ls-files"], { cwd });
+  const { stdout } = await execFileAsync("git", ["ls-files"], { cwd, maxBuffer: 10 * 1024 * 1024 });
 
   const filePaths = stdout.split("\n").map((p) => p.trim()).filter(Boolean);
   const root: TreeNode[] = [];
@@ -103,7 +103,7 @@ export function repoRoutes(db: Db) {
   // Helper to look up project and resolve cwd, returns {project, cwd} or sends error
   async function getProjectAndCwd(
     projectId: string,
-    res: import("express").Response,
+    res: Response,
   ): Promise<{ project: typeof projects.$inferSelect; cwd: string } | null> {
     const projectRows = await db
       .select()
@@ -153,7 +153,7 @@ export function repoRoutes(db: Db) {
     const { stdout } = await execFileAsync(
       "git",
       ["show", "--stat", "--patch", sha],
-      { cwd: result.cwd },
+      { cwd: result.cwd, maxBuffer: 10 * 1024 * 1024 },
     );
 
     res.json({ sha, diff: stdout });
@@ -253,7 +253,7 @@ export function repoRoutes(db: Db) {
     });
 
     child.on("close", (code: number | null) => {
-      write("exit", JSON.stringify({ code: code ?? 0 }));
+      write("exit", JSON.stringify({ code: code ?? null }));
       if (res.writable) res.end();
     });
 
