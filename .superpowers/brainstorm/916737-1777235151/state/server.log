@@ -1,0 +1,5 @@
+{"type":"server-started","port":52878,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:52878","screen_dir":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/916737-1777235151/content","state_dir":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/916737-1777235151/state"}
+{"type":"screen-added","file":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/916737-1777235151/content/chat-layout.html"}
+{"type":"screen-added","file":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/916737-1777235151/content/reply-routing.html"}
+{"source":"user-event","type":"click","text":"A\n    \n      Back in Dispatcher thread\n      Alice's reply comes back into the same Dispatcher chat. One stream. Dispatcher summarises what it delegated. Simple, no context-switching.\n      \n        You: fix the login bug\n        Dispatcher: Assigning to Bob...\n        Bob: Done — PR #42 ready for review.","choice":"a","id":null,"timestamp":1777235588157}
+{"type":"server-stopped","reason":"idle timeout"}

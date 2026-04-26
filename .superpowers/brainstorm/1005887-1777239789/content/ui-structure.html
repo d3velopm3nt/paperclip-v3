@@ -1,0 +1,142 @@
+<h2>Chat UI Structure</h2>
+<p class="subtitle">Full layout — sidebar + thread list + chat area. Does this look right?</p>
+
+<div class="mockup">
+  <div class="mockup-header">/${prefix}/chat — full page layout</div>
+  <div class="mockup-body" style="padding:0;">
+    <div style="display:flex;height:480px;font-family:monospace;font-size:11px;background:#0a0a0a;">
+
+      <!-- App sidebar (existing) -->
+      <div style="width:56px;background:#0d0d0d;border-right:1px solid #1a1a1a;display:flex;flex-direction:column;align-items:center;padding:12px 0;gap:8px;">
+        <div style="width:28px;height:28px;background:#818cf8;border-radius:6px;"></div>
+        <div style="width:28px;height:28px;background:#1a1a1a;border-radius:6px;margin-top:8px;"></div>
+        <div style="width:28px;height:28px;background:#1a1a1a;border-radius:6px;"></div>
+        <div style="width:28px;height:28px;background:#222;border-radius:6px;border:1px solid #818cf8;"></div>
+        <div style="color:#818cf8;font-size:9px;margin-top:2px;">chat</div>
+        <div style="width:28px;height:28px;background:#1a1a1a;border-radius:6px;"></div>
+        <div style="width:28px;height:28px;background:#1a1a1a;border-radius:6px;"></div>
+      </div>
+
+      <!-- Chat thread list -->
+      <div style="width:180px;background:#111;border-right:1px solid #1a1a1a;display:flex;flex-direction:column;">
+        <div style="padding:12px 10px 8px;border-bottom:1px solid #1a1a1a;">
+          <div style="color:#fff;font-size:12px;font-weight:600;">Chat</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:8px 6px;display:flex;flex-direction:column;gap:1px;">
+
+          <!-- Dispatcher pinned -->
+          <div style="padding:6px 8px;border-radius:4px;background:#1a1a2e;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="width:7px;height:7px;background:#818cf8;border-radius:50%;"></div>
+              <span style="color:#818cf8;font-weight:600;font-size:11px;">Dispatcher</span>
+            </div>
+            <div style="color:#555;font-size:10px;margin-top:2px;margin-left:13px;truncate:true;">Fix the login bug and upd...</div>
+          </div>
+
+          <div style="color:#444;font-size:9px;text-transform:uppercase;letter-spacing:1px;padding:8px 8px 3px;">Agents</div>
+
+          <div style="padding:5px 8px;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="width:7px;height:7px;background:#22c55e;border-radius:50%;"></div>
+              <span style="color:#ccc;font-size:11px;">Alice (CTO)</span>
+            </div>
+            <div style="background:#f59e0b;color:#000;font-size:9px;padding:1px 5px;border-radius:8px;">2</div>
+          </div>
+
+          <div style="padding:5px 8px;border-radius:4px;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="width:7px;height:7px;background:#555;border-radius:50%;"></div>
+              <span style="color:#666;font-size:11px;">Bob (Dev)</span>
+            </div>
+          </div>
+
+          <div style="padding:5px 8px;border-radius:4px;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <div style="width:7px;height:7px;background:#555;border-radius:50%;"></div>
+              <span style="color:#666;font-size:11px;">Carol (Design)</span>
+            </div>
+          </div>
+
+          <div style="color:#444;font-size:9px;text-transform:uppercase;letter-spacing:1px;padding:8px 8px 3px;">Rooms</div>
+
+          <div style="padding:5px 8px;border-radius:4px;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="color:#444;font-size:11px;"># engineering</span>
+            </div>
+          </div>
+
+          <div style="padding:5px 8px;border-radius:4px;cursor:pointer;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="color:#444;font-size:11px;"># design</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Main chat area -->
+      <div style="flex:1;display:flex;flex-direction:column;background:#0f0f0f;">
+
+        <!-- Header -->
+        <div style="padding:10px 16px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;gap:8px;">
+          <div style="width:8px;height:8px;background:#818cf8;border-radius:50%;"></div>
+          <span style="color:#fff;font-size:12px;font-weight:600;">Dispatcher</span>
+          <span style="color:#444;font-size:10px;">routes to any agent</span>
+        </div>
+
+        <!-- Messages -->
+        <div style="flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;">
+
+          <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;">
+            <div style="background:#1a1a2e;border:1px solid #2a2a4e;padding:8px 12px;border-radius:12px 12px 2px 12px;color:#c7d2fe;font-size:11px;max-width:70%;">fix the login bug and update the homepage hero</div>
+            <div style="color:#444;font-size:9px;">10:42</div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+            <div style="color:#818cf8;font-size:10px;font-weight:600;margin-left:2px;">Dispatcher</div>
+            <div style="background:#1a1a1a;border:1px solid #222;padding:8px 12px;border-radius:2px 12px 12px 12px;color:#999;font-size:11px;max-width:70%;">Routing login bug → Bob, homepage hero → Carol. Both agents notified.</div>
+            <div style="color:#444;font-size:9px;">10:42</div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+            <div style="color:#22c55e;font-size:10px;font-weight:600;margin-left:2px;">Bob (Dev)</div>
+            <div style="background:#1a1a1a;border:1px solid #222;padding:8px 12px;border-radius:2px 12px 12px 12px;color:#999;font-size:11px;max-width:70%;">Found the issue — JWT expiry check uses &lt; instead of &lt;=. PR #47 raised.</div>
+            <div style="display:flex;gap:6px;margin-top:2px;">
+              <span style="color:#444;font-size:9px;">10:44</span>
+              <span style="color:#555;font-size:9px;cursor:pointer;text-decoration:underline;">view issue →</span>
+            </div>
+          </div>
+
+          <!-- Typing indicator -->
+          <div style="display:flex;flex-direction:column;align-items:flex-start;gap:2px;">
+            <div style="color:#f59e0b;font-size:10px;font-weight:600;margin-left:2px;">Carol (Design)</div>
+            <div style="background:#1a1a1a;border:1px solid #222;padding:8px 12px;border-radius:2px 12px 12px 12px;display:flex;gap:4px;align-items:center;">
+              <div style="width:5px;height:5px;background:#555;border-radius:50%;animation:none;"></div>
+              <div style="width:5px;height:5px;background:#555;border-radius:50%;"></div>
+              <div style="width:5px;height:5px;background:#555;border-radius:50%;"></div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Composer -->
+        <div style="padding:10px 16px;border-top:1px solid #1a1a1a;">
+          <!-- Context tags -->
+          <div style="display:flex;gap:4px;margin-bottom:6px;">
+            <div style="background:#1a2a1a;border:1px solid #2a4a2a;color:#86efac;font-size:10px;padding:2px 6px;border-radius:4px;">$issue:login-bug ×</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-end;">
+            <div style="flex:1;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:8px;padding:8px 12px;color:#555;font-size:11px;min-height:36px;">
+              Message Dispatcher — use @agent, #room, $issue...
+            </div>
+            <div style="background:#818cf8;color:#fff;padding:8px 12px;border-radius:8px;font-size:11px;font-weight:600;cursor:pointer;">↑</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:12px;">Does this layout feel right? Any changes before I write the spec?</p>

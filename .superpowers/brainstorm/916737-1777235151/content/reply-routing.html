@@ -1,0 +1,47 @@
+<h2>Where do agent replies land?</h2>
+<p class="subtitle">You send to Dispatcher → it routes to Alice → Alice replies. Where does that reply appear?</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Back in Dispatcher thread</h3>
+      <p>Alice's reply comes back into the same Dispatcher chat. One stream. Dispatcher summarises what it delegated. Simple, no context-switching.</p>
+      <div style="margin-top:8px;padding:8px;background:#0d0d0d;border-radius:4px;font-size:11px;font-family:monospace;">
+        <div style="color:#86efac;">You: fix the login bug</div>
+        <div style="color:#818cf8;margin-top:4px;">Dispatcher: Assigning to Bob...</div>
+        <div style="color:#a5b4fc;margin-top:4px;">Bob: Done — PR #42 ready for review.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>New thread opens for that agent</h3>
+      <p>Dispatcher routes silently. A "Bob" thread appears in the sidebar with the delegated task + Bob's replies. Dispatcher thread stays clean for high-level instructions.</p>
+      <div style="margin-top:8px;padding:8px;background:#0d0d0d;border-radius:4px;font-size:11px;font-family:monospace;">
+        <div style="color:#888;">Sidebar:</div>
+        <div style="color:#818cf8;">● Dispatcher</div>
+        <div style="color:#86efac;padding-left:12px;">↳ Bob  <span style="color:#f59e0b;">1 new</span></div>
+        <div style="color:#555;padding-left:12px;">↳ Alice</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Both — Dispatcher shows summary, agent thread shows detail</h3>
+      <p>Dispatcher thread gets a short status update ("Bob picked up login bug — see thread"). Full conversation lives in Bob's thread. Best of both but more complex.</p>
+      <div style="margin-top:8px;padding:8px;background:#0d0d0d;border-radius:4px;font-size:11px;font-family:monospace;">
+        <div style="color:#818cf8;">Dispatcher: → Bob: login bug <span style="color:#555;cursor:pointer;">[view thread ↗]</span></div>
+        <div style="color:#555;margin-top:4px;">Bob thread: full task conversation</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px;">This shapes the whole backend model — take your time.</p>

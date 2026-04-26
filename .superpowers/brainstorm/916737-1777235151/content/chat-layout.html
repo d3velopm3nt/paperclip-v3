@@ -1,0 +1,102 @@
+<h2>Chat Page Layout</h2>
+<p class="subtitle">How should the operator reach agents? Pick the layout that feels right.</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#0d0d0d;border-radius:6px;font-family:monospace;font-size:11px;">
+      <div style="display:flex;height:220px;gap:8px;">
+        <div style="width:140px;background:#111;border-radius:4px;padding:8px;display:flex;flex-direction:column;gap:4px;">
+          <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Agents</div>
+          <div style="background:#1a1a2e;color:#818cf8;padding:4px 6px;border-radius:3px;font-size:11px;">● Alice (CTO)</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;">● Bob (Dev)</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;">● Carol (Design)</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;">● Dave (CEO)</div>
+          <div style="margin-top:8px;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Rooms</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;"># engineering</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;"># design</div>
+        </div>
+        <div style="flex:1;background:#111;border-radius:4px;padding:8px;display:flex;flex-direction:column;">
+          <div style="color:#818cf8;font-size:12px;font-weight:bold;margin-bottom:8px;border-bottom:1px solid #222;padding-bottom:6px;">Alice (CTO)</div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px;overflow:hidden;">
+            <div style="background:#1a1a2e;padding:6px 8px;border-radius:4px;color:#a5b4fc;font-size:11px;align-self:flex-start;max-width:80%;">I reviewed the PR. The auth middleware needs refactoring before merge.</div>
+            <div style="background:#1e2a1e;padding:6px 8px;border-radius:4px;color:#86efac;font-size:11px;align-self:flex-end;max-width:80%;">Can you draft the refactoring plan?</div>
+            <div style="background:#1a1a2e;padding:6px 8px;border-radius:4px;color:#a5b4fc;font-size:11px;align-self:flex-start;max-width:80%;">On it. I'll have a plan ready in 10 minutes.</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <div style="flex:1;background:#1a1a1a;border:1px solid #333;border-radius:3px;padding:5px 8px;color:#555;font-size:11px;">Message Alice...</div>
+            <div style="background:#818cf8;color:#fff;padding:5px 10px;border-radius:3px;font-size:11px;">Send</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Slack-style</h3>
+      <p>Sidebar lists all agents + rooms. Click to open DM thread. Familiar, direct access to any agent.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#0d0d0d;border-radius:6px;font-family:monospace;font-size:11px;">
+      <div style="display:flex;height:220px;gap:8px;">
+        <div style="width:140px;background:#111;border-radius:4px;padding:8px;display:flex;flex-direction:column;gap:4px;">
+          <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Conversations</div>
+          <div style="background:#1a1a2e;color:#818cf8;padding:4px 6px;border-radius:3px;font-size:11px;">● Dispatcher</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;border-left:2px solid #333;">↳ Alice (CTO)</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;border-left:2px solid #333;">↳ Bob (Dev)</div>
+          <div style="color:#444;padding:4px 6px;font-size:11px;">● Carol (Design)</div>
+          <div style="color:#444;padding:4px 6px;font-size:11px;">● Dave (CEO)</div>
+        </div>
+        <div style="flex:1;background:#111;border-radius:4px;padding:8px;display:flex;flex-direction:column;">
+          <div style="color:#818cf8;font-size:12px;font-weight:bold;margin-bottom:8px;border-bottom:1px solid #222;padding-bottom:6px;">Dispatcher <span style="color:#555;font-weight:normal;font-size:10px;">→ routes to right agent</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px;overflow:hidden;">
+            <div style="background:#1e2a1e;padding:6px 8px;border-radius:4px;color:#86efac;font-size:11px;align-self:flex-end;max-width:85%;">We need to fix the login bug and update the homepage design</div>
+            <div style="background:#1a1a2e;padding:6px 8px;border-radius:4px;color:#a5b4fc;font-size:11px;align-self:flex-start;max-width:85%;">Routing login bug → Bob, homepage design → Carol. Assigning now.</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <div style="flex:1;background:#1a1a1a;border:1px solid #333;border-radius:3px;padding:5px 8px;color:#555;font-size:11px;">What needs doing today...</div>
+            <div style="background:#818cf8;color:#fff;padding:5px 10px;border-radius:3px;font-size:11px;">Send</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Dispatcher-first</h3>
+      <p>One main chat with a routing agent. It delegates to agents automatically. Direct chats appear as sub-threads when agents reply back.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:12px;background:#0d0d0d;border-radius:6px;font-family:monospace;font-size:11px;">
+      <div style="display:flex;height:220px;gap:8px;">
+        <div style="width:140px;background:#111;border-radius:4px;padding:8px;display:flex;flex-direction:column;gap:4px;">
+          <div style="color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">Chat</div>
+          <div style="background:#1a1a2e;color:#818cf8;padding:4px 6px;border-radius:3px;font-size:11px;">● All agents</div>
+          <div style="margin-top:8px;color:#888;font-size:10px;text-transform:uppercase;letter-spacing:1px;">Rooms</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;"># engineering</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;"># design</div>
+          <div style="color:#555;padding:4px 6px;font-size:11px;"># all-hands</div>
+        </div>
+        <div style="flex:1;background:#111;border-radius:4px;padding:8px;display:flex;flex-direction:column;">
+          <div style="color:#818cf8;font-size:12px;font-weight:bold;margin-bottom:8px;border-bottom:1px solid #222;padding-bottom:6px;">All agents <span style="color:#555;font-weight:normal;font-size:10px;">4 online</span></div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:6px;overflow:hidden;">
+            <div style="background:#1e2a1e;padding:6px 8px;border-radius:4px;color:#86efac;font-size:11px;align-self:flex-end;max-width:85%;">@alice can you review the PR?</div>
+            <div style="background:#1a1a2e;padding:6px 8px;border-radius:4px;color:#a5b4fc;font-size:11px;align-self:flex-start;max-width:85%;"><span style="color:#818cf8;font-weight:bold;">Alice:</span> On it — will comment shortly.</div>
+            <div style="background:#1a1a2e;padding:6px 8px;border-radius:4px;color:#a5b4fc;font-size:11px;align-self:flex-start;max-width:85%;"><span style="color:#86efac;font-weight:bold;">Bob:</span> I can help too if needed.</div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px;">
+            <div style="flex:1;background:#1a1a1a;border:1px solid #333;border-radius:3px;padding:5px 8px;color:#555;font-size:11px;">@mention or broadcast...</div>
+            <div style="background:#818cf8;color:#fff;padding:5px 10px;border-radius:3px;font-size:11px;">Send</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Group chat + rooms</h3>
+      <p>One "all agents" thread plus named rooms. Use @mentions to target. Agents respond in the same thread. Like a team chat.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:16px;">Click to select — or just tell me in the terminal what feels right.</p>
