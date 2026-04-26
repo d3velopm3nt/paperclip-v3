@@ -327,14 +327,18 @@ export function emailProcessorService(db: Db) {
     if (!row) throw new Error(`email not found: ${emailMessageId}`);
 
     // Reset state + clear prior processing artefacts so routeInbound can
-    // re-propose a plan. Pending plans for this email are left in place;
-    // deletion is intentionally out of scope (audit trail).
+    // re-propose a plan. Plans/approvals/issues are left in place for the
+    // audit trail — only the email's linkage pointers are cleared so routing
+    // starts fresh without inheriting the old plan/issue associations.
     await db
       .update(emailMessages)
       .set({
         processingState: "pending",
         errorText: null,
         processedAt: null,
+        issueId: null,
+        approvalId: null,
+        matchedAgentId: null,
       })
       .where(eq(emailMessages.id, emailMessageId));
 
@@ -561,18 +565,61 @@ async function routeInbound(
     `- **request_operator_input** — you need info from the **operator** (the human running this app) — typically: which existing client/project to attach to, what counts as done, scope confirmation. proposalText = why you need input; proposalMeta.questions = the questions list. The operator gets a styled email + can reply directly.`,
     `- **reply_to_sender** — direct answer / status update without creating internal work. proposalText = why; proposalMeta.reply.text/html = the email body.`,
     ``,
+    `### YOUR ROLE: delegate only`,
+    `You are a triage agent. You read emails, understand context, and delegate work.`,
+    `You do NOT create clients, projects, or any other platform objects directly.`,
+    `**NEVER call POST /api/companies/:id/clients or POST /api/companies/:id/projects.**`,
+    `Those endpoints are owned by the ops agent. Calling them yourself bypasses audit trails and governance.`,
+    ``,
     `### Readiness checklist for create_issue`,
     `Before you submit kind="create_issue", you must have:`,
-    `  1. **clientId** — pick existing client or, if new, propose request_operator_input asking the operator to create one (or to confirm using an existing).`,
-    `  2. **projectId** — same: existing or operator-confirmed new project.`,
+    `  1. **clientId** — must be an existing client id. If missing, STOP and delegate to ops agent (see below).`,
+    `  2. **projectId** — must be an existing project id. If missing, STOP and delegate to ops agent (see below).`,
     `  3. **definitionOfDone** — concrete acceptance criteria (e.g. "homepage hero text updated", "deployed to production"). At least 1 entry.`,
-    `If any are missing, do NOT submit create_issue. Submit request_operator_input instead and wait for the reply.`,
+    `If any are missing, do NOT submit create_issue. Use the ops agent delegation flow below.`,
+    ``,
+    `### Delegating to the Ops Agent (REQUIRED for missing client/project)`,
+    ``,
+    `When you need a new client or project created, create a sub-issue for the ops agent rather than emailing the operator.`,
+    `This keeps the work inside Paperclip and resumes you automatically when the ops agent finishes.`,
+    ``,
+    `**Step 1 — Find the ops agent:**`,
+    `\`\`\``,
+    `GET /api/companies/${companyId}/agents`,
+    `\`\`\``,
+    `Find the agent with role="ops". If none exists, fall back to request_operator_input.`,
+    ``,
+    `**Step 2 — Create the sub-issue:**`,
+    `\`\`\``,
+    `POST /api/companies/${companyId}/issues`,
+    `Headers: Authorization: Bearer $PAPERCLIP_API_KEY, X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID`,
+    `{`,
+    `  "title": "[ops] create_client: <name> <<email>>",`,
+    `  "description": "JSON block with: name, emailDomain, extraEmails, notes. Context: email from <fromAddr>, subject: <subject>.",`,
+    `  "parentId": "<this triage issue id>",`,
+    `  "assigneeAgentId": "<ops agent id>",`,
+    `  "status": "todo"`,
+    `}`,
+    `\`\`\``,
+    `For project creation: title \`[ops] create_project: <name> for clientId=<id>\`.`,
+    `For both at once: title \`[ops] create_client_and_project: <client name> / <project name>\`.`,
+    ``,
+    `**Step 3 — Block yourself:**`,
+    `\`\`\``,
+    `PATCH /api/issues/<this triage issue id>`,
+    `{ "status": "blocked" }`,
+    `\`\`\``,
+    `Post a comment: "Delegated to ops agent (sub-issue <id>). Waiting for client/project creation."`,
+    ``,
+    `**Step 4 — When you wake again** (ops agent closed the sub-issue):`,
+    `Read the sub-issue comments for the clientId/projectId, then resume and propose create_issue.`,
     ``,
     `### Important rules`,
     `- The auto-acknowledgement is NOT a plan. Do not skip this step because an ack was sent.`,
     `- Always include proposalMeta.reply.text (and reply.html if you can) for clarification / reply kinds — that is what gets emailed.`,
     `- Use plain text for .text and well-formed HTML with inline styles for .html. The dispatcher will send both as a multipart email.`,
     `- Operator reviews via /governance/plans and approves. Do NOT email the sender directly outside the plan-gate.`,
+    `- Include X-Paperclip-Run-Id header on all API mutations.`,
   ].join("\n");
 
   try {

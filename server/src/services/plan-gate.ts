@@ -10,7 +10,7 @@
 
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { approvals, issues, plans, emailMessages, emailAccounts, companies } from "@paperclipai/db";
+import { approvals, issues, plans, emailMessages, emailAccounts, companies, clients, projects } from "@paperclipai/db";
 import { actionPolicyService, type ActionPolicyRow, type PolicyScope } from "./action-policies.js";
 import { issueService } from "./issues.js";
 import { sendEmailFromAccount } from "./email-sender.js";
@@ -138,6 +138,57 @@ export function planGateService(db: Db) {
       const dod = input.definitionOfDone ?? [];
       if (dod.length === 0) missing.push("definitionOfDone");
       if (missing.length > 0) throw new PlanReadinessError(missing);
+    }
+
+    // Auto-enrich proposalMeta with source-email + client/project context
+    // from the DB so notification emails always show correct data regardless
+    // of whether the agent included them in proposalMeta.
+    if (input.sourceEmailMessageId) {
+      const [srcMsg] = await db
+        .select({
+          fromAddr: emailMessages.fromAddr,
+          subject: emailMessages.subject,
+          emailAccountId: emailMessages.emailAccountId,
+        })
+        .from(emailMessages)
+        .where(eq(emailMessages.id, input.sourceEmailMessageId))
+        .limit(1);
+      if (srcMsg) {
+        const [acct] = await db
+          .select({ fromEmail: emailAccounts.fromEmail, label: emailAccounts.label, teamEmails: emailAccounts.teamEmails })
+          .from(emailAccounts)
+          .where(eq(emailAccounts.id, srcMsg.emailAccountId))
+          .limit(1);
+        const existingMeta = (input.proposalMeta ?? {}) as Record<string, unknown>;
+        const enriched: Record<string, unknown> = {
+          ...existingMeta,
+          sourceEmail: {
+            from: srcMsg.fromAddr,
+            subject: srcMsg.subject,
+            account: acct ? { address: acct.fromEmail, label: acct.label } : undefined,
+          },
+        };
+        if (acct?.teamEmails?.length && !existingMeta.teamEmails) {
+          enriched.teamEmails = acct.teamEmails;
+        }
+        if (input.clientId && !existingMeta.clientMatched) {
+          const [clientRow] = await db
+            .select({ name: clients.name })
+            .from(clients)
+            .where(eq(clients.id, input.clientId))
+            .limit(1);
+          if (clientRow) enriched.clientMatched = { id: input.clientId, name: clientRow.name };
+        }
+        if (input.projectId && !existingMeta.projectMatched) {
+          const [projectRow] = await db
+            .select({ name: projects.name })
+            .from(projects)
+            .where(eq(projects.id, input.projectId))
+            .limit(1);
+          if (projectRow) enriched.projectMatched = { id: input.projectId, name: projectRow.name };
+        }
+        input = { ...input, proposalMeta: enriched };
+      }
     }
 
     const evaluation = await evaluateGate({
@@ -360,18 +411,21 @@ export function planGateService(db: Db) {
 
         // parentIssueId / assigneeAgentId may come from proposalMeta (set by
         // the proposing agent when delegating to a specialist).
+        // Fall back to the proposing agent so the issue lands in someone's
+        // inbox at todo rather than floating in the backlog unassigned.
         const parentIssueId = typeof meta.parentIssueId === "string" ? meta.parentIssueId : null;
-        const assigneeAgentId = typeof meta.assigneeAgentId === "string" ? meta.assigneeAgentId : null;
+        const assigneeAgentId =
+          typeof meta.assigneeAgentId === "string" ? meta.assigneeAgentId : (plan.agentId ?? null);
 
         const created = await issueService(db).create(plan.companyId, {
           title,
           description,
           clientId: plan.clientId ?? null,
+          projectId: plan.projectId ?? null,
           createdByAgentId: plan.agentId,
           ...(parentIssueId ? { parentId: parentIssueId } : {}),
-          ...(assigneeAgentId
-            ? { assigneeAgentId, status: "in_progress" }
-            : {}),
+          assigneeAgentId,
+          status: "todo",
         });
         // Link the issue back to the plan + email for audit/inbox display.
         await db
@@ -647,6 +701,7 @@ async function notifyTeamOfPlan(
     account?: { address?: string; label?: string };
   };
   const clientMatched = (meta.clientMatched ?? null) as { name?: string } | null;
+  const projectMatched = (meta.projectMatched ?? null) as { name?: string } | null;
 
   // Generate a one-shot token for click-to-decide email links.
   const { planDecisionTokenService } = await import("./plan-decision-tokens.js");
@@ -671,6 +726,7 @@ async function notifyTeamOfPlan(
     kind: input.kind,
     confidence: input.confidence ?? "medium",
     clientName: clientMatched?.name ?? "(unknown)",
+    projectName: projectMatched?.name ?? null,
     sourceEmail,
     proposalText: input.proposalText,
     approveLink,
@@ -682,6 +738,7 @@ async function notifyTeamOfPlan(
     kind: input.kind,
     confidence: input.confidence ?? "medium",
     clientName: clientMatched?.name ?? "(unknown)",
+    projectName: projectMatched?.name ?? null,
     sourceEmail,
     proposalText: input.proposalText,
     approveLink,
@@ -713,6 +770,7 @@ interface PlanNotificationVars {
   kind: string;
   confidence: string;
   clientName: string;
+  projectName: string | null;
   sourceEmail: { from?: string; subject?: string; account?: { address?: string; label?: string } };
   proposalText: string;
   approveLink: string;
@@ -728,6 +786,7 @@ function renderPlanNotificationText(v: PlanNotificationVars): string {
     `Action: ${v.actionType} (${v.kind})`,
     `Confidence: ${v.confidence}`,
     `Client: ${v.clientName}`,
+    ...(v.projectName ? [`Project: ${v.projectName}`] : []),
     ``,
     `Source email:`,
     `  From: ${v.sourceEmail.from ?? "(unknown)"}`,
@@ -768,6 +827,7 @@ function renderPlanNotificationHtml(v: PlanNotificationVars): string {
       <tr><td style="padding:4px 24px 8px 24px;font-size:13px;color:#52525b;">
         <div><strong>Action:</strong> ${escapeHtml(v.actionType)} <span style="color:#a1a1aa;">(${escapeHtml(v.kind)})</span></div>
         <div><strong>Client:</strong> ${escapeHtml(v.clientName)}</div>
+        ${v.projectName ? `<div><strong>Project:</strong> ${escapeHtml(v.projectName)}</div>` : ""}
         <div><strong>Confidence:</strong> <span style="color:${confidenceColor};font-weight:600;">${escapeHtml(v.confidence)}</span></div>
       </td></tr>
       <tr><td style="padding:12px 24px;">
