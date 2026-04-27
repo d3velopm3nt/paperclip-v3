@@ -14,6 +14,7 @@ import { NewGoalDialog } from "./NewGoalDialog";
 import { NewAgentDialog } from "./NewAgentDialog";
 import { ToastViewport } from "./ToastViewport";
 import { MobileBottomNav } from "./MobileBottomNav";
+import { LogsPanel } from "./LogsPanel";
 import { WorktreeBanner } from "./WorktreeBanner";
 import { DevRestartBanner } from "./DevRestartBanner";
 import { useDialog } from "../context/DialogContext";
@@ -407,25 +408,28 @@ export function Layout() {
           >
             <BreadcrumbBar />
           </div>
-          <div className={cn(isMobile ? "block" : "flex flex-1 min-h-0")}>
-            <main
-              id="main-content"
-              tabIndex={-1}
-              className={cn(
-                "flex-1 p-4 md:p-6",
-                isMobile ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]" : "overflow-auto",
-              )}
-            >
-              {hasUnknownCompanyPrefix ? (
-                <NotFoundPage
-                  scope="invalid_company_prefix"
-                  requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
-                />
-              ) : (
-                <Outlet />
-              )}
-            </main>
-            <PropertiesPanel />
+          <div className={cn(isMobile ? "block" : "flex flex-col flex-1 min-h-0")}>
+            <div className={cn(isMobile ? "block" : "flex flex-1 min-h-0")}>
+              <main
+                id="main-content"
+                tabIndex={-1}
+                className={cn(
+                  "flex-1 p-4 md:p-6",
+                  isMobile ? "overflow-visible pb-[calc(5rem+env(safe-area-inset-bottom))]" : "overflow-auto",
+                )}
+              >
+                {hasUnknownCompanyPrefix ? (
+                  <NotFoundPage
+                    scope="invalid_company_prefix"
+                    requestedPrefix={companyPrefix ?? selectedCompany?.issuePrefix}
+                  />
+                ) : (
+                  <Outlet />
+                )}
+              </main>
+              <PropertiesPanel />
+            </div>
+            {!isMobile && <LogsPanel companyId={selectedCompanyId} />}
           </div>
         </div>
       </div>

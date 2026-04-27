@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { agentsApi } from "../../api/agents";
 import { roomsApi } from "../../api/rooms";
 import { issuesApi } from "../../api/issues";
+import { projectsApi } from "../../api/projects";
+import { clientsApi } from "../../api/clients";
 import { MentionPopup, type MentionItem } from "./MentionPopup";
 import type { ContextRef } from "../../api/chat";
 import { Button } from "@/components/ui/button";
@@ -15,7 +17,14 @@ interface Props {
   placeholder?: string;
 }
 
-type MentionTrigger = "@" | "#" | "$" | null;
+type MentionTrigger = "@" | "#" | "$" | "/" | "%" | null;
+
+const CONTEXT_REF_COLORS: Record<ContextRef["type"], string> = {
+  agent:   "bg-blue-950 border-blue-800 text-blue-300",
+  project: "bg-violet-950 border-violet-800 text-violet-300",
+  client:  "bg-orange-950 border-orange-800 text-orange-300",
+  issue:   "bg-emerald-950 border-emerald-800 text-emerald-300",
+};
 
 export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props) {
   const [body, setBody] = useState("");
@@ -42,13 +51,44 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
     enabled: mentionTrigger === "$",
   });
 
+  const { data: projectList = [] } = useQuery({
+    queryKey: ["projects", companyId],
+    queryFn: () => projectsApi.list(companyId),
+    enabled: mentionTrigger === "/",
+  });
+
+  const { data: clientList = [] } = useQuery({
+    queryKey: ["clients", companyId],
+    queryFn: () => clientsApi.list(companyId),
+    enabled: mentionTrigger === "%",
+  });
+
+  const selectedProjectIds = contextRefs.filter((r) => r.type === "project").map((r) => r.id);
+
+  const { data: selectedProjectWorkspaces = [], isLoading: workspacesLoading } = useQuery({
+    queryKey: ["project-workspaces-chat", ...selectedProjectIds],
+    queryFn: () =>
+      Promise.all(selectedProjectIds.map((id) => projectsApi.listWorkspaces(id, companyId))).then((results) =>
+        results.flat(),
+      ),
+    enabled: selectedProjectIds.length > 0,
+  });
+
+  const LOCAL_SOURCE_TYPES = ["local_path", "non_git_path"];
+
+  const projectsWithNoLocalPath = workspacesLoading
+    ? []
+    : selectedProjectIds.filter(
+        (id) => !selectedProjectWorkspaces.some((w) => w.projectId === id && w.cwd),
+      );
+
   function getMentionItems(): MentionItem[] {
     const q = mentionQuery.toLowerCase();
     if (mentionTrigger === "@") {
       return agents
         .filter((a) => a.name.toLowerCase().includes(q))
         .slice(0, 8)
-        .map((a) => ({ label: a.name, value: `@${a.name}` }));
+        .map((a) => ({ label: a.name, value: `@agent:${a.id}`, sublabel: a.role }));
     }
     if (mentionTrigger === "#") {
       return rooms
@@ -70,6 +110,18 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
           sublabel: i.title ?? undefined,
         }));
     }
+    if (mentionTrigger === "/") {
+      return projectList
+        .filter((p) => p.name.toLowerCase().includes(q))
+        .slice(0, 8)
+        .map((p) => ({ label: p.name, value: `/project:${p.id}`, sublabel: p.status }));
+    }
+    if (mentionTrigger === "%") {
+      return clientList
+        .filter((c) => c.name.toLowerCase().includes(q))
+        .slice(0, 8)
+        .map((c) => ({ label: c.name, value: `%client:${c.id}` }));
+    }
     return [];
   }
 
@@ -79,9 +131,11 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
 
     const cursor = e.target.selectionStart ?? val.length;
     const before = val.slice(0, cursor);
-    const atMatch = before.match(/(?:^|\s)@([\w-]*)$/);
-    const hashMatch = before.match(/(?:^|\s)#([\w-]*)$/);
+    const atMatch    = before.match(/(?:^|\s)@([\w-]*)$/);
+    const hashMatch  = before.match(/(?:^|\s)#([\w-]*)$/);
     const dollarMatch = before.match(/(?:^|\s)\$([\w:]*)$/);
+    const slashMatch = before.match(/(?:^|\s)\/([\w-]*)$/);
+    const pctMatch   = before.match(/(?:^|\s)%([\w-]*)$/);
 
     if (atMatch) {
       setMentionTrigger("@");
@@ -92,21 +146,41 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
     } else if (dollarMatch) {
       setMentionTrigger("$");
       setMentionQuery(dollarMatch[1] ?? "");
+    } else if (slashMatch) {
+      setMentionTrigger("/");
+      setMentionQuery(slashMatch[1] ?? "");
+    } else if (pctMatch) {
+      setMentionTrigger("%");
+      setMentionQuery(pctMatch[1] ?? "");
     } else {
       setMentionTrigger(null);
       setMentionQuery("");
     }
   }
 
+  function addContextRef(ref: ContextRef) {
+    setContextRefs((prev) => [...prev.filter((r) => r.id !== ref.id), ref]);
+  }
+
   function handleMentionSelect(item: MentionItem) {
-    if (mentionTrigger === "$") {
+    if (mentionTrigger === "@") {
+      setBody((prev) => prev.replace(/@[\w-]*$/, "").trimEnd());
+      const agentId = item.value.replace("@agent:", "");
+      addContextRef({ type: "agent", id: agentId, label: item.label });
+    } else if (mentionTrigger === "$") {
       setBody((prev) => prev.replace(/\$([\w:]*)$/, "").trimEnd());
       const issueId = item.value.replace("$issue:", "");
-      setContextRefs((prev) => [
-        ...prev.filter((r) => r.id !== issueId),
-        { type: "issue", id: issueId, label: item.label },
-      ]);
+      addContextRef({ type: "issue", id: issueId, label: item.label });
+    } else if (mentionTrigger === "/") {
+      setBody((prev) => prev.replace(/\/[\w-]*$/, "").trimEnd());
+      const projectId = item.value.replace("/project:", "");
+      addContextRef({ type: "project", id: projectId, label: item.label });
+    } else if (mentionTrigger === "%") {
+      setBody((prev) => prev.replace(/%[\w-]*$/, "").trimEnd());
+      const clientId = item.value.replace("%client:", "");
+      addContextRef({ type: "client", id: clientId, label: item.label });
     } else {
+      // #room — insert as text
       const trigger = mentionTrigger!;
       setBody((prev) => {
         const re = new RegExp(`${trigger}[\\w-]*$`);
@@ -141,8 +215,9 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
           {contextRefs.map((ref) => (
             <span
               key={ref.id}
-              className="inline-flex items-center gap-1 rounded-md bg-emerald-950 border border-emerald-800 text-emerald-300 text-xs px-2 py-0.5"
+              className={`inline-flex items-center gap-1 rounded-md border text-xs px-2 py-0.5 ${CONTEXT_REF_COLORS[ref.type]}`}
             >
+              <span className="text-[10px] opacity-60">{ref.type}</span>
               {ref.label}
               <button
                 type="button"
@@ -153,6 +228,19 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
               </button>
             </span>
           ))}
+        </div>
+      )}
+
+      {projectsWithNoLocalPath.length > 0 && (
+        <div className="flex items-center gap-1.5 rounded-md bg-orange-950/60 border border-orange-800/60 px-2.5 py-1.5 text-[11px] text-orange-300">
+          <span>⚠</span>
+          <span>
+            {contextRefs
+              .filter((r) => r.type === "project" && projectsWithNoLocalPath.includes(r.id))
+              .map((r) => r.label)
+              .join(", ")}{" "}
+            has no local folder set — agent cannot read code files.
+          </span>
         </div>
       )}
 
@@ -170,7 +258,7 @@ export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          placeholder={placeholder ?? "Message — use @agent, #room, $issue…"}
+          placeholder={placeholder ?? "Message — @agent  $issue  /project  %client  #room"}
           className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 min-h-[38px] max-h-32"
           style={{ height: "auto" }}
           onInput={(e) => {

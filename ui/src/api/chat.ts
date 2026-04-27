@@ -20,12 +20,18 @@ export interface ChatMessage {
   chatThreadId: string | null;
   rawPayload: { contextRefs?: ContextRef[] } | null;
   createdAt: string;
+  isStatus?: boolean;
 }
 
 export interface ContextRef {
-  type: "issue" | "project" | "client";
+  type: "issue" | "project" | "client" | "agent";
   id: string;
   label: string;
+  meta?: {
+    cwd?: string;
+    status?: string;
+    role?: string;
+  };
 }
 
 export const chatApi = {

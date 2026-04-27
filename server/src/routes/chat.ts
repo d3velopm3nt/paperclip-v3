@@ -2,7 +2,9 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { assertCompanyAccess } from "./authz.js";
 import { chatService } from "../services/chat.js";
+import { chatDirectReply, pickAgentForDispatcher } from "../services/chat-direct.js";
 import { operatorMessagingService } from "../services/operator-messaging.js";
+import { logger } from "../middleware/logger.js";
 import { HttpError } from "../errors.js";
 
 export function chatRoutes(db: Db): Router {
@@ -48,21 +50,43 @@ export function chatRoutes(db: Db): Router {
       throw new HttpError(400, "body required");
     }
 
+    const companyId = req.params.companyId;
     const chatSvc = chatService(db);
     const thread = toAgentId
-      ? await chatSvc.getOrCreateAgentThread(req.params.companyId, toAgentId)
-      : await chatSvc.getOrCreateDispatcherThread(req.params.companyId);
+      ? await chatSvc.getOrCreateAgentThread(companyId, toAgentId)
+      : await chatSvc.getOrCreateDispatcherThread(companyId);
 
-    await operatorMessagingService(db).handleInbound(req.params.companyId, "", {
-      platform: "chat",
-      from: "operator",
-      body: body.trim(),
-      threadKey: thread.id,
-      toAgentId,
-      raw: { contextRefs: contextRefs ?? [] },
-    });
-
+    // Return immediately; reply delivered via WebSocket
     res.json({ ok: true, threadId: thread.id });
+
+    // Determine responding agent
+    const agentId =
+      toAgentId ?? (await pickAgentForDispatcher(db, companyId, body.trim()));
+
+    if (!agentId) {
+      logger.warn({ companyId }, "chat: no agent available to respond");
+      return;
+    }
+
+    // Try direct Anthropic API reply (no issue created).
+    // Falls back to full issue pipeline if agent has no API key.
+    chatDirectReply(db, companyId, agentId, thread.id, body.trim(), {
+      contextRefs: contextRefs ?? [],
+    })
+      .then((handled) => {
+        if (!handled) {
+          // Agent uses subscription auth — fall back to issue pipeline
+          return operatorMessagingService(db).handleInbound(companyId, "", {
+            platform: "chat",
+            from: "operator",
+            body: body.trim(),
+            threadKey: thread.id,
+            toAgentId,
+            raw: { contextRefs: contextRefs ?? [] },
+          });
+        }
+      })
+      .catch((err) => logger.warn({ err, companyId }, "chat: reply failed"));
   });
 
   return router;

@@ -14,6 +14,8 @@ interface LiveChatEvent {
     agentName: string | null;
     chatThreadId: string | null;
     createdAt: string;
+    contextRefs?: Array<{ type: "issue" | "project" | "client" | "agent"; id: string; label: string; meta?: { cwd?: string; status?: string; role?: string } }>;
+    isStatus?: boolean;
   };
 }
 
@@ -70,7 +72,8 @@ export function useChatMessages(companyId: string | null, threadId: string | nul
             fromAgentId: msg.fromAgentId,
             body: msg.body,
             chatThreadId: msg.chatThreadId,
-            rawPayload: null,
+            rawPayload: msg.contextRefs ? { contextRefs: msg.contextRefs } : null,
+            isStatus: msg.isStatus,
             createdAt: msg.createdAt,
           };
           setLive((prev) => [...prev, newMsg]);
