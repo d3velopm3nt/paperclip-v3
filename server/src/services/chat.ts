@@ -75,8 +75,8 @@ export function chatService(db: Db) {
 
     if (!thread) return [];
 
-    if (thread.agentId === null) {
-      // Dispatcher thread: messages tagged to this thread, or legacy messages with no thread tag
+    if (thread.agentId === null && thread.platform !== "telegram") {
+      // Web dispatcher thread: messages tagged to this thread, or legacy messages with no thread tag
       return db
         .select()
         .from(operatorMessages)
