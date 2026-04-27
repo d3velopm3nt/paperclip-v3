@@ -186,23 +186,49 @@ export function telegramRoutes(db: Db): Router {
   // Recent messages for a channel — used by LogsPanel Channels tab
   router.get("/companies/:companyId/channels/messages", async (req, res) => {
     const { platform } = req.query as { platform?: string };
-    const rows = await db
-      .select({
-        id: operatorMessages.id,
-        direction: operatorMessages.direction,
-        platform: operatorMessages.platform,
-        body: operatorMessages.body,
-        chatThreadId: operatorMessages.chatThreadId,
-        createdAt: operatorMessages.createdAt,
-      })
-      .from(operatorMessages)
-      .where(
-        platform
-          ? eq(operatorMessages.platform, platform)
-          : eq(operatorMessages.companyId, req.params.companyId),
-      )
-      .orderBy(desc(operatorMessages.createdAt))
-      .limit(100);
+    const { chatThreads } = await import("@paperclipai/db");
+    const { and: dbAnd, inArray } = await import("drizzle-orm");
+
+    let rows;
+    if (platform === "telegram") {
+      // Find all telegram threads for this company, then get their messages
+      const tgThreads = await db
+        .select({ id: chatThreads.id })
+        .from(chatThreads)
+        .where(dbAnd(eq(chatThreads.companyId, req.params.companyId), eq(chatThreads.platform, "telegram")));
+
+      if (tgThreads.length === 0) {
+        res.json([]); return;
+      }
+      const threadIds = tgThreads.map((t) => t.id);
+      rows = await db
+        .select({
+          id: operatorMessages.id,
+          direction: operatorMessages.direction,
+          platform: operatorMessages.platform,
+          body: operatorMessages.body,
+          chatThreadId: operatorMessages.chatThreadId,
+          createdAt: operatorMessages.createdAt,
+        })
+        .from(operatorMessages)
+        .where(dbAnd(eq(operatorMessages.companyId, req.params.companyId), inArray(operatorMessages.chatThreadId, threadIds)))
+        .orderBy(desc(operatorMessages.createdAt))
+        .limit(100);
+    } else {
+      rows = await db
+        .select({
+          id: operatorMessages.id,
+          direction: operatorMessages.direction,
+          platform: operatorMessages.platform,
+          body: operatorMessages.body,
+          chatThreadId: operatorMessages.chatThreadId,
+          createdAt: operatorMessages.createdAt,
+        })
+        .from(operatorMessages)
+        .where(eq(operatorMessages.companyId, req.params.companyId))
+        .orderBy(desc(operatorMessages.createdAt))
+        .limit(100);
+    }
     res.json(rows);
   });
 
