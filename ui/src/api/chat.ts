@@ -24,13 +24,15 @@ export interface ChatMessage {
 }
 
 export interface ContextRef {
-  type: "issue" | "project" | "client" | "agent";
+  type: "issue" | "project" | "client" | "agent" | "document";
   id: string;
   label: string;
   meta?: {
     cwd?: string;
     status?: string;
     role?: string;
+    sourceType?: string;
+    driveWebUrl?: string;
   };
 }
 

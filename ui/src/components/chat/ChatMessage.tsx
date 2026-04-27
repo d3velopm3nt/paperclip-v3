@@ -12,10 +12,11 @@ function formatTime(iso: string) {
 }
 
 const CONTEXT_REF_COLORS: Record<ContextRef["type"], string> = {
-  agent:   "bg-blue-950 border-blue-800 text-blue-300",
-  project: "bg-violet-950 border-violet-800 text-violet-300",
-  client:  "bg-orange-950 border-orange-800 text-orange-300",
-  issue:   "bg-emerald-950 border-emerald-800 text-emerald-300",
+  agent:    "bg-blue-950 border-blue-800 text-blue-300",
+  project:  "bg-violet-950 border-violet-800 text-violet-300",
+  client:   "bg-orange-950 border-orange-800 text-orange-300",
+  issue:    "bg-emerald-950 border-emerald-800 text-emerald-300",
+  document: "bg-purple-950 border-purple-800 text-purple-300",
 };
 
 function ContextPills({ refs }: { refs: ContextRef[] }) {
