@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatApi, type ChatThread } from "../../api/chat";
 import { agentsApi } from "../../api/agents";
+import { channelsApi } from "../../api/channels";
 import { queryKeys } from "../../lib/queryKeys";
 import { MessageSquare, Send } from "lucide-react";
 
@@ -27,8 +28,24 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
     enabled: !!companyId,
   });
 
+  const { data: channelsStatus } = useQuery({
+    queryKey: ["channels-status"],
+    queryFn: () => channelsApi.status(),
+    staleTime: 30_000,
+  });
+
+  const telegramConfigured = channelsStatus?.telegram?.configured ?? false;
+
   const openDm = useMutation({
     mutationFn: (agentId: string) => chatApi.ensureAgentThread(companyId, agentId),
+    onSuccess: (thread) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.chat.threads(companyId) });
+      onSelectThread(thread.id, thread.name);
+    },
+  });
+
+  const openTelegram = useMutation({
+    mutationFn: () => chatApi.ensureTelegramThread(companyId),
     onSuccess: (thread) => {
       queryClient.invalidateQueries({ queryKey: queryKeys.chat.threads(companyId) });
       onSelectThread(thread.id, thread.name);
@@ -120,27 +137,47 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
           </div>
         )}
 
-        {/* Channels — Telegram etc */}
-        {telegramThreads.length > 0 && (
+        {/* Channels — always show if configured */}
+        {(telegramConfigured || telegramThreads.length > 0) && (
           <div className="flex flex-col gap-0.5">
             <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Channels
             </div>
-            {telegramThreads.map((thread) => (
+
+            {/* Telegram — show all per-chat threads, or a single inbox entry */}
+            {telegramThreads.length > 0 ? (
+              telegramThreads.map((thread) => (
+                <button
+                  key={thread.id}
+                  className={itemClass(selectedThreadId === thread.id)}
+                  onClick={() => onSelectThread(thread.id, thread.name)}
+                >
+                  <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
+                    <Send className="h-3.5 w-3.5 text-blue-400" />
+                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="truncate">{thread.name}</span>
+                    <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
+                  </div>
+                </button>
+              ))
+            ) : (
               <button
-                key={thread.id}
-                className={itemClass(selectedThreadId === thread.id)}
-                onClick={() => onSelectThread(thread.id, thread.name)}
+                className={itemClass(false)}
+                onClick={() => openTelegram.mutate()}
+                disabled={openTelegram.isPending}
               >
-                <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0 text-blue-400 text-[11px] font-bold">
-                  <Send className="h-3.5 w-3.5" />
+                <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
+                  <Send className="h-3.5 w-3.5 text-blue-400" />
                 </span>
                 <div className="flex flex-col min-w-0">
-                  <span className="truncate">{thread.name}</span>
-                  <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
+                  <span className="truncate">Telegram</span>
+                  <span className="text-[11px] text-muted-foreground truncate">
+                    {openTelegram.isPending ? "Opening..." : "No messages yet"}
+                  </span>
                 </div>
               </button>
-            ))}
+            )}
           </div>
         )}
       </nav>

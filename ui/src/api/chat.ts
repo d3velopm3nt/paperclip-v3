@@ -51,6 +51,9 @@ export const chatApi = {
   listMessages: (companyId: string, threadId: string) =>
     api.get<ChatMessage[]>(`/companies/${companyId}/chat/threads/${threadId}/messages`),
 
+  ensureTelegramThread: (companyId: string) =>
+    api.post<ChatThread>(`/companies/${companyId}/chat/threads`, { platform: "telegram" }),
+
   sendMessage: (
     companyId: string,
     body: string,

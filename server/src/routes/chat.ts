@@ -10,14 +10,20 @@ import { HttpError } from "../errors.js";
 export function chatRoutes(db: Db): Router {
   const router = Router();
 
-  // Get-or-create thread — optional agentId body param for DM threads
+  // Get-or-create thread — optional agentId/platform body params
   router.post("/companies/:companyId/chat/threads", async (req, res) => {
     assertCompanyAccess(req, req.params.companyId);
-    const { agentId } = (req.body ?? {}) as { agentId?: string };
+    const { agentId, platform } = (req.body ?? {}) as { agentId?: string; platform?: string };
     const chatSvc = chatService(db);
-    const thread = agentId
-      ? await chatSvc.getOrCreateAgentThread(req.params.companyId, agentId)
-      : await chatSvc.getOrCreateDispatcherThread(req.params.companyId);
+    let thread;
+    if (agentId) {
+      thread = await chatSvc.getOrCreateAgentThread(req.params.companyId, agentId);
+    } else if (platform === "telegram") {
+      // Create a placeholder Telegram inbox thread (no specific external key)
+      thread = await chatSvc.getOrCreateTelegramThread(req.params.companyId, "inbox", "Telegram");
+    } else {
+      thread = await chatSvc.getOrCreateDispatcherThread(req.params.companyId);
+    }
     res.json(thread);
   });
 
