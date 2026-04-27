@@ -18,8 +18,13 @@ vi.mock("../services/chat.js", () => ({ chatService: () => mockChatService }));
 vi.mock("../services/operator-messaging.js", () => ({
   operatorMessagingService: () => mockOperatorMessagingService,
 }));
-vi.mock("./authz.js", () => ({
+vi.mock("../services/chat-direct.js", () => ({
+  chatDirectReply: vi.fn().mockResolvedValue(false),
+  pickAgentForDispatcher: vi.fn().mockResolvedValue("agent-1"),
+}));
+vi.mock("../routes/authz.js", () => ({
   assertCompanyAccess: vi.fn(),
+  getActorInfo: vi.fn().mockReturnValue({ actorType: "user", actorId: "u1" }),
 }));
 
 function createApp() {
