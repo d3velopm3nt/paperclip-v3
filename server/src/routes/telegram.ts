@@ -2,10 +2,10 @@
 
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { companies, emailAccounts, operatorMessages } from "@paperclipai/db";
-import { desc, eq } from "drizzle-orm";
+import { chatThreads, companies, emailAccounts, operatorMessages } from "@paperclipai/db";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { logger } from "../middleware/logger.js";
-import { assertBoard } from "./authz.js";
+import { assertBoard, assertCompanyAccess } from "./authz.js";
 import {
   createTelegramAdapter,
   getTelegramBotInfo,
@@ -185,23 +185,20 @@ export function telegramRoutes(db: Db): Router {
 
   // Recent messages for a channel — used by LogsPanel Channels tab
   router.get("/companies/:companyId/channels/messages", async (req, res) => {
+    assertCompanyAccess(req, req.params.companyId);
     const { platform } = req.query as { platform?: string };
-    const { chatThreads } = await import("@paperclipai/db");
-    const { and: dbAnd, inArray } = await import("drizzle-orm");
+    const companyId = req.params.companyId;
 
-    let rows;
     if (platform === "telegram") {
-      // Find all telegram threads for this company, then get their messages
       const tgThreads = await db
         .select({ id: chatThreads.id })
         .from(chatThreads)
-        .where(dbAnd(eq(chatThreads.companyId, req.params.companyId), eq(chatThreads.platform, "telegram")));
+        .where(and(eq(chatThreads.companyId, companyId), eq(chatThreads.platform, "telegram")));
 
-      if (tgThreads.length === 0) {
-        res.json([]); return;
-      }
+      if (tgThreads.length === 0) { res.json([]); return; }
+
       const threadIds = tgThreads.map((t) => t.id);
-      rows = await db
+      const rows = await db
         .select({
           id: operatorMessages.id,
           direction: operatorMessages.direction,
@@ -211,11 +208,12 @@ export function telegramRoutes(db: Db): Router {
           createdAt: operatorMessages.createdAt,
         })
         .from(operatorMessages)
-        .where(dbAnd(eq(operatorMessages.companyId, req.params.companyId), inArray(operatorMessages.chatThreadId, threadIds)))
+        .where(and(eq(operatorMessages.companyId, companyId), inArray(operatorMessages.chatThreadId, threadIds)))
         .orderBy(desc(operatorMessages.createdAt))
         .limit(100);
+      res.json(rows);
     } else {
-      rows = await db
+      const rows = await db
         .select({
           id: operatorMessages.id,
           direction: operatorMessages.direction,
@@ -225,11 +223,11 @@ export function telegramRoutes(db: Db): Router {
           createdAt: operatorMessages.createdAt,
         })
         .from(operatorMessages)
-        .where(eq(operatorMessages.companyId, req.params.companyId))
+        .where(eq(operatorMessages.companyId, companyId))
         .orderBy(desc(operatorMessages.createdAt))
         .limit(100);
+      res.json(rows);
     }
-    res.json(rows);
   });
 
   router.post("/channels/telegram/test", async (req, res) => {
