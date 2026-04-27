@@ -68,6 +68,8 @@ export function telegramRoutes(db: Db): Router {
     // Route through chat system — creates a Telegram thread and replies via chatDirectReply
     res.status(200).json({ ok: true }); // Respond to Telegram immediately
 
+    logger.info({ chatId, fromId, text: msg.text }, "telegram webhook: message received ✓");
+
     const { chatService } = await import("../services/chat.js");
     const { chatDirectReply, pickAgentForDispatcher } = await import("../services/chat-direct.js");
 
@@ -78,9 +80,13 @@ export function telegramRoutes(db: Db): Router {
       const agentId = await pickAgentForDispatcher(db, companyId, msg.text);
       if (!agentId) {
         logger.warn({ companyId, chatId }, "telegram webhook: no agent available");
+        await sendTelegramMessage(BOT_TOKEN, chatId, "⚠ No agent available to respond.");
         return;
       }
 
+      logger.info({ chatId, agentId, threadId: thread.id }, "telegram webhook: routing to chatDirectReply");
+
+      const startedAt = Date.now();
       const handled = await chatDirectReply(db, companyId, agentId, thread.id, msg.text, {
         platform: "telegram",
         telegramChatId: chatId,
@@ -88,22 +94,29 @@ export function telegramRoutes(db: Db): Router {
         raw: update,
       });
 
-      // Send the reply back to Telegram
+      // Poll for the outbound reply and send to Telegram (claude takes 15-60s)
       if (handled) {
-        // Response will be emitted via WebSocket live event; also send to Telegram
-        // We hook into the outbound message via a short poll of the thread
-        setTimeout(async () => {
+        const poll = async (attempt: number) => {
           try {
-            const { chatService: cs } = await import("../services/chat.js");
-            const messages = await cs(db).listMessages(companyId, thread.id, 1);
-            const latest = messages[0];
-            if (latest?.direction === "outbound" && latest.body) {
-              await sendTelegramMessage(BOT_TOKEN, chatId, latest.body);
+            const messages = await chatService(db).listMessages(companyId, thread.id, 3);
+            const outbound = messages.find(
+              (m) => m.direction === "outbound" && new Date(m.createdAt).getTime() > startedAt,
+            );
+            if (outbound?.body) {
+              logger.info({ chatId, attempt, elapsedMs: Date.now() - startedAt }, "telegram webhook: sending reply");
+              await sendTelegramMessage(BOT_TOKEN, chatId, outbound.body);
+              return;
+            }
+            if (Date.now() - startedAt < 120_000 && attempt < 40) {
+              setTimeout(() => poll(attempt + 1), 3_000);
+            } else {
+              logger.warn({ chatId }, "telegram webhook: reply timeout, no outbound message found");
             }
           } catch (err) {
-            logger.warn({ err }, "telegram webhook: failed to send reply");
+            logger.warn({ err }, "telegram webhook: poll error");
           }
-        }, 3000);
+        };
+        setTimeout(() => poll(1), 5_000);
       }
     } catch (err) {
       logger.error({ err, chatId }, "telegram webhook: chat routing failed");
