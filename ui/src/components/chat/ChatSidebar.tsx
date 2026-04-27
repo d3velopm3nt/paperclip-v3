@@ -144,39 +144,35 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
               Channels
             </div>
 
-            {/* Telegram — show all per-chat threads, or a single inbox entry */}
-            {telegramThreads.length > 0 ? (
-              telegramThreads.map((thread) => (
-                <button
-                  key={thread.id}
-                  className={itemClass(selectedThreadId === thread.id)}
-                  onClick={() => onSelectThread(thread.id, thread.name)}
-                >
-                  <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
-                    <Send className="h-3.5 w-3.5 text-blue-400" />
-                  </span>
-                  <div className="flex flex-col min-w-0">
-                    <span className="truncate">{thread.name}</span>
-                    <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
-                  </div>
-                </button>
-              ))
+            {/* Show real per-chat Telegram threads (skip the inbox placeholder) */}
+            {telegramThreads.filter((t) => t.externalKey !== "inbox").length > 0 ? (
+              telegramThreads
+                .filter((t) => t.externalKey !== "inbox")
+                .map((thread) => (
+                  <button
+                    key={thread.id}
+                    className={itemClass(selectedThreadId === thread.id)}
+                    onClick={() => onSelectThread(thread.id, thread.name)}
+                  >
+                    <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
+                      <Send className="h-3.5 w-3.5 text-blue-400" />
+                    </span>
+                    <div className="flex flex-col min-w-0">
+                      <span className="truncate">{thread.name}</span>
+                      <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
+                    </div>
+                  </button>
+                ))
             ) : (
-              <button
-                className={itemClass(false)}
-                onClick={() => openTelegram.mutate()}
-                disabled={openTelegram.isPending}
-              >
+              <div className={itemClass(false) + " cursor-default opacity-60"}>
                 <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
                   <Send className="h-3.5 w-3.5 text-blue-400" />
                 </span>
                 <div className="flex flex-col min-w-0">
                   <span className="truncate">Telegram</span>
-                  <span className="text-[11px] text-muted-foreground truncate">
-                    {openTelegram.isPending ? "Opening..." : "No messages yet"}
-                  </span>
+                  <span className="text-[11px] text-muted-foreground truncate">Send a message to start</span>
                 </div>
-              </button>
+              </div>
             )}
           </div>
         )}

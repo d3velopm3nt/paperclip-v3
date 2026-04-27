@@ -284,6 +284,8 @@ async function chatLeanReply(
     },
   });
 
+  logger.info({ threadId, companyId }, "chat-lean ▶ storing inbound message in thread");
+
   // Store inbound message
   const [inRow] = await db
     .insert(operatorMessages)
