@@ -46,6 +46,8 @@ import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: op
 import { telegramRoutes, registerTelegramAdapterIfConfigured } from "./routes/telegram.js"; // v3: telegram
 import { chatRoutes } from "./routes/chat.js"; // v3: chat
 import { repoRoutes } from "./routes/repo.js";
+import { referenceDocumentsRoutes } from "./routes/reference-documents.js"; // v3: document storage
+import { instanceStorageRoutes } from "./routes/instance-storage.js"; // v3: document storage
 import { applyUiBranding } from "./ui-branding.js";
 import { logger } from "./middleware/logger.js";
 import { DEFAULT_LOCAL_PLUGIN_DIR, pluginLoader } from "./services/plugin-loader.js";
@@ -187,6 +189,8 @@ export async function createApp(
   api.use(telegramRoutes(db)); // v3: telegram channel
   api.use(chatRoutes(db)); // v3: chat
   api.use(repoRoutes(db)); // v3: project repo tab
+  api.use(referenceDocumentsRoutes(db)); // v3: document storage
+  api.use(instanceStorageRoutes(db)); // v3: document storage
   registerTelegramAdapterIfConfigured(); // v3: register telegram adapter at startup
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
