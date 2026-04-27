@@ -40,17 +40,35 @@ function ContextPills({ refs }: { refs: ContextRef[] }) {
           {expanded === ref.id && (
             <div className="mt-1 rounded-md border border-border bg-card px-2.5 py-1.5 text-[11px] text-muted-foreground max-w-[280px] space-y-0.5">
               <div className="font-medium text-foreground">{ref.label}</div>
-              <div className="opacity-60">{ref.type}{ref.meta?.status ? ` · ${ref.meta.status}` : ""}{ref.meta?.role ? ` · ${ref.meta.role}` : ""}</div>
-              {ref.meta?.cwd && (
-                <div className="flex items-center gap-1 mt-1 pt-1 border-t border-border">
-                  <span className="text-green-400">📁</span>
-                  <span className="font-mono text-[10px] text-green-300 break-all">{ref.meta.cwd}</span>
-                </div>
-              )}
-              {!ref.meta?.cwd && ref.type === "project" && (
-                <div className="text-orange-400/70 text-[10px] mt-1 pt-1 border-t border-border">
-                  No local path set — agent cannot read files
-                </div>
+              {ref.type === "document" ? (
+                <>
+                  <div className="opacity-60">document{ref.meta?.sourceType ? ` · ${ref.meta.sourceType}` : ""}</div>
+                  {ref.meta?.driveWebUrl && (
+                    <a
+                      href={ref.meta.driveWebUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[10px] text-blue-400 hover:underline mt-0.5 block"
+                    >
+                      Open in Drive →
+                    </a>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="opacity-60">{ref.type}{ref.meta?.status ? ` · ${ref.meta.status}` : ""}{ref.meta?.role ? ` · ${ref.meta.role}` : ""}</div>
+                  {ref.meta?.cwd && (
+                    <div className="flex items-center gap-1 mt-1 pt-1 border-t border-border">
+                      <span className="text-green-400">📁</span>
+                      <span className="font-mono text-[10px] text-green-300 break-all">{ref.meta.cwd}</span>
+                    </div>
+                  )}
+                  {!ref.meta?.cwd && ref.type === "project" && (
+                    <div className="text-orange-400/70 text-[10px] mt-1 pt-1 border-t border-border">
+                      No local path set — agent cannot read files
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
