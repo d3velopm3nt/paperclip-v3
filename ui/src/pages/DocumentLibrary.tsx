@@ -1,13 +1,13 @@
 import { useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { FileText, Globe, HardDrive, RefreshCw, Trash2, Upload } from "lucide-react";
+import { AlertCircle, CheckCircle2, FileText, Globe, HardDrive, RefreshCw, Trash2, Upload } from "lucide-react";
 import { referenceDocumentsApi } from "../api/referenceDocuments";
 import { useCompany } from "../context/CompanyContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { cn } from "../lib/utils";
-import type { ReferenceDocument } from "@paperclipai/shared";
+import type { DocumentSource, ReferenceDocument } from "@paperclipai/shared";
 
 function SourceBadge({ sourceType }: { sourceType: string }) {
   if (sourceType === "gdrive") {
@@ -32,6 +32,7 @@ export function DocumentLibrary() {
   const qc = useQueryClient();
   const [search, setSearch] = useState("");
   const [scopeFilter, setScopeFilter] = useState<"all" | "company" | "project">("all");
+  const [syncing, setSyncing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: docs = [], isLoading } = useQuery({
@@ -42,12 +43,27 @@ export function DocumentLibrary() {
         scopeFilter !== "all" ? { scope: scopeFilter } : undefined,
       ),
     enabled: !!selectedCompanyId,
+    refetchInterval: syncing ? 2000 : false,
+  });
+
+  const { data: sources = [] } = useQuery({
+    queryKey: ["document-sources", selectedCompanyId],
+    queryFn: () => referenceDocumentsApi.listSources(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+    refetchInterval: syncing ? 2000 : false,
   });
 
   const syncMutation = useMutation({
     mutationFn: () => referenceDocumentsApi.triggerSync(selectedCompanyId!),
-    onSuccess: () =>
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["reference-docs"] }), 3000),
+    onSuccess: () => {
+      setSyncing(true);
+      // Poll for 30s then stop
+      setTimeout(() => {
+        setSyncing(false);
+        qc.invalidateQueries({ queryKey: ["reference-docs"] });
+        qc.invalidateQueries({ queryKey: ["document-sources"] });
+      }, 30_000);
+    },
   });
 
   const deleteMutation = useMutation({
@@ -91,8 +107,8 @@ export function DocumentLibrary() {
             onClick={() => syncMutation.mutate()}
             disabled={syncMutation.isPending || !selectedCompanyId}
           >
-            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", syncMutation.isPending && "animate-spin")} />
-            Sync now
+            <RefreshCw className={cn("h-3.5 w-3.5 mr-1.5", (syncMutation.isPending || syncing) && "animate-spin")} />
+            {syncing ? "Syncing..." : "Sync now"}
           </Button>
           <Button variant="default" size="sm" onClick={() => fileInputRef.current?.click()}>
             <Upload className="h-3.5 w-3.5 mr-1.5" />
@@ -107,6 +123,36 @@ export function DocumentLibrary() {
           />
         </div>
       </div>
+
+      {/* Sync sources status */}
+      {sources.length > 0 && (
+        <div className="rounded-lg border border-border divide-y divide-border">
+          {sources.map((s: DocumentSource) => (
+            <div key={s.id} className="flex items-center gap-2 px-3 py-2 text-xs">
+              {s.type === "local" ? <HardDrive className="h-3.5 w-3.5 text-green-400 shrink-0" /> : <Globe className="h-3.5 w-3.5 text-blue-400 shrink-0" />}
+              <span className="font-mono text-muted-foreground truncate flex-1">{s.localPath ?? s.driveFolderId ?? s.name}</span>
+              {s.lastSyncError ? (
+                <span className="flex items-center gap-1 text-red-400 shrink-0">
+                  <AlertCircle className="h-3 w-3" />{s.lastSyncError.slice(0, 60)}
+                </span>
+              ) : s.lastSyncedAt ? (
+                <span className="flex items-center gap-1 text-green-400 shrink-0">
+                  <CheckCircle2 className="h-3 w-3" />Synced {new Date(s.lastSyncedAt).toLocaleTimeString()}
+                </span>
+              ) : (
+                <span className="text-muted-foreground shrink-0">Never synced</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {sources.length === 0 && !isLoading && (
+        <div className="rounded-lg border border-dashed border-border px-4 py-3 text-xs text-muted-foreground">
+          No sync sources configured. Go to{" "}
+          <strong>Instance Settings → Storage</strong> to add a local folder or Google Drive.
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <Input
