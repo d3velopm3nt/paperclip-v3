@@ -14,16 +14,22 @@ import { referenceDocumentsService } from "./reference-documents.js";
 import { getAuthenticatedDriveClient } from "./gdrive-auth.js";
 import { logger } from "../middleware/logger.js";
 
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", ".svn", "dist", "build", ".next", ".nuxt",
+  ".cache", ".parcel-cache", "coverage", ".nyc_output", "vendor",
+  "__pycache__", ".venv", "venv", ".tox",
+]);
+
 async function walkDir(dir: string): Promise<string[]> {
   const results: string[] = [];
   try {
     const entries = await fs.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
-      const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        results.push(...(await walkDir(full)));
+        if (SKIP_DIRS.has(entry.name) || entry.name.startsWith(".")) continue;
+        results.push(...(await walkDir(path.join(dir, entry.name))));
       } else if (SUPPORTED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-        results.push(full);
+        results.push(path.join(dir, entry.name));
       }
     }
   } catch {
