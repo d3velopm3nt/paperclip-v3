@@ -47,13 +47,9 @@ export function Chat() {
         companyId={selectedCompanyId}
         companyPrefix={selectedCompany?.issuePrefix ?? null}
         selectedThreadId={selectedThreadId}
-        onSelectThread={(id) => {
+        onSelectThread={(id, name) => {
           setSelectedThreadId(id);
-          const threads = queryClient.getQueryData<{ id: string; name: string; agentId: string | null }[]>(
-            queryKeys.chat.threads(selectedCompanyId),
-          );
-          const thread = threads?.find((t) => t.id === id);
-          setSelectedThreadName(thread?.name ?? "Chat");
+          setSelectedThreadName(name);
         }}
       />
 

@@ -32,15 +32,24 @@ export const chatApi = {
   ensureDispatcherThread: (companyId: string) =>
     api.post<ChatThread>(`/companies/${companyId}/chat/threads`, {}),
 
+  ensureAgentThread: (companyId: string, agentId: string) =>
+    api.post<ChatThread>(`/companies/${companyId}/chat/threads`, { agentId }),
+
   listThreads: (companyId: string) =>
     api.get<ChatThread[]>(`/companies/${companyId}/chat/threads`),
 
   listMessages: (companyId: string, threadId: string) =>
     api.get<ChatMessage[]>(`/companies/${companyId}/chat/threads/${threadId}/messages`),
 
-  sendMessage: (companyId: string, body: string, contextRefs: ContextRef[] = []) =>
+  sendMessage: (
+    companyId: string,
+    body: string,
+    contextRefs: ContextRef[] = [],
+    toAgentId?: string,
+  ) =>
     api.post<{ ok: boolean; threadId: string }>(`/companies/${companyId}/chat/messages`, {
       body,
       contextRefs,
+      ...(toAgentId ? { toAgentId } : {}),
     }),
 };

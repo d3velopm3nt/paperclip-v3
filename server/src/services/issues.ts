@@ -671,6 +671,7 @@ export function issueService(db: Db) {
       }
       if (!filters?.includeRoutineExecutions && !filters?.originKind && !filters?.originId) {
         conditions.push(ne(issues.originKind, "routine_execution"));
+        conditions.push(ne(issues.originKind, "chat"));
       }
       conditions.push(isNull(issues.hiddenAt));
 
@@ -754,6 +755,7 @@ export function issueService(db: Db) {
         isNull(issues.hiddenAt),
         unreadForUserCondition(companyId, userId),
         ne(issues.originKind, "routine_execution"),
+        ne(issues.originKind, "chat"),
       ];
       if (status) {
         const statuses = status.split(",").map((s) => s.trim()).filter(Boolean);

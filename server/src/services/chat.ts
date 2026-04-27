@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, chatThreads, operatorMessages } from "@paperclipai/db";
 
@@ -61,14 +61,25 @@ export function chatService(db: Db) {
     if (!thread) return [];
 
     if (thread.agentId === null) {
+      // Dispatcher thread: messages tagged to this thread, or legacy messages with no thread tag
       return db
         .select()
         .from(operatorMessages)
-        .where(and(eq(operatorMessages.companyId, companyId), eq(operatorMessages.source, "chat")))
+        .where(
+          and(
+            eq(operatorMessages.companyId, companyId),
+            eq(operatorMessages.source, "chat"),
+            or(
+              eq(operatorMessages.chatThreadId, thread.id),
+              isNull(operatorMessages.chatThreadId),
+            ),
+          ),
+        )
         .orderBy(desc(operatorMessages.createdAt))
         .limit(limit);
     }
 
+    // Agent DM thread: all messages that belong to this thread (both inbound and outbound)
     return db
       .select()
       .from(operatorMessages)
@@ -76,7 +87,7 @@ export function chatService(db: Db) {
         and(
           eq(operatorMessages.companyId, companyId),
           eq(operatorMessages.source, "chat"),
-          eq(operatorMessages.fromAgentId, thread.agentId),
+          eq(operatorMessages.chatThreadId, thread.id),
         ),
       )
       .orderBy(desc(operatorMessages.createdAt))

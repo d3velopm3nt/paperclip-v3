@@ -12,11 +12,12 @@ interface Props {
   companyId: string;
   onSend: (body: string, contextRefs: ContextRef[]) => void;
   disabled?: boolean;
+  placeholder?: string;
 }
 
 type MentionTrigger = "@" | "#" | "$" | null;
 
-export function ChatComposer({ companyId, onSend, disabled }: Props) {
+export function ChatComposer({ companyId, onSend, disabled, placeholder }: Props) {
   const [body, setBody] = useState("");
   const [contextRefs, setContextRefs] = useState<ContextRef[]>([]);
   const [mentionTrigger, setMentionTrigger] = useState<MentionTrigger>(null);
@@ -169,7 +170,7 @@ export function ChatComposer({ companyId, onSend, disabled }: Props) {
           onChange={handleChange}
           onKeyDown={handleKeyDown}
           disabled={disabled}
-          placeholder="Message — use @agent, #room, $issue…"
+          placeholder={placeholder ?? "Message — use @agent, #room, $issue…"}
           className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 min-h-[38px] max-h-32"
           style={{ height: "auto" }}
           onInput={(e) => {

@@ -29,6 +29,7 @@ export interface InboundMessage {
   subject?: string;
   threadKey?: string;
   raw: unknown;
+  toAgentId?: string;
 }
 
 export interface OutboundMessage {
@@ -162,6 +163,7 @@ export function operatorMessagingService(db: Db) {
     agentId: string,
     title: string,
     description: string,
+    originKind = "manual",
   ): Promise<string> {
     const { issueService } = await import("./issues.js");
     const issue = await issueService(db).create(companyId, {
@@ -170,6 +172,7 @@ export function operatorMessagingService(db: Db) {
       assigneeAgentId: agentId,
       status: "todo",
       createdByAgentId: agentId,
+      originKind,
     });
     return issue.id;
   }
@@ -246,6 +249,45 @@ export function operatorMessagingService(db: Db) {
     voiceAccountId: string,
     msg: InboundMessage,
   ): Promise<void> {
+    // Direct-to-agent: bypass mention parsing when caller specifies agentId
+    if (msg.toAgentId) {
+      const [agentRow] = await db
+        .select({ id: agents.id, name: agents.name })
+        .from(agents)
+        .where(and(eq(agents.id, msg.toAgentId), eq(agents.companyId, companyId)))
+        .limit(1);
+      if (agentRow) {
+        const title = `[dm] ${msg.subject ?? msg.body.slice(0, 80)}`;
+        const description = [
+          `**Direct chat message to ${agentRow.name}**`,
+          ``,
+          `From: ${msg.from}`,
+          ``,
+          msg.body,
+          ``,
+          msg.platform === "chat"
+            ? `Reply to the operator by writing a comment that starts with @operator.`
+            : "",
+        ].join("\n");
+        const issueId = await ensureIssue(companyId, agentRow.id, title, description, msg.platform === "chat" ? "chat" : "manual");
+        const msgId = await storeMessage(companyId, issueId, null, "inbound", msg.platform, msg.body, msg.raw, null, {
+          source: msg.platform === "chat" ? "chat" : msg.platform,
+          chatThreadId: msg.platform === "chat" ? (msg.threadKey ?? null) : null,
+        });
+        if (msg.threadKey) await storeThreadKey(msgId, msg.platform, msg.threadKey);
+        await wakeAgent(companyId, agentRow.id, issueId, "direct-dm");
+        if (msg.platform === "chat") {
+          publishLiveEvent({
+            companyId,
+            type: "chat.agent.typing",
+            payload: { agentId: agentRow.id, agentName: agentRow.name, chatThreadId: msg.threadKey ?? "" },
+          });
+        }
+        logger.info({ companyId, agentId: agentRow.id }, "operator-messaging: direct DM");
+        return;
+      }
+    }
+
     const fullText = `${msg.subject ?? ""} ${msg.body}`;
     const { agentNames, roomSlugs } = parseMentions(fullText);
 
@@ -280,7 +322,7 @@ export function operatorMessagingService(db: Db) {
       if (msg.threadKey) await storeThreadKey(msgId, msg.platform, msg.threadKey);
 
       for (const member of members.filter((m) => m.agentId && !m.isOperator)) {
-        const issueId = await ensureIssue(companyId, member.agentId!, title, description);
+        const issueId = await ensureIssue(companyId, member.agentId!, title, description, msg.platform === "chat" ? "chat" : "manual");
         await db
           .update(operatorMessages)
           .set({ issueId })
@@ -319,18 +361,17 @@ export function operatorMessagingService(db: Db) {
         `From: ${msg.from}`,
         ``,
         msg.body,
+        ``,
+        msg.platform === "chat"
+          ? `Reply to the operator by writing a comment that starts with @operator.`
+          : "",
       ].join("\n");
 
-      const issueId = await ensureIssue(companyId, agent.id, title, description);
-      const msgId = await storeMessage(
-        companyId,
-        issueId,
-        null,
-        "inbound",
-        msg.platform,
-        msg.body,
-        msg.raw,
-      );
+      const issueId = await ensureIssue(companyId, agent.id, title, description, msg.platform === "chat" ? "chat" : "manual");
+      const msgId = await storeMessage(companyId, issueId, null, "inbound", msg.platform, msg.body, msg.raw, null, {
+        source: msg.platform === "chat" ? "chat" : msg.platform,
+        chatThreadId: msg.platform === "chat" ? (msg.threadKey ?? null) : null,
+      });
       if (msg.threadKey) await storeThreadKey(msgId, msg.platform, msg.threadKey);
       await wakeAgent(companyId, agent.id, issueId, "direct-operator-message");
       if (msg.platform === "chat") {
@@ -367,18 +408,17 @@ export function operatorMessagingService(db: Db) {
       `From: ${msg.from}`,
       ``,
       msg.body,
+      ``,
+      msg.platform === "chat"
+        ? `Reply to the operator by writing a comment that starts with @operator.`
+        : "",
     ].join("\n");
 
-    const issueId = await ensureIssue(companyId, agentId, title, description);
-    const msgId = await storeMessage(
-      companyId,
-      issueId,
-      null,
-      "inbound",
-      msg.platform,
-      msg.body,
-      msg.raw,
-    );
+    const issueId = await ensureIssue(companyId, agentId, title, description, msg.platform === "chat" ? "chat" : "manual");
+    const msgId = await storeMessage(companyId, issueId, null, "inbound", msg.platform, msg.body, msg.raw, null, {
+      source: msg.platform === "chat" ? "chat" : msg.platform,
+      chatThreadId: msg.platform === "chat" ? (msg.threadKey ?? null) : null,
+    });
     if (msg.threadKey) await storeThreadKey(msgId, msg.platform, msg.threadKey);
     await wakeAgent(companyId, agentId, issueId, "operator-message-auto-routed");
     if (msg.platform === "chat") {
@@ -424,8 +464,12 @@ export function operatorMessagingService(db: Db) {
 
     // Chat platform: store directly + emit live event, no external adapter
     if (platform === "chat") {
-      const chatSvc = chatService(db);
-      const agentThread = await chatSvc.getOrCreateAgentThread(companyId, agentId);
+      // Reply to the same thread the operator messaged from (Dispatcher or DM).
+      // Fall back to agent DM thread only if original thread can't be found.
+      const originalThreadId = issueId ? await findThreadKeyForIssue(issueId, "chat") : null;
+      const chatThreadId = originalThreadId
+        ? originalThreadId
+        : (await chatService(db).getOrCreateAgentThread(companyId, agentId)).id;
 
       const [agentRow] = await db
         .select({ name: agents.name })
@@ -443,7 +487,7 @@ export function operatorMessagingService(db: Db) {
         body,
         null,
         agentId,
-        { source: "chat", chatThreadId: agentThread.id },
+        { source: "chat", chatThreadId },
       );
 
       publishLiveEvent({
@@ -455,14 +499,14 @@ export function operatorMessagingService(db: Db) {
           direction: "outbound",
           fromAgentId: agentId,
           agentName,
-          chatThreadId: agentThread.id,
+          chatThreadId,
           createdAt: new Date().toISOString(),
         },
       });
       publishLiveEvent({
         companyId,
         type: "chat.agent.done",
-        payload: { agentId, agentName, chatThreadId: agentThread.id },
+        payload: { agentId, agentName, chatThreadId },
       });
       logger.info({ companyId, agentId, issueId }, "operator-messaging: sent to operator via chat");
       return;

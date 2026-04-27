@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface TypingAgent {
   agentId: string;
@@ -11,8 +11,10 @@ interface TypingEvent {
   payload: { agentId: string; agentName: string; chatThreadId: string };
 }
 
-export function useChatTyping(companyId: string | null, _threadId: string | null) {
+export function useChatTyping(companyId: string | null, threadId: string | null) {
   const [typing, setTyping] = useState<Map<string, TypingAgent>>(new Map());
+  const threadIdRef = useRef(threadId);
+  threadIdRef.current = threadId;
 
   useEffect(() => {
     if (!companyId) return;
@@ -41,7 +43,8 @@ export function useChatTyping(companyId: string | null, _threadId: string | null
           if (parsed.companyId !== companyId) return;
           if (parsed.type !== "chat.agent.typing" && parsed.type !== "chat.agent.done") return;
 
-          const { agentId, agentName } = parsed.payload;
+          const { agentId, agentName, chatThreadId } = parsed.payload;
+          if (chatThreadId && threadIdRef.current && chatThreadId !== threadIdRef.current) return;
 
           if (parsed.type === "chat.agent.typing") {
             setTyping((prev) => {

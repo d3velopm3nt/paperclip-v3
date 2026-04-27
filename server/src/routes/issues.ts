@@ -1508,10 +1508,14 @@ export function issueRoutes(db: Db, storage: StorageService) {
       }
     })();
 
-    // @operator detection — notify operator via agent_voice when agent mentions them.
+    // Notify operator: any agent comment on a chat-origin issue, or explicit @operator mention.
+    // For chat issues we don't require @operator — the agent may not reliably write it.
+    // Strip @operator prefix so chat messages look clean.
     const OPERATOR_MENTION_RE = /@operator\b/i;
-    if (OPERATOR_MENTION_RE.test(req.body.body) && actor.agentId) {
+    const isChatIssue = currentIssue.originKind === "chat";
+    if (actor.agentId && (isChatIssue || OPERATOR_MENTION_RE.test(req.body.body))) {
       (async () => {
+        const outboundBody = req.body.body.replace(/^@operator[:\s]*/i, "").trim() || req.body.body;
         const { emailAccounts } = await import("@paperclipai/db");
         const { and, eq } = await import("drizzle-orm");
         const [voiceAcct] = await db
@@ -1524,18 +1528,16 @@ export function issueRoutes(db: Db, storage: StorageService) {
             ),
           )
           .limit(1);
-        if (voiceAcct) {
-          const { operatorMessagingService } = await import("../services/operator-messaging.js");
-          await operatorMessagingService(db).sendToOperator(
-            currentIssue.companyId,
-            voiceAcct.id,
-            actor.agentId!,
-            req.body.body,
-            id,
-          );
-        }
+        const { operatorMessagingService } = await import("../services/operator-messaging.js");
+        await operatorMessagingService(db).sendToOperator(
+          currentIssue.companyId,
+          voiceAcct?.id ?? "",
+          actor.agentId!,
+          outboundBody,
+          id,
+        );
       })().catch((err) =>
-        logger.warn({ err, issueId: id }, "issues: @operator notification failed"),
+        logger.warn({ err, issueId: id }, "issues: operator notification failed"),
       );
     }
 

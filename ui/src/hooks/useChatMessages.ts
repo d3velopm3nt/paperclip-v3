@@ -25,8 +25,8 @@ export function useChatMessages(companyId: string | null, threadId: string | nul
   });
 
   const [live, setLive] = useState<ChatMessage[]>([]);
-  const liveRef = useRef(live);
-  liveRef.current = live;
+  const threadIdRef = useRef(threadId);
+  threadIdRef.current = threadId;
 
   useEffect(() => {
     setLive([]);
@@ -59,6 +59,7 @@ export function useChatMessages(companyId: string | null, threadId: string | nul
           if (parsed.type !== "chat.message.new") return;
           if (parsed.companyId !== companyId) return;
           const msg = parsed.payload;
+          if (msg.chatThreadId && msg.chatThreadId !== threadIdRef.current) return;
           const newMsg: ChatMessage = {
             id: msg.id,
             companyId,
