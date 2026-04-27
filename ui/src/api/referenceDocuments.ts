@@ -58,4 +58,10 @@ export const referenceDocumentsApi = {
 
   disconnectGDrive: () =>
     api.delete<{ ok: boolean }>("/instance/storage/gdrive/auth"),
+
+  testLocalPath: (localPath: string) =>
+    api.post<{ ok: boolean; fileCount?: number; message?: string; error?: string }>(
+      "/instance/storage/local/test",
+      { localPath },
+    ),
 };

@@ -84,6 +84,8 @@ function GDriveSection() {
 function LocalSourcesSection({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [newPath, setNewPath] = useState("");
+  const [testResult, setTestResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
 
   const { data: sources = [] } = useQuery({
     queryKey: ["document-sources", companyId],
@@ -156,12 +158,31 @@ function LocalSourcesSection({ companyId }: { companyId: string }) {
         <Input
           placeholder="/absolute/path/to/folder"
           value={newPath}
-          onChange={(e) => setNewPath(e.target.value)}
+          onChange={(e) => { setNewPath(e.target.value); setTestResult(null); }}
           className="text-sm h-8"
           onKeyDown={(e) => {
             if (e.key === "Enter" && newPath.trim()) addSource.mutate();
           }}
         />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!newPath.trim() || testing}
+          onClick={async () => {
+            setTesting(true);
+            setTestResult(null);
+            try {
+              const result = await referenceDocumentsApi.testLocalPath(newPath.trim());
+              setTestResult(result);
+            } catch {
+              setTestResult({ ok: false, error: "Request failed" });
+            } finally {
+              setTesting(false);
+            }
+          }}
+        >
+          {testing ? "Testing..." : "Test"}
+        </Button>
         <Button
           size="sm"
           variant="outline"
@@ -172,6 +193,17 @@ function LocalSourcesSection({ companyId }: { companyId: string }) {
           Add
         </Button>
       </div>
+
+      {testResult && (
+        <div className={cn(
+          "rounded-md px-3 py-2 text-xs",
+          testResult.ok
+            ? "bg-green-950/50 border border-green-800 text-green-300"
+            : "bg-red-950/50 border border-red-800 text-red-300",
+        )}>
+          {testResult.ok ? "✓ " : "✗ "}{testResult.message ?? testResult.error}
+        </div>
+      )}
     </div>
   );
 }
