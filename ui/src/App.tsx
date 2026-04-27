@@ -56,6 +56,7 @@ import { CliAuthPage } from "./pages/CliAuth";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
 import { Chat } from "./pages/Chat"; // v3: chat
+import { DocumentLibrary } from "./pages/DocumentLibrary"; // v3: document storage
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -150,6 +151,7 @@ function boardRoutes() {
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
       <Route path="channels" element={<Channels />} /> {/* v3: channels */}
       <Route path="chat" element={<Chat />} /> {/* v3: chat */}
+      <Route path="documents" element={<DocumentLibrary />} /> {/* v3: document storage */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
