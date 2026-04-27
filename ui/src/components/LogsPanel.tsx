@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronDown, ChevronUp, MessageSquare, Terminal, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronUp, MessageSquare, Radio, Terminal, X } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
 import { activityApi } from "../api/activity";
 import { agentsApi } from "../api/agents";
+import { channelsApi, type ChannelMessage } from "../api/channels";
+import { useMutation } from "@tanstack/react-query";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
 import {
@@ -20,7 +22,7 @@ const STORAGE_TAB = "paperclip.logsPanel.tab";
 const DEFAULT_HEIGHT = 240;
 const MIN_HEIGHT = 80;
 
-type Tab = "activity" | "chat" | "llm";
+type Tab = "activity" | "chat" | "llm" | "channels";
 
 function storedBool(key: string, fallback: boolean): boolean {
   try {
@@ -41,7 +43,7 @@ function storedNum(key: string, fallback: number): number {
 function storedTab(fallback: Tab): Tab {
   try {
     const v = localStorage.getItem(STORAGE_TAB);
-    return v === "activity" || v === "chat" || v === "llm" ? v : fallback;
+    return v === "activity" || v === "chat" || v === "llm" || v === "channels" ? v : fallback;
   } catch {
     return fallback;
   }
@@ -278,6 +280,17 @@ export function LogsPanel({ companyId }: { companyId: string | null }) {
     refetchInterval: open && tab === "llm" ? 3000 : false,
   });
 
+  const { data: channelMessages = [] } = useQuery({
+    queryKey: ["channel-messages", companyId, "telegram"],
+    queryFn: () => channelsApi.listMessages(companyId!, "telegram"),
+    enabled: !!companyId && open && tab === "channels",
+    refetchInterval: open && tab === "channels" ? 3000 : false,
+  });
+
+  const testTelegramMutation = useMutation({
+    mutationFn: () => channelsApi.testTelegram(),
+  });
+
   const agentMap = new Map(agents.map((a) => [a.id, a.name]));
   const events = tab === "chat" ? chatEvents : tab === "llm" ? llmEvents : activityEvents;
 
@@ -345,6 +358,20 @@ export function LogsPanel({ companyId }: { companyId: string | null }) {
           LLM
         </button>
 
+        <button
+          type="button"
+          onClick={() => { setTab("channels"); setOpen(true); }}
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded transition-colors",
+            tab === "channels" && open
+              ? "text-foreground bg-accent"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Radio className="h-3.5 w-3.5" />
+          Channels
+        </button>
+
         {open && (
           <>
             <div className="w-px h-4 bg-border mx-1" />
@@ -385,7 +412,49 @@ export function LogsPanel({ companyId }: { companyId: string | null }) {
           className="overflow-y-auto bg-neutral-950 dark:bg-neutral-950 flex flex-col"
           style={{ height }}
         >
-          {events.length === 0 ? (
+          {tab === "channels" ? (
+            channelMessages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-3 text-xs text-neutral-500">
+                <span>No channel messages yet</span>
+                <button
+                  type="button"
+                  onClick={() => testTelegramMutation.mutate()}
+                  disabled={testTelegramMutation.isPending}
+                  className="px-3 py-1.5 rounded bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-900 transition-colors text-xs"
+                >
+                  {testTelegramMutation.isPending ? "Sending..." : "📤 Send test to Telegram"}
+                </button>
+                {testTelegramMutation.isSuccess && <span className="text-green-400">✓ Test sent</span>}
+                {testTelegramMutation.isError && <span className="text-red-400">✗ Failed — check TELEGRAM_OPERATOR_CHAT_ID</span>}
+                <span className="text-neutral-600 text-[10px]">Or send "paperclip" to your bot to verify receiving</span>
+              </div>
+            ) : (
+              <div className="flex flex-col">
+                <div className="flex items-center justify-end px-3 py-1 border-b border-white/5">
+                  <button
+                    type="button"
+                    onClick={() => testTelegramMutation.mutate()}
+                    disabled={testTelegramMutation.isPending}
+                    className="px-2 py-0.5 rounded bg-blue-900/50 border border-blue-700 text-blue-300 hover:bg-blue-900 transition-colors text-[10px]"
+                  >
+                    {testTelegramMutation.isPending ? "Sending..." : "📤 Test send"}
+                  </button>
+                </div>
+                <div className="divide-y divide-white/5">
+                  {channelMessages.map((msg: ChannelMessage) => (
+                    <div key={msg.id} className="flex gap-2 px-3 py-1.5 hover:bg-white/5 font-mono text-xs">
+                      <span className="text-neutral-600 shrink-0 tabular-nums">{formatTs(msg.createdAt)}</span>
+                      <span className={cn("shrink-0 font-semibold", msg.direction === "inbound" ? "text-yellow-400" : "text-green-400")}>
+                        {msg.direction === "inbound" ? "←" : "→"}
+                      </span>
+                      <span className="text-neutral-500 shrink-0">{msg.platform}</span>
+                      <span className="text-neutral-300 break-words min-w-0">{msg.body}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          ) : events.length === 0 ? (
             <div className="flex items-center justify-center h-full text-xs text-neutral-500">
               {tab === "chat" ? "No chat activity yet" : tab === "llm" ? "No LLM calls yet" : "No activity yet"}
             </div>

@@ -2,8 +2,8 @@
 
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { companies, emailAccounts } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
+import { companies, emailAccounts, operatorMessages } from "@paperclipai/db";
+import { desc, eq } from "drizzle-orm";
 import { logger } from "../middleware/logger.js";
 import { assertBoard } from "./authz.js";
 import {
@@ -65,10 +65,17 @@ export function telegramRoutes(db: Db): Router {
       return;
     }
 
+    logger.info({ chatId, fromId, text: msg.text }, "telegram webhook: message received ✓");
+
+    // Validation keyword — lets user confirm the connection is live without creating issues
+    if (msg.text.trim().toLowerCase() === "paperclip") {
+      res.status(200).json({ ok: true });
+      await sendTelegramMessage(BOT_TOKEN, chatId, "✅ Paperclip is connected and receiving messages!");
+      return;
+    }
+
     // Route through chat system — creates a Telegram thread and replies via chatDirectReply
     res.status(200).json({ ok: true }); // Respond to Telegram immediately
-
-    logger.info({ chatId, fromId, text: msg.text }, "telegram webhook: message received ✓");
 
     const { chatService } = await import("../services/chat.js");
     const { chatDirectReply, pickAgentForDispatcher } = await import("../services/chat-direct.js");
@@ -175,6 +182,29 @@ export function telegramRoutes(db: Db): Router {
   });
 
   // ── Send test message ────────────────────────────────────────────────────
+
+  // Recent messages for a channel — used by LogsPanel Channels tab
+  router.get("/companies/:companyId/channels/messages", async (req, res) => {
+    const { platform } = req.query as { platform?: string };
+    const rows = await db
+      .select({
+        id: operatorMessages.id,
+        direction: operatorMessages.direction,
+        platform: operatorMessages.platform,
+        body: operatorMessages.body,
+        chatThreadId: operatorMessages.chatThreadId,
+        createdAt: operatorMessages.createdAt,
+      })
+      .from(operatorMessages)
+      .where(
+        platform
+          ? eq(operatorMessages.platform, platform)
+          : eq(operatorMessages.companyId, req.params.companyId),
+      )
+      .orderBy(desc(operatorMessages.createdAt))
+      .limit(100);
+    res.json(rows);
+  });
 
   router.post("/channels/telegram/test", async (req, res) => {
     assertBoard(req);

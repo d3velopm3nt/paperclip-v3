@@ -30,6 +30,15 @@ export interface ChannelsStatus {
   email: EmailChannelStatus;
 }
 
+export interface ChannelMessage {
+  id: string;
+  direction: string;
+  platform: string;
+  body: string;
+  chatThreadId: string | null;
+  createdAt: string;
+}
+
 export const channelsApi = {
   status: () => api.get<ChannelsStatus>("/channels/status"),
 
@@ -41,4 +50,9 @@ export const channelsApi = {
 
   testTelegram: () =>
     api.post<{ ok: boolean }>("/channels/telegram/test", {}),
+
+  listMessages: (companyId: string, platform?: string) => {
+    const qs = platform ? `?platform=${encodeURIComponent(platform)}` : "";
+    return api.get<ChannelMessage[]>(`/companies/${companyId}/channels/messages${qs}`);
+  },
 };
