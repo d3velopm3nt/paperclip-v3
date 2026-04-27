@@ -43,7 +43,8 @@ import { planRoutes } from "./routes/plans.js"; // v3:
 import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: operator messaging
-import { telegramRoutes, registerTelegramAdapterIfConfigured } from "./routes/telegram.js"; // v3: telegram
+import { telegramRoutes } from "./routes/telegram.js"; // v3: telegram
+import { startTelegramPolling } from "./services/telegram-polling.js"; // v3: telegram long polling
 import { chatRoutes } from "./routes/chat.js"; // v3: chat
 import { repoRoutes } from "./routes/repo.js";
 import { referenceDocumentsRoutes } from "./routes/reference-documents.js"; // v3: document storage
@@ -191,7 +192,14 @@ export async function createApp(
   api.use(repoRoutes(db)); // v3: project repo tab
   api.use(referenceDocumentsRoutes(db)); // v3: document storage
   api.use(instanceStorageRoutes(db)); // v3: document storage
-  registerTelegramAdapterIfConfigured(); // v3: register telegram adapter at startup
+  // v3: start Telegram long polling if token is set (no webhook/tunnel needed)
+  const tgToken = process.env.TELEGRAM_BOT_TOKEN ?? "";
+  const tgCompanyId = process.env.TELEGRAM_COMPANY_ID ?? "";
+  if (tgToken) {
+    startTelegramPolling(db, tgToken, tgCompanyId || undefined).catch((err) =>
+      logger.warn({ err }, "telegram: polling failed to start"),
+    );
+  }
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);
