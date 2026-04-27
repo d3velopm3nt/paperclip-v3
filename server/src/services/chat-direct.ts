@@ -7,6 +7,7 @@ import { agents, clients, issues, operatorMessages, projects, projectWorkspaces 
 import { chatService } from "./chat.js";
 import { publishLiveEvent } from "./live-events.js";
 import { logActivity } from "./activity-log.js";
+import { referenceDocumentsService } from "./reference-documents.js";
 import { logger } from "../middleware/logger.js";
 
 
@@ -23,10 +24,10 @@ async function readInstructions(adapterConfig: Record<string, unknown>): Promise
 }
 
 interface ContextRef {
-  type: "issue" | "project" | "client" | "agent";
+  type: "issue" | "project" | "client" | "agent" | "document";
   id: string;
   label: string;
-  meta?: { cwd?: string; status?: string; role?: string };
+  meta?: { cwd?: string; status?: string; role?: string; sourceType?: string; driveWebUrl?: string };
 }
 
 async function buildSystemPrompt(
@@ -123,6 +124,32 @@ async function buildSystemPrompt(
         snapshot.push(`Agent "${r.name}" — role: ${r.role}, status: ${r.status}`);
       }
     }
+  }
+
+  // Document index — lightweight titles for context
+  const projectIdForDocs = contextRefs.find((r) => r.type === "project")?.id;
+  const docs = await referenceDocumentsService(db).getContextIndex(companyId, projectIdForDocs);
+  if (docs.length > 0) {
+    snapshot.push(`\n--- DOCUMENTS ---`);
+    for (const doc of docs) {
+      const scopeLabel = doc.scope === "project" ? "project" : "company";
+      snapshot.push(`[${doc.id.slice(0, 8)}] ${doc.title} (${scopeLabel})${doc.description ? ` — ${doc.description}` : ""}`);
+    }
+    snapshot.push(`To read a document's full content: call fetch_document with the 8-char ID shown above.`);
+    snapshot.push(`--- END DOCUMENTS ---`);
+  }
+
+  // Inject full text for explicitly selected document context refs
+  const docRefs = contextRefs.filter((r) => r.type === "document");
+  if (docRefs.length > 0) {
+    snapshot.push(`\n--- SELECTED DOCUMENTS (full content) ---`);
+    for (const ref of docRefs) {
+      const content = await referenceDocumentsService(db).getDocumentContent(companyId, ref.id);
+      if (content?.extractedText) {
+        snapshot.push(`\n## ${content.title}\n${content.extractedText.slice(0, 10_000)}`);
+      }
+    }
+    snapshot.push(`--- END SELECTED DOCUMENTS ---`);
   }
 
   snapshot.push(`--- END CONTEXT ---`);
@@ -384,6 +411,21 @@ async function chatLeanReply(
                 action: "chat.tool_use", entityType: "chat_thread", entityId: threadId,
                 agentId: agent.id, details: { tool: name, preview },
               });
+
+              // Log fetch_document calls for observability
+              if (name === "fetch_document" && input && typeof input === "object") {
+                const docId = (input as Record<string, unknown>).id;
+                if (typeof docId === "string") {
+                  referenceDocumentsService(db).getDocumentContent(companyId, docId).then((content) => {
+                    emitStatus(`📄 ${agent.name} → fetch_document: \`${content?.title ?? docId}\``);
+                    void logActivity(db, {
+                      companyId, actorType: "agent", actorId: agent.id,
+                      action: "chat.doc_fetch", entityType: "chat_thread", entityId: threadId,
+                      agentId: agent.id, details: { docId, title: content?.title ?? null, found: !!content },
+                    });
+                  }).catch(() => {});
+                }
+              }
             }
 
             // Surface sub-agent spawning
