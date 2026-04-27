@@ -234,6 +234,19 @@ export function referenceDocumentsService(db: Db) {
         .where(and(eq(documentSources.companyId, companyId), eq(documentSources.id, sourceId)));
     },
 
+    updateSource: async (
+      companyId: string,
+      sourceId: string,
+      patch: { name?: string; localPath?: string; driveFolderId?: string },
+    ): Promise<DocumentSource | null> => {
+      const [row] = await db
+        .update(documentSources)
+        .set(patch)
+        .where(and(eq(documentSources.companyId, companyId), eq(documentSources.id, sourceId)))
+        .returning();
+      return row ? toSource(row) : null;
+    },
+
     updateSourceSyncResult: async (sourceId: string, error: string | null): Promise<void> => {
       await db
         .update(documentSources)

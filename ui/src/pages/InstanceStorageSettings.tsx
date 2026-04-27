@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, Globe, HardDrive, Plus, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { CheckCircle, Globe, HardDrive, Pencil, Plus, RefreshCw, Trash2, X, XCircle } from "lucide-react";
 import { referenceDocumentsApi } from "../api/referenceDocuments";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -81,6 +81,112 @@ function GDriveSection() {
   );
 }
 
+function LocalSourceRow({
+  source,
+  companyId,
+  onDelete,
+  onUpdated,
+}: {
+  source: import("@paperclipai/shared").DocumentSource;
+  companyId: string;
+  onDelete: () => void;
+  onUpdated: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editPath, setEditPath] = useState(source.localPath ?? "");
+  const [testResult, setTestResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const updateMutation = useMutation({
+    mutationFn: () =>
+      referenceDocumentsApi.updateSource(companyId, source.id, {
+        localPath: editPath.trim(),
+        name: editPath.trim().split("/").filter(Boolean).pop() ?? source.name,
+      }),
+    onSuccess: () => { onUpdated(); setEditing(false); setTestResult(null); },
+  });
+
+  async function runTest(pathToTest: string) {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await referenceDocumentsApi.testLocalPath(pathToTest.trim());
+      setTestResult(result);
+    } catch {
+      setTestResult({ ok: false, error: "Request failed" });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="rounded-lg border border-border p-3 space-y-2">
+        <div className="flex gap-2">
+          <Input
+            value={editPath}
+            onChange={(e) => { setEditPath(e.target.value); setTestResult(null); }}
+            className="text-sm h-8 font-mono"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Escape") { setEditing(false); setEditPath(source.localPath ?? ""); setTestResult(null); }}}
+          />
+          <Button size="sm" variant="outline" disabled={testing} onClick={() => runTest(editPath)}>
+            {testing ? "Testing..." : "Test"}
+          </Button>
+          <Button size="sm" variant="default" disabled={!editPath.trim() || updateMutation.isPending} onClick={() => updateMutation.mutate()}>
+            Save
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => { setEditing(false); setEditPath(source.localPath ?? ""); setTestResult(null); }}>
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+        {testResult && (
+          <div className={cn(
+            "rounded px-2.5 py-1.5 text-xs",
+            testResult.ok ? "bg-green-950/50 border border-green-800 text-green-300" : "bg-red-950/50 border border-red-800 text-red-300",
+          )}>
+            {testResult.ok ? "✓ " : "✗ "}{testResult.message ?? testResult.error}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">{source.name}</p>
+          <p className="text-xs text-muted-foreground font-mono truncate">{source.localPath}</p>
+          {source.lastSyncError && <p className="text-xs text-red-400 mt-0.5">{source.lastSyncError}</p>}
+          {source.lastSyncedAt && !source.lastSyncError && (
+            <p className="text-xs text-muted-foreground mt-0.5">Last synced {new Date(source.lastSyncedAt).toLocaleString()}</p>
+          )}
+          {testResult && (
+            <div className={cn(
+              "rounded px-2 py-1 text-xs mt-1.5 inline-block",
+              testResult.ok ? "bg-green-950/50 border border-green-800 text-green-300" : "bg-red-950/50 border border-red-800 text-red-300",
+            )}>
+              {testResult.ok ? "✓ " : "✗ "}{testResult.message ?? testResult.error}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground" disabled={testing} onClick={() => runTest(source.localPath ?? "")}>
+            {testing ? "..." : "Test"}
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={() => { setEditing(true); setEditPath(source.localPath ?? ""); }}>
+            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
+          <Button size="icon-sm" variant="ghost" onClick={onDelete}>
+            <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LocalSourcesSection({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
   const [newPath, setNewPath] = useState("");
@@ -125,31 +231,13 @@ function LocalSourcesSection({ companyId }: { companyId: string }) {
       {localSources.length > 0 && (
         <div className="space-y-2">
           {localSources.map((source) => (
-            <div
+            <LocalSourceRow
               key={source.id}
-              className="flex items-center justify-between rounded-lg border border-border p-3"
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{source.name}</p>
-                <p className="text-xs text-muted-foreground font-mono truncate">{source.localPath}</p>
-                {source.lastSyncError && (
-                  <p className="text-xs text-red-400 mt-0.5">{source.lastSyncError}</p>
-                )}
-                {source.lastSyncedAt && !source.lastSyncError && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Last synced {new Date(source.lastSyncedAt).toLocaleString()}
-                  </p>
-                )}
-              </div>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="shrink-0 ml-3"
-                onClick={() => deleteSource.mutate(source.id)}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
-              </Button>
-            </div>
+              source={source}
+              companyId={companyId}
+              onDelete={() => deleteSource.mutate(source.id)}
+              onUpdated={() => qc.invalidateQueries({ queryKey: ["document-sources"] })}
+            />
           ))}
         </div>
       )}

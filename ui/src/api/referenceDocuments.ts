@@ -44,6 +44,9 @@ export const referenceDocumentsApi = {
   createSource: (companyId: string, input: CreateDocumentSourceInput) =>
     api.post<DocumentSource>(`/companies/${companyId}/document-sources`, input),
 
+  updateSource: (companyId: string, sourceId: string, patch: { name?: string; localPath?: string }) =>
+    api.patch<import("@paperclipai/shared").DocumentSource>(`/companies/${companyId}/document-sources/${sourceId}`, patch),
+
   deleteSource: (companyId: string, sourceId: string) =>
     api.delete<void>(`/companies/${companyId}/document-sources/${sourceId}`),
 

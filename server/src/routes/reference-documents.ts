@@ -101,6 +101,14 @@ export function referenceDocumentsRoutes(db: Db): Router {
     res.status(201).json(source);
   });
 
+  // Update sync source
+  router.patch("/companies/:companyId/document-sources/:sourceId", async (req, res) => {
+    assertCompanyAccess(req, req.params.companyId);
+    const source = await svc.updateSource(req.params.companyId, req.params.sourceId, req.body);
+    if (!source) { res.status(404).json({ error: "Not found" }); return; }
+    res.json(source);
+  });
+
   // Delete sync source
   router.delete("/companies/:companyId/document-sources/:sourceId", async (req, res) => {
     assertCompanyAccess(req, req.params.companyId);
