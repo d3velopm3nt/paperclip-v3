@@ -388,6 +388,7 @@ export function App() {
           <Route path="rooms/:id" element={<UnprefixedBoardRedirect />} />
           <Route path="channels" element={<UnprefixedBoardRedirect />} />
           <Route path="chat" element={<UnprefixedBoardRedirect />} /> {/* v3: chat */}
+          <Route path="documents" element={<UnprefixedBoardRedirect />} /> {/* v3: document storage */}
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>
