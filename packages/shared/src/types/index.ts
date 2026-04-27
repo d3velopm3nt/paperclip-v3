@@ -192,3 +192,13 @@ export type {
   PluginJobRunRecord,
   PluginWebhookDeliveryRecord,
 } from "./plugin.js";
+export type {
+  ReferenceDocument,
+  ReferenceDocumentWithContent,
+  DocumentSource,
+  DocumentSourceType,
+  DocumentScope,
+  CreateDocumentSourceInput,
+  UpdateReferenceDocumentInput,
+  GoogleDriveStatus,
+} from "./document-storage.js";
