@@ -13,8 +13,8 @@ async function tgGet(token: string, method: string, params: Record<string, unkno
   ).toString();
   const url = `${BASE_URL}/bot${token}/${method}${qs ? `?${qs}` : ""}`;
   const res = await fetch(url);
-  const json = (await res.json()) as { ok: boolean; result?: unknown };
-  if (!json.ok) throw new Error(`Telegram ${method} failed`);
+  const json = (await res.json()) as { ok: boolean; result?: unknown; description?: string; error_code?: number };
+  if (!json.ok) throw new Error(`Telegram ${method} failed: ${json.description ?? "unknown"} (code ${json.error_code})`);
   return json.result;
 }
 
