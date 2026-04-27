@@ -313,6 +313,16 @@ export type {
   QuotaWindow,
   ProviderQuotaResult,
 } from "./types/index.js";
+export type {
+  ReferenceDocument,
+  ReferenceDocumentWithContent,
+  DocumentSource,
+  DocumentSourceType,
+  DocumentScope,
+  CreateDocumentSourceInput,
+  UpdateReferenceDocumentInput,
+  GoogleDriveStatus,
+} from "./types/document-storage.js";
 
 export {
   instanceGeneralSettingsSchema,
