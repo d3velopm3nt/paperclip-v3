@@ -31,11 +31,11 @@ interface Update {
   message?: TelegramMessage;
 }
 
-let pollingActive = false;
+declare const global: { __tgPollingActive?: boolean };
 
 export async function startTelegramPolling(db: Db, token: string, companyId?: string): Promise<void> {
-  if (pollingActive) return;
-  pollingActive = true;
+  if (global.__tgPollingActive) return;
+  global.__tgPollingActive = true;
 
   // Delete any existing webhook so polling works
   try {
@@ -106,7 +106,7 @@ export async function startTelegramPolling(db: Db, token: string, companyId?: st
   }
 
   const poll = async () => {
-    if (!pollingActive) return;
+    if (!global.__tgPollingActive) return;
     try {
       const updates = (await tgGet(token, "getUpdates", {
         offset,
@@ -144,5 +144,5 @@ export async function startTelegramPolling(db: Db, token: string, companyId?: st
 }
 
 export function stopTelegramPolling() {
-  pollingActive = false;
+  global.__tgPollingActive = false;
 }
