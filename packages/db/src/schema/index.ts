@@ -77,6 +77,10 @@ export { actionPolicies } from "./action_policies.js";
 export { plans } from "./plans.js";
 export { planDecisionTokens } from "./plan_decision_tokens.js";
 
+// v3: document storage
+export { referenceDocuments } from "./reference_documents.js";
+export { documentSources } from "./document_sources.js";
+
 // v3: workflow viewer
 export { workflowRuns } from "./workflow_runs.js";
 export { workflowStageResults } from "./workflow_stage_results.js";
