@@ -57,6 +57,7 @@ import { InviteLandingPage } from "./pages/InviteLanding";
 import { NotFoundPage } from "./pages/NotFound";
 import { Chat } from "./pages/Chat"; // v3: chat
 import { DocumentLibrary } from "./pages/DocumentLibrary"; // v3: document storage
+import { InstanceStorageSettings } from "./pages/InstanceStorageSettings"; // v3: document storage
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -347,6 +348,7 @@ export function App() {
             <Route path="general" element={<InstanceGeneralSettings />} />
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
+            <Route path="storage" element={<InstanceStorageSettings />} /> {/* v3: document storage */}
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
