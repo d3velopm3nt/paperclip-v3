@@ -65,27 +65,49 @@ export function telegramRoutes(db: Db): Router {
       return;
     }
 
-    // Find agent_voice account for voiceAccountId param (not used by telegram, but required by signature)
-    const [voiceAcct] = await db
-      .select({ id: emailAccounts.id })
-      .from(emailAccounts)
-      .where(eq(emailAccounts.companyId, companyId))
-      .limit(1);
+    // Route through chat system — creates a Telegram thread and replies via chatDirectReply
+    res.status(200).json({ ok: true }); // Respond to Telegram immediately
 
-    const { operatorMessagingService } = await import("../services/operator-messaging.js");
+    const { chatService } = await import("../services/chat.js");
+    const { chatDirectReply, pickAgentForDispatcher } = await import("../services/chat-direct.js");
+
     try {
-      await operatorMessagingService(db).handleInbound(companyId, voiceAcct?.id ?? "", {
+      const chatTitle = msg.chat.title ?? msg.chat.first_name ?? `Telegram ${chatId}`;
+      const thread = await chatService(db).getOrCreateTelegramThread(companyId, chatId, chatTitle);
+
+      const agentId = await pickAgentForDispatcher(db, companyId, msg.text);
+      if (!agentId) {
+        logger.warn({ companyId, chatId }, "telegram webhook: no agent available");
+        return;
+      }
+
+      const handled = await chatDirectReply(db, companyId, agentId, thread.id, msg.text, {
         platform: "telegram",
-        from: fromId,
-        body: msg.text,
-        threadKey,
+        telegramChatId: chatId,
+        fromId,
         raw: update,
       });
-    } catch (err) {
-      logger.error({ err, chatId }, "telegram webhook: handleInbound failed");
-    }
 
-    res.status(200).json({ ok: true });
+      // Send the reply back to Telegram
+      if (handled) {
+        // Response will be emitted via WebSocket live event; also send to Telegram
+        // We hook into the outbound message via a short poll of the thread
+        setTimeout(async () => {
+          try {
+            const { chatService: cs } = await import("../services/chat.js");
+            const messages = await cs(db).listMessages(companyId, thread.id, 1);
+            const latest = messages[0];
+            if (latest?.direction === "outbound" && latest.body) {
+              await sendTelegramMessage(BOT_TOKEN, chatId, latest.body);
+            }
+          } catch (err) {
+            logger.warn({ err }, "telegram webhook: failed to send reply");
+          }
+        }, 3000);
+      }
+    } catch (err) {
+      logger.error({ err, chatId }, "telegram webhook: chat routing failed");
+    }
   });
 
   // ── Channels status (board only) ─────────────────────────────────────────
@@ -189,7 +211,7 @@ interface TelegramUpdate {
   message?: {
     message_id: number;
     from?: { id: number; first_name: string; username?: string };
-    chat: { id: number; type: string };
+    chat: { id: number; type: string; title?: string; first_name?: string };
     text?: string;
     date: number;
   };

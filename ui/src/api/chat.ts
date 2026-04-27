@@ -5,6 +5,8 @@ export interface ChatThread {
   companyId: string;
   agentId: string | null;
   name: string;
+  platform: string;
+  externalKey: string | null;
   createdAt: string;
 }
 

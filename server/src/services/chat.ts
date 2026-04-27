@@ -7,13 +7,28 @@ export function chatService(db: Db) {
     const [existing] = await db
       .select()
       .from(chatThreads)
-      .where(and(eq(chatThreads.companyId, companyId), isNull(chatThreads.agentId)))
+      .where(and(eq(chatThreads.companyId, companyId), isNull(chatThreads.agentId), eq(chatThreads.platform, "web")))
       .limit(1);
     if (existing) return existing;
 
     const [created] = await db
       .insert(chatThreads)
-      .values({ companyId, agentId: null, name: "Dispatcher" })
+      .values({ companyId, agentId: null, name: "Dispatcher", platform: "web" })
+      .returning();
+    return created!;
+  }
+
+  async function getOrCreateTelegramThread(companyId: string, telegramChatId: string, chatTitle?: string) {
+    const [existing] = await db
+      .select()
+      .from(chatThreads)
+      .where(and(eq(chatThreads.companyId, companyId), eq(chatThreads.platform, "telegram"), eq(chatThreads.externalKey, telegramChatId)))
+      .limit(1);
+    if (existing) return existing;
+
+    const [created] = await db
+      .insert(chatThreads)
+      .values({ companyId, agentId: null, name: chatTitle ?? `Telegram ${telegramChatId}`, platform: "telegram", externalKey: telegramChatId })
       .returning();
     return created!;
   }
@@ -94,5 +109,5 @@ export function chatService(db: Db) {
       .limit(limit);
   }
 
-  return { getOrCreateDispatcherThread, getOrCreateAgentThread, listThreads, listMessages };
+  return { getOrCreateDispatcherThread, getOrCreateAgentThread, getOrCreateTelegramThread, listThreads, listMessages };
 }

@@ -11,6 +11,8 @@ export const chatThreads = pgTable(
       .references(() => companies.id, { onDelete: "cascade" }),
     agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
     name: text("name").notNull(),
+    platform: text("platform").notNull().default("web"), // "web" | "telegram"
+    externalKey: text("external_key"), // telegram chat ID or other platform key
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

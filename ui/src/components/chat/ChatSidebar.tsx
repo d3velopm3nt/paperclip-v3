@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatApi, type ChatThread } from "../../api/chat";
 import { agentsApi } from "../../api/agents";
 import { queryKeys } from "../../lib/queryKeys";
-import { MessageSquare } from "lucide-react";
+import { MessageSquare, Send } from "lucide-react";
 
 interface Props {
   companyId: string;
@@ -35,7 +35,8 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
     },
   });
 
-  const dispatcher = threads.find((t) => t.agentId === null);
+  const dispatcher = threads.find((t) => t.agentId === null && t.platform === "web");
+  const telegramThreads = threads.filter((t) => t.platform === "telegram");
   const activeAgentIds = new Set(threads.filter((t) => t.agentId !== null).map((t) => t.agentId!));
   const threadByAgentId = new Map<string, ChatThread>(
     threads.filter((t) => t.agentId !== null).map((t) => [t.agentId!, t]),
@@ -116,6 +117,30 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {/* Channels — Telegram etc */}
+        {telegramThreads.length > 0 && (
+          <div className="flex flex-col gap-0.5">
+            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Channels
+            </div>
+            {telegramThreads.map((thread) => (
+              <button
+                key={thread.id}
+                className={itemClass(selectedThreadId === thread.id)}
+                onClick={() => onSelectThread(thread.id, thread.name)}
+              >
+                <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0 text-blue-400 text-[11px] font-bold">
+                  <Send className="h-3.5 w-3.5" />
+                </span>
+                <div className="flex flex-col min-w-0">
+                  <span className="truncate">{thread.name}</span>
+                  <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
+                </div>
+              </button>
+            ))}
           </div>
         )}
       </nav>
