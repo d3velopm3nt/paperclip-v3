@@ -1,9 +1,13 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
+import { chatThreads, instanceSettings, operatorMessages } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
 import { assertCompanyAccess } from "./authz.js";
 import { chatService } from "../services/chat.js";
 import { chatDirectReply, pickAgentForDispatcher } from "../services/chat-direct.js";
 import { operatorMessagingService } from "../services/operator-messaging.js";
+import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
+import { readInstanceToken } from "../services/instance-token-store.js";
 import { logger } from "../middleware/logger.js";
 import { HttpError } from "../errors.js";
 
@@ -93,6 +97,63 @@ export function chatRoutes(db: Db): Router {
         }
       })
       .catch((err) => logger.warn({ err, companyId }, "chat: reply failed"));
+  });
+
+  // Operator reply to a specific thread (WhatsApp and future external platforms)
+  router.post("/companies/:companyId/chat/threads/:threadId/reply", async (req, res) => {
+    assertCompanyAccess(req, req.params.companyId);
+    const { body } = req.body as { body?: string };
+    if (!body || typeof body !== "string" || body.trim() === "") {
+      throw new HttpError(400, "body required");
+    }
+
+    const companyId = req.params.companyId;
+    const threadId = req.params.threadId;
+
+    // Verify thread belongs to company
+    const [thread] = await db
+      .select()
+      .from(chatThreads)
+      .where(and(eq(chatThreads.id, threadId), eq(chatThreads.companyId, companyId)))
+      .limit(1);
+
+    if (!thread) throw new HttpError(404, "thread not found");
+
+    // Store outbound operator message
+    const [stored] = await db
+      .insert(operatorMessages)
+      .values({
+        companyId,
+        chatThreadId: threadId,
+        direction: "outbound",
+        platform: thread.platform,
+        source: "operator",
+        body: body.trim(),
+      })
+      .returning();
+
+    res.json({ ok: true, messageId: stored?.id });
+
+    // For WhatsApp threads, send the reply to the customer
+    if (thread.platform === "whatsapp" && thread.externalKey) {
+      const toPhone = thread.externalKey.replace(/^\+/, ""); // Meta API wants no leading +
+      const token = await readInstanceToken(db, "whatsappAccessToken").catch(() => null);
+      const [settingsRow] = await db
+        .select({ general: instanceSettings.general })
+        .from(instanceSettings)
+        .where(eq(instanceSettings.singletonKey, "default"))
+        .limit(1);
+      const phoneNumberId =
+        ((settingsRow?.general as Record<string, unknown> | null)?.whatsappPhoneNumberId as string | undefined) ?? "";
+
+      if (token && phoneNumberId) {
+        sendWhatsAppMessage(token, phoneNumberId, toPhone, body.trim()).catch((err) =>
+          logger.error({ err, toPhone, threadId }, "chat: WhatsApp send failed"),
+        );
+      } else {
+        logger.warn({ threadId }, "chat: WhatsApp reply skipped — token or phoneNumberId not configured");
+      }
+    }
   });
 
   return router;

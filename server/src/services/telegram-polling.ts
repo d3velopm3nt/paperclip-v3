@@ -42,8 +42,18 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
 
   // Resolve token: DB (encrypted) takes priority over env var
   async function resolveToken(): Promise<string> {
-    const dbToken = await readInstanceToken(db, "telegramBotToken");
-    return dbToken || envToken;
+    try {
+      const dbToken = await readInstanceToken(db, "telegramBotToken");
+      if (dbToken) {
+        logger.info("telegram-polling: token resolved from DB ✓");
+        return dbToken;
+      }
+    } catch (err) {
+      logger.warn({ err }, "telegram-polling: DB token decrypt failed, falling back to env");
+    }
+    if (envToken) logger.info("telegram-polling: token resolved from env ✓");
+    else logger.warn("telegram-polling: no token found (DB or env) — will retry");
+    return envToken;
   }
 
   const initialToken = await resolveToken();
@@ -51,9 +61,9 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
   // Delete any existing webhook so polling works
   try {
     await tgGet(initialToken, "deleteWebhook", { drop_pending_updates: "false" });
-    logger.info("telegram-polling: webhook deleted, starting long poll");
-  } catch {
-    // ignore
+    logger.info("telegram-polling: webhook cleared ✓");
+  } catch (err) {
+    logger.warn({ err }, "telegram-polling: deleteWebhook failed (likely no token yet)");
   }
 
   let offset = 0;
@@ -97,10 +107,12 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
     });
 
     if (!agentId) {
-      logger.warn({ chatId }, "telegram-polling: no agent available");
+      logger.warn({ chatId, resolvedCompanyId }, "telegram-polling: no agent found for company");
       await sendTelegramMessage(resolvedToken, chatId, "⚠ No agent available to respond.");
       return;
     }
+
+    logger.info({ chatId, agentId, threadId: thread.id }, "telegram-polling: dispatching to chatDirectReply");
 
     // Show "typing…" in Telegram while agent processes (lasts 5s, refresh every 4s)
     void sendTelegramChatAction(resolvedToken, chatId);
@@ -133,7 +145,8 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
         if (Date.now() - startedAt < 120_000 && attempt < 40) {
           setTimeout(() => poll(attempt + 1), 3_000);
         } else {
-          logger.warn({ chatId }, "telegram-polling: reply timeout");
+          logger.warn({ chatId }, "telegram-polling: reply timeout — no outbound message found after 120s");
+          await sendTelegramMessage(resolvedToken, chatId, "⚠ Agent did not respond in time. Please try again.").catch(() => {});
         }
       } catch (err) {
         logger.warn({ err }, "telegram-polling: reply poll error");

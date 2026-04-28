@@ -44,6 +44,7 @@ import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: operator messaging
 import { telegramRoutes } from "./routes/telegram.js"; // v3: telegram
+import { whatsappRoutes } from "./routes/whatsapp.js"; // v3: whatsapp
 import { startTelegramPolling, stopTelegramPolling } from "./services/telegram-polling.js"; // v3: telegram long polling
 import { chatRoutes } from "./routes/chat.js"; // v3: chat
 import { mcpToolServerRoutes } from "./routes/mcp-tool-server.js"; // v3: built-in MCP tool server
@@ -189,19 +190,19 @@ export async function createApp(
   api.use(roomRoutes(db)); // v3: operator messaging
   api.use(operatorMessageRoutes(db)); // v3: operator messaging
   api.use(telegramRoutes(db)); // v3: telegram channel
+  api.use(whatsappRoutes(db)); // v3: whatsapp channel
   api.use(chatRoutes(db)); // v3: chat
   api.use(mcpToolServerRoutes(db)); // v3: built-in MCP tool server for chat agents
   api.use(repoRoutes(db)); // v3: project repo tab
   api.use(referenceDocumentsRoutes(db)); // v3: document storage
   api.use(instanceStorageRoutes(db)); // v3: document storage
-  // v3: start Telegram long polling if token is set (no webhook/tunnel needed)
+  // v3: start Telegram long polling — reads token from DB (encrypted) or TELEGRAM_BOT_TOKEN env var.
+  // Always start so DB-stored tokens are picked up without requiring the env var.
   const tgToken = process.env.TELEGRAM_BOT_TOKEN ?? "";
   const tgCompanyId = process.env.TELEGRAM_COMPANY_ID ?? "";
-  if (tgToken) {
-    startTelegramPolling(db, tgToken, tgCompanyId || undefined).catch((err) =>
-      logger.warn({ err }, "telegram: polling failed to start"),
-    );
-  }
+  startTelegramPolling(db, tgToken, tgCompanyId || undefined).catch((err) =>
+    logger.warn({ err }, "telegram: polling failed to start"),
+  );
   const hostServicesDisposers = new Map<string, () => void>();
   const workerManager = createPluginWorkerManager();
   const pluginRegistry = pluginRegistryService(db);

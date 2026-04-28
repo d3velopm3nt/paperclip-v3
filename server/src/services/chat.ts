@@ -18,6 +18,21 @@ export function chatService(db: Db) {
     return created!;
   }
 
+  async function getOrCreateWhatsAppThread(companyId: string, fromPhone: string, contactName?: string) {
+    const [existing] = await db
+      .select()
+      .from(chatThreads)
+      .where(and(eq(chatThreads.companyId, companyId), eq(chatThreads.platform, "whatsapp"), eq(chatThreads.externalKey, fromPhone)))
+      .limit(1);
+    if (existing) return existing;
+
+    const [created] = await db
+      .insert(chatThreads)
+      .values({ companyId, agentId: null, name: contactName ?? fromPhone, platform: "whatsapp", externalKey: fromPhone })
+      .returning();
+    return created!;
+  }
+
   async function getOrCreateTelegramThread(companyId: string, telegramChatId: string, chatTitle?: string) {
     const [existing] = await db
       .select()
@@ -109,5 +124,5 @@ export function chatService(db: Db) {
       .limit(limit);
   }
 
-  return { getOrCreateDispatcherThread, getOrCreateAgentThread, getOrCreateTelegramThread, listThreads, listMessages };
+  return { getOrCreateDispatcherThread, getOrCreateAgentThread, getOrCreateTelegramThread, getOrCreateWhatsAppThread, listThreads, listMessages };
 }

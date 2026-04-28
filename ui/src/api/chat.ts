@@ -65,4 +65,11 @@ export const chatApi = {
       contextRefs,
       ...(toAgentId ? { toAgentId } : {}),
     }),
+
+  // Reply to a specific thread (WhatsApp, future external platforms)
+  replyToThread: (companyId: string, threadId: string, body: string) =>
+    api.post<{ ok: boolean; messageId: string }>(
+      `/companies/${companyId}/chat/threads/${threadId}/reply`,
+      { body },
+    ),
 };

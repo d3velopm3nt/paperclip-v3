@@ -14,6 +14,7 @@ import {
   deleteTelegramWebhook,
   sendTelegramMessage,
 } from "../services/telegram-adapter.js";
+import { getWhatsAppStatus } from "./whatsapp.js";
 import { registerAdapter } from "../services/operator-messaging.js";
 import { readInstanceToken, writeInstanceToken, deleteInstanceToken } from "../services/instance-token-store.js";
 
@@ -205,9 +206,13 @@ export function telegramRoutes(db: Db): Router {
     // Email: count configured accounts
     const emailRows = await db.select({ id: emailAccounts.id }).from(emailAccounts);
 
+    // WhatsApp status
+    const whatsapp = await getWhatsAppStatus(db);
+
     res.json({
       telegram: { ...telegram, activeCompanyId, routingSource },
       email: { configured: emailRows.length > 0, accountCount: emailRows.length },
+      whatsapp,
     });
   });
 
