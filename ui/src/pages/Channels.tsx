@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { channelsApi } from "../api/channels";
+import { useCompany } from "../context/CompanyContext";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +11,7 @@ import { CheckCircle2, XCircle, AlertCircle, Send, Trash2, Webhook } from "lucid
 
 export function Channels() {
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { selectedCompanyId, selectedCompany } = useCompany();
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Channels" }]);
@@ -41,6 +43,24 @@ export function Channels() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels-status"] }),
   });
 
+  const setRouting = useMutation({
+    mutationFn: (companyId: string | null) => channelsApi.setTelegramRouting(companyId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels-status"] }),
+  });
+
+  const [tokenInput, setTokenInput] = useState("");
+  const saveToken = useMutation({
+    mutationFn: () => channelsApi.setTelegramToken(tokenInput.trim()),
+    onSuccess: () => {
+      setTokenInput("");
+      queryClient.invalidateQueries({ queryKey: ["channels-status"] });
+    },
+  });
+  const removeToken = useMutation({
+    mutationFn: () => channelsApi.deleteTelegramToken(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels-status"] }),
+  });
+
   if (isLoading) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   }
@@ -48,6 +68,7 @@ export function Channels() {
   const tg = status?.telegram;
   const email = status?.email;
   const tgWebhookActive = !!(tg?.webhook?.url && tg.webhook.url.length > 0);
+  const tgActiveHere = !!tg?.configured && tg.activeCompanyId === selectedCompanyId;
 
   return (
     <div className="p-6 max-w-2xl space-y-6">
@@ -66,16 +87,20 @@ export function Channels() {
                 <Badge variant="destructive" className="gap-1 text-xs">
                   <AlertCircle className="w-3 h-3" /> Error
                 </Badge>
-              ) : (
+              ) : tgActiveHere ? (
                 <Badge variant="default" className="gap-1 text-xs bg-green-600 hover:bg-green-600">
-                  <CheckCircle2 className="w-3 h-3" /> Connected
+                  <CheckCircle2 className="w-3 h-3" /> Active
+                </Badge>
+              ) : (
+                <Badge variant="secondary" className="text-xs">
+                  Bot connected — routes to another company
                 </Badge>
               )
             ) : (
               <Badge variant="secondary" className="text-xs">Not configured</Badge>
             )}
           </div>
-          {tg?.configured && !tg.error && (
+          {tgActiveHere && !tg?.error && (
             <Button
               size="sm"
               variant="outline"
@@ -88,28 +113,63 @@ export function Channels() {
           )}
         </div>
 
-        {tg?.configured && !tg.error && (
+        {tgActiveHere && !tg?.error && (
           <div className="text-sm space-y-1">
-            {tg.bot && (
+            {tg?.bot && (
               <div className="flex gap-2">
                 <span className="text-muted-foreground w-32 shrink-0">Bot</span>
                 <span>@{tg.bot.username} ({tg.bot.firstName})</span>
               </div>
             )}
-            {tg.operatorChatId && (
+            {tg?.operatorChatId && (
               <div className="flex gap-2">
                 <span className="text-muted-foreground w-32 shrink-0">Operator chat</span>
                 <span className="font-mono text-xs">{tg.operatorChatId}</span>
               </div>
             )}
-            <div className="flex gap-2">
-              <span className="text-muted-foreground w-32 shrink-0">Webhook</span>
-              {tgWebhookActive ? (
-                <span className="text-xs font-mono truncate max-w-xs text-green-600">{tg.webhook!.url}</span>
-              ) : (
-                <span className="text-xs text-amber-600">Not registered — inbound messages disabled</span>
-              )}
-            </div>
+          </div>
+        )}
+
+        {tg?.configured && !tgActiveHere && !tg.error && (
+          <p className="text-sm text-muted-foreground">
+            This bot is shared across the instance but delivers messages to one company only.
+            Use the routing section below to claim it for this company.
+          </p>
+        )}
+
+        {tg?.configured && !tg.error && (
+          <div className="border-t border-border pt-3 space-y-2">
+            <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Message routing</p>
+            {tg.routingSource === "env" ? (
+              <p className="text-xs text-muted-foreground">
+                Routing controlled by <code className="bg-muted px-1 rounded">TELEGRAM_COMPANY_ID</code> env var.
+                Remove it to enable UI routing.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-2 text-sm">
+                  <span className="text-muted-foreground w-32 shrink-0">Routes to</span>
+                  <span className={tg.activeCompanyId ? "font-medium" : "text-muted-foreground italic"}>
+                    {tg.activeCompanyId === selectedCompanyId
+                      ? `${selectedCompany?.name ?? "this company"} (current)`
+                      : tg.activeCompanyId
+                        ? "Another company"
+                        : "Not set"}
+                  </span>
+                </div>
+                {selectedCompanyId && tg.activeCompanyId !== selectedCompanyId && (
+                  <Button
+                    size="sm" variant="outline"
+                    disabled={setRouting.isPending}
+                    onClick={() => setRouting.mutate(selectedCompanyId)}
+                  >
+                    {setRouting.isPending ? "Saving…" : `Route to ${selectedCompany?.name ?? "this company"}`}
+                  </Button>
+                )}
+                {setRouting.isSuccess && <span className="text-xs text-green-600">✓ Saved</span>}
+                {setRouting.isError && <span className="text-xs text-destructive">Failed</span>}
+              </div>
+            )}
           </div>
         )}
 
@@ -117,9 +177,56 @@ export function Channels() {
           <p className="text-sm text-destructive">{tg.error}</p>
         )}
 
-        {!tg?.configured && (
+        {/* Bot token management */}
+        <div className="border-t border-border pt-3 space-y-2">
+          <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Bot token</p>
+          {tg?.tokenSource === "env" && (
+            <p className="text-xs text-muted-foreground">
+              Token loaded from <code className="bg-muted px-1 rounded">TELEGRAM_BOT_TOKEN</code> env var.
+              Enter a token below to override with an encrypted DB value.
+            </p>
+          )}
+          {tg?.tokenSource === "db" ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-green-600">✓ Token stored encrypted in database</span>
+              <Button
+                size="sm" variant="ghost"
+                className="text-xs text-destructive h-6 px-2"
+                disabled={removeToken.isPending}
+                onClick={() => removeToken.mutate()}
+              >
+                <Trash2 className="w-3 h-3 mr-1" /> Remove
+              </Button>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              No token configured. Enter your Telegram bot token from{" "}
+              <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="underline">@BotFather</a>.
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Input
+              type="password"
+              className="text-sm flex-1 font-mono"
+              placeholder="1234567890:AAHxxxx..."
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+            />
+            <Button
+              size="sm"
+              disabled={!tokenInput.trim() || saveToken.isPending}
+              onClick={() => saveToken.mutate()}
+            >
+              {saveToken.isPending ? "Saving…" : "Save encrypted"}
+            </Button>
+          </div>
+          {saveToken.isSuccess && <p className="text-xs text-green-600">✓ Token saved and encrypted. Active within 25 seconds.</p>}
+          {saveToken.isError && <p className="text-xs text-destructive">{String(saveToken.error)}</p>}
+        </div>
+
+        {!tg?.configured && !tokenInput && (
           <div className="text-sm text-muted-foreground space-y-1">
-            <p>Set <code className="text-xs bg-muted px-1 rounded">TELEGRAM_BOT_TOKEN</code> and <code className="text-xs bg-muted px-1 rounded">TELEGRAM_OPERATOR_CHAT_ID</code> in your Paperclip env file to enable Telegram.</p>
+            <p>Enter your bot token above, or set <code className="text-xs bg-muted px-1 rounded">TELEGRAM_BOT_TOKEN</code> in your env file.</p>
           </div>
         )}
 

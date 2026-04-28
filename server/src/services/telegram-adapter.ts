@@ -57,6 +57,10 @@ export async function sendTelegramMessage(
   return { messageId: r.message_id };
 }
 
+export async function sendTelegramChatAction(token: string, chatId: string, action = "typing"): Promise<void> {
+  await tgApi(token, "sendChatAction", { chat_id: chatId, action }).catch(() => {});
+}
+
 // ─── Adapter factory ──────────────────────────────────────────────────────────
 
 export function createTelegramAdapter(token: string, operatorChatId: string): MessagePlatformAdapter {

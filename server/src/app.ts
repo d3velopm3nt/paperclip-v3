@@ -44,7 +44,7 @@ import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: operator messaging
 import { telegramRoutes } from "./routes/telegram.js"; // v3: telegram
-import { startTelegramPolling } from "./services/telegram-polling.js"; // v3: telegram long polling
+import { startTelegramPolling, stopTelegramPolling } from "./services/telegram-polling.js"; // v3: telegram long polling
 import { chatRoutes } from "./routes/chat.js"; // v3: chat
 import { repoRoutes } from "./routes/repo.js";
 import { referenceDocumentsRoutes } from "./routes/reference-documents.js"; // v3: document storage
@@ -353,6 +353,7 @@ export async function createApp(
     logger.error({ err }, "Failed to load ready plugins on startup");
   });
   process.once("exit", () => {
+    stopTelegramPolling(); // signal polling loop to stop before process exits
     devWatcher?.close();
     hostServiceCleanup.disposeAll();
     hostServiceCleanup.teardown();

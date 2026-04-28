@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { chatApi, type ChatThread } from "../../api/chat";
 import { agentsApi } from "../../api/agents";
@@ -19,8 +20,41 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
     queryKey: queryKeys.chat.threads(companyId),
     queryFn: () => chatApi.listThreads(companyId),
     enabled: !!companyId,
-    refetchInterval: 30_000,
+    refetchInterval: 5_000,
   });
+
+  // Invalidate threads immediately when any new chat message arrives (e.g. inbound Telegram)
+  useEffect(() => {
+    if (!companyId) return;
+    let closed = false;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let socket: WebSocket | null = null;
+
+    const connect = () => {
+      if (closed) return;
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      socket = new WebSocket(`${protocol}://${window.location.host}/api/companies/${encodeURIComponent(companyId)}/events/ws`);
+      socket.onmessage = (ev) => {
+        try {
+          const parsed = JSON.parse(ev.data as string) as { type?: string };
+          if (parsed.type === "chat.message.new") {
+            queryClient.invalidateQueries({ queryKey: queryKeys.chat.threads(companyId) });
+          }
+        } catch { /* ignore */ }
+      };
+      socket.onerror = () => socket?.close();
+      socket.onclose = () => {
+        if (!closed) reconnectTimer = setTimeout(connect, 2000);
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer !== null) clearTimeout(reconnectTimer);
+      socket?.close(1000, "sidebar_unmount");
+    };
+  }, [companyId, queryClient]);
 
   const { data: agents = [] } = useQuery({
     queryKey: ["agents", companyId],
@@ -35,6 +69,9 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
   });
 
   const telegramConfigured = channelsStatus?.telegram?.configured ?? false;
+  const telegramActiveCompanyId = channelsStatus?.telegram?.activeCompanyId ?? null;
+  const isActiveTelegramCompany = telegramActiveCompanyId === companyId;
+  const telegramBotUsername = channelsStatus?.telegram?.bot?.username ?? null;
 
   const openDm = useMutation({
     mutationFn: (agentId: string) => chatApi.ensureAgentThread(companyId, agentId),
@@ -137,42 +174,64 @@ export function ChatSidebar({ companyId, selectedThreadId, onSelectThread }: Pro
           </div>
         )}
 
-        {/* Channels — always show if configured */}
-        {(telegramConfigured || telegramThreads.length > 0) && (
+        {/* Channels — only show if telegram is configured at all */}
+        {telegramConfigured && (
           <div className="flex flex-col gap-0.5">
             <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Channels
             </div>
 
-            {/* Show real per-chat Telegram threads (skip the inbox placeholder) */}
-            {telegramThreads.filter((t) => t.externalKey !== "inbox").length > 0 ? (
-              telegramThreads
-                .filter((t) => t.externalKey !== "inbox")
-                .map((thread) => (
-                  <button
-                    key={thread.id}
-                    className={itemClass(selectedThreadId === thread.id)}
-                    onClick={() => onSelectThread(thread.id, thread.name)}
-                  >
-                    <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
-                      <Send className="h-3.5 w-3.5 text-blue-400" />
+            {isActiveTelegramCompany ? (
+              /* This company receives Telegram messages */
+              telegramThreads.filter((t) => t.externalKey !== "inbox").length > 0 ? (
+                telegramThreads
+                  .filter((t) => t.externalKey !== "inbox")
+                  .map((thread) => (
+                    <button
+                      key={thread.id}
+                      className={itemClass(selectedThreadId === thread.id)}
+                      onClick={() => onSelectThread(thread.id, thread.name)}
+                    >
+                      <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
+                        <Send className="h-3.5 w-3.5 text-blue-400" />
+                      </span>
+                      <div className="flex flex-col min-w-0">
+                        <span className="truncate">{thread.name}</span>
+                        <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
+                      </div>
+                    </button>
+                  ))
+              ) : (
+                /* Active company but no threads yet — clickable info */
+                <button
+                  className={itemClass(selectedThreadId === "__telegram_info__")}
+                  onClick={() => onSelectThread("__telegram_info__", "Telegram")}
+                >
+                  <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
+                    <Send className="h-3.5 w-3.5 text-blue-400" />
+                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="truncate">Telegram</span>
+                    <span className="text-[11px] text-muted-foreground truncate">
+                      {telegramBotUsername ? `@${telegramBotUsername}` : "Send a message to start"}
                     </span>
-                    <div className="flex flex-col min-w-0">
-                      <span className="truncate">{thread.name}</span>
-                      <span className="text-[11px] text-muted-foreground truncate">Telegram</span>
-                    </div>
-                  </button>
-                ))
+                  </div>
+                </button>
+              )
             ) : (
-              <div className={itemClass(false) + " cursor-default opacity-60"}>
-                <span className="w-7 h-7 rounded-full bg-blue-500/15 flex items-center justify-center shrink-0">
-                  <Send className="h-3.5 w-3.5 text-blue-400" />
+              /* Different company is active — show grayed info, still clickable */
+              <button
+                className={itemClass(selectedThreadId === "__telegram_info__")}
+                onClick={() => onSelectThread("__telegram_info__", "Telegram")}
+              >
+                <span className="w-7 h-7 rounded-full bg-muted flex items-center justify-center shrink-0">
+                  <Send className="h-3.5 w-3.5 text-muted-foreground" />
                 </span>
                 <div className="flex flex-col min-w-0">
-                  <span className="truncate">Telegram</span>
-                  <span className="text-[11px] text-muted-foreground truncate">Send a message to start</span>
+                  <span className="truncate text-muted-foreground">Telegram</span>
+                  <span className="text-[11px] text-muted-foreground truncate">Not active for this company</span>
                 </div>
-              </div>
+              </button>
             )}
           </div>
         )}

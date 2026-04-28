@@ -14,6 +14,10 @@ export interface TelegramWebhookInfo {
 
 export interface TelegramChannelStatus {
   configured: boolean;
+  tokenSource?: "db" | "env" | null;
+  tokenSet?: boolean;
+  routingSource?: "env" | "db" | "default"; // env = TELEGRAM_COMPANY_ID set, cannot change from UI
+  activeCompanyId?: string | null;
   operatorChatId?: string | null;
   bot?: TelegramBotInfo;
   webhook?: TelegramWebhookInfo;
@@ -50,6 +54,15 @@ export const channelsApi = {
 
   testTelegram: () =>
     api.post<{ ok: boolean }>("/channels/telegram/test", {}),
+
+  setTelegramToken: (token: string) =>
+    api.put<{ ok: boolean }>("/channels/telegram/token", { token }),
+
+  deleteTelegramToken: () =>
+    api.delete<{ ok: boolean }>("/channels/telegram/token"),
+
+  setTelegramRouting: (companyId: string | null) =>
+    api.put<{ ok: boolean }>("/channels/telegram/routing", { companyId }),
 
   listMessages: (companyId: string, platform?: string) => {
     const qs = platform ? `?platform=${encodeURIComponent(platform)}` : "";

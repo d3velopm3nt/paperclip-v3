@@ -2,8 +2,8 @@
 
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { chatThreads, companies, emailAccounts, operatorMessages } from "@paperclipai/db";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { chatThreads, companies, emailAccounts, instanceSettings, operatorMessages } from "@paperclipai/db";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { logger } from "../middleware/logger.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 import {
@@ -15,6 +15,7 @@ import {
   sendTelegramMessage,
 } from "../services/telegram-adapter.js";
 import { registerAdapter } from "../services/operator-messaging.js";
+import { readInstanceToken, writeInstanceToken, deleteInstanceToken } from "../services/instance-token-store.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const OPERATOR_CHAT_ID = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
@@ -130,18 +131,82 @@ export function telegramRoutes(db: Db): Router {
     }
   });
 
+  // ── Telegram bot token (stored encrypted in DB) ──────────────────────────
+
+  router.put("/channels/telegram/token", async (req, res) => {
+    assertBoard(req);
+    const { token } = req.body as { token?: string };
+    if (!token?.trim()) {
+      res.status(400).json({ error: "token required" });
+      return;
+    }
+    try {
+      await writeInstanceToken(db, "telegramBotToken", token.trim());
+      res.json({ ok: true });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(422).json({ error: msg });
+    }
+  });
+
+  router.delete("/channels/telegram/token", async (req, res) => {
+    assertBoard(req);
+    await deleteInstanceToken(db, "telegramBotToken");
+    res.json({ ok: true });
+  });
+
+  // ── Telegram routing: which company receives messages ────────────────────
+
+  router.put("/channels/telegram/routing", async (req, res) => {
+    assertBoard(req);
+    const { companyId } = req.body as { companyId: string | null };
+    await db
+      .insert(instanceSettings)
+      .values({ singletonKey: "default", general: { telegramCompanyId: companyId ?? null } })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: {
+          general: sql`instance_settings.general || jsonb_build_object('telegramCompanyId', ${companyId ?? null}::text)`,
+          updatedAt: new Date(),
+        },
+      });
+    res.json({ ok: true });
+  });
+
   // ── Channels status (board only) ─────────────────────────────────────────
 
   router.get("/channels/status", async (req, res) => {
     assertBoard(req);
 
-    const telegram = await getTelegramStatus();
+    const telegram = await getTelegramStatus(db);
+
+    // Resolve which company receives Telegram messages
+    // Priority: TELEGRAM_COMPANY_ID env var > DB instanceSettings > first company
+    let activeCompanyId: string | null = null;
+    let routingSource: "env" | "db" | "default" = "default";
+    if (telegram.configured) {
+      if (COMPANY_ID) {
+        activeCompanyId = COMPANY_ID;
+        routingSource = "env";
+      } else {
+        const [settings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).where(eq(instanceSettings.singletonKey, "default")).limit(1);
+        const dbCompanyId = (settings?.general as Record<string, unknown> | null)?.telegramCompanyId as string | null | undefined;
+        if (dbCompanyId) {
+          activeCompanyId = dbCompanyId;
+          routingSource = "db";
+        } else {
+          const [first] = await db.select({ id: companies.id }).from(companies).limit(1);
+          activeCompanyId = first?.id ?? null;
+          routingSource = "default";
+        }
+      }
+    }
 
     // Email: count configured accounts
     const emailRows = await db.select({ id: emailAccounts.id }).from(emailAccounts);
 
     res.json({
-      telegram,
+      telegram: { ...telegram, activeCompanyId, routingSource },
       email: { configured: emailRows.length > 0, accountCount: emailRows.length },
     });
   });
@@ -250,24 +315,31 @@ export function telegramRoutes(db: Db): Router {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-async function getTelegramStatus() {
-  if (!BOT_TOKEN) {
-    return { configured: false };
+async function getTelegramStatus(db: Db) {
+  // DB token takes priority over env var
+  const dbToken = await readInstanceToken(db, "telegramBotToken").catch(() => null);
+  const effectiveToken = dbToken || BOT_TOKEN;
+  const tokenSource: "db" | "env" | null = dbToken ? "db" : BOT_TOKEN ? "env" : null;
+
+  if (!effectiveToken) {
+    return { configured: false, tokenSource: null as null };
   }
   try {
     const [botInfo, webhookInfo] = await Promise.all([
-      getTelegramBotInfo(BOT_TOKEN),
-      getTelegramWebhookInfo(BOT_TOKEN),
+      getTelegramBotInfo(effectiveToken),
+      getTelegramWebhookInfo(effectiveToken),
     ]);
     return {
       configured: true,
+      tokenSource,
+      tokenSet: true,
       operatorChatId: OPERATOR_CHAT_ID || null,
       bot: botInfo,
       webhook: webhookInfo,
     };
   } catch (err) {
     logger.warn({ err }, "telegram: status check failed");
-    return { configured: true, error: "Could not reach Telegram API" };
+    return { configured: true, tokenSource, tokenSet: true, error: "Could not reach Telegram API" };
   }
 }
 
