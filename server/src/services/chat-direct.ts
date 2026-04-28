@@ -5,6 +5,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, clients, issues, operatorMessages, projects, projectWorkspaces } from "@paperclipai/db";
 import { chatService } from "./chat.js";
+import { signMcpToken } from "./mcp-session-token.js";
 import { publishLiveEvent } from "./live-events.js";
 import { logActivity } from "./activity-log.js";
 import { referenceDocumentsService } from "./reference-documents.js";
@@ -211,6 +212,22 @@ async function chatLeanReply(
   const args: string[] = ["--print", "-", "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions"];
   if (model) args.push("--model", model);
   for (const p of workspacePaths) args.push("--add-dir", p);
+
+  // Inject built-in Paperclip MCP tool server so agent can query/update company data
+  const mcpToken = signMcpToken({ companyId, agentId: agent.id });
+  const apiBase = process.env.PAPERCLIP_API_URL ?? `http://localhost:${process.env.PORT ?? 3100}`;
+  const mcpConfig = {
+    mcpServers: {
+      paperclip: {
+        type: "http",
+        url: `${apiBase}/api/mcp`,
+        headers: { Authorization: `Bearer ${mcpToken}` },
+      },
+    },
+  };
+  const mcpConfigPath = `${os.tmpdir()}/paperclip-chat-mcp-${Date.now()}.json`;
+  await fs.writeFile(mcpConfigPath, JSON.stringify(mcpConfig), "utf-8");
+  args.push("--mcp-config", mcpConfigPath);
 
   // Resolve system prompt file — verify it's accessible on this OS before using it
   let tempPromptPath: string | null = null;
@@ -498,6 +515,7 @@ async function chatLeanReply(
     if (tempPromptPath) {
       fs.unlink(tempPromptPath).catch(() => {});
     }
+    fs.unlink(mcpConfigPath).catch(() => {});
 
     if (!replyText) {
       publishLiveEvent({ companyId, type: "chat.agent.done", payload: { agentId: agent.id, agentName: agent.name, chatThreadId: threadId } });
@@ -547,6 +565,7 @@ async function chatLeanReply(
     });
   } catch (err) {
     if (tempPromptPath) { fs.unlink(tempPromptPath).catch(() => {}); }
+    fs.unlink(mcpConfigPath).catch(() => {});
     logger.warn({ err, agentId: agent.id }, "chat-lean: subprocess failed");
     void logActivity(db, {
       companyId,
