@@ -46,6 +46,7 @@ import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: op
 import { telegramRoutes } from "./routes/telegram.js"; // v3: telegram
 import { startTelegramPolling, stopTelegramPolling } from "./services/telegram-polling.js"; // v3: telegram long polling
 import { chatRoutes } from "./routes/chat.js"; // v3: chat
+import { mcpToolServerRoutes } from "./routes/mcp-tool-server.js"; // v3: built-in MCP tool server
 import { repoRoutes } from "./routes/repo.js";
 import { referenceDocumentsRoutes } from "./routes/reference-documents.js"; // v3: document storage
 import { instanceStorageRoutes } from "./routes/instance-storage.js"; // v3: document storage
@@ -189,6 +190,7 @@ export async function createApp(
   api.use(operatorMessageRoutes(db)); // v3: operator messaging
   api.use(telegramRoutes(db)); // v3: telegram channel
   api.use(chatRoutes(db)); // v3: chat
+  api.use(mcpToolServerRoutes(db)); // v3: built-in MCP tool server for chat agents
   api.use(repoRoutes(db)); // v3: project repo tab
   api.use(referenceDocumentsRoutes(db)); // v3: document storage
   api.use(instanceStorageRoutes(db)); // v3: document storage
