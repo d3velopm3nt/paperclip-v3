@@ -108,7 +108,11 @@ export function contactService(db: Db) {
     return row ?? null;
   }
 
-  return { upsertByEmail, list, getById, listUnnamed, search, update };
+  async function remove(companyId: string, id: string): Promise<void> {
+    await db.delete(contacts).where(and(eq(contacts.id, id), eq(contacts.companyId, companyId)));
+  }
+
+  return { upsertByEmail, list, getById, listUnnamed, search, update, remove };
 }
 
 export type ContactService = ReturnType<typeof contactService>;

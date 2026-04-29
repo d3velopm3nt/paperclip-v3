@@ -12,6 +12,7 @@ export interface CreateClientInput {
   emailDomain?: string | null;
   extraEmails?: string[];
   trustLevel?: string;
+  isMyCompany?: boolean;
   notes?: string | null;
 }
 
@@ -20,6 +21,7 @@ export interface UpdateClientInput {
   emailDomain?: string | null;
   extraEmails?: string[];
   trustLevel?: string;
+  isMyCompany?: boolean;
   notes?: string | null;
 }
 
@@ -55,6 +57,7 @@ export function clientService(db: Db) {
         emailDomain: normaliseDomain(input.emailDomain),
         extraEmails: input.extraEmails ?? [],
         trustLevel: input.trustLevel ?? "standard",
+        isMyCompany: input.isMyCompany ?? false,
         notes: input.notes ?? null,
         updatedAt: new Date(),
       })
@@ -68,6 +71,7 @@ export function clientService(db: Db) {
     if (input.emailDomain !== undefined) updates.emailDomain = normaliseDomain(input.emailDomain);
     if (input.extraEmails !== undefined) updates.extraEmails = input.extraEmails;
     if (input.trustLevel !== undefined) updates.trustLevel = input.trustLevel;
+    if (input.isMyCompany !== undefined) updates.isMyCompany = input.isMyCompany;
     if (input.notes !== undefined) updates.notes = input.notes;
     const [row] = await db.update(clients).set(updates).where(eq(clients.id, id)).returning();
     return row ?? null;
