@@ -1,9 +1,9 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import { spawn } from "node:child_process";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, clients, issues, operatorMessages, projects, projectWorkspaces } from "@paperclipai/db";
+import { agents, clients, contacts, issues, operatorMessages, projects, projectWorkspaces } from "@paperclipai/db";
 import { chatService } from "./chat.js";
 import { signMcpToken } from "./mcp-session-token.js";
 import { publishLiveEvent } from "./live-events.js";
@@ -44,18 +44,30 @@ async function buildSystemPrompt(
   const workspacePaths: string[] = [];
   const enrichedRefs: ContextRef[] = [...contextRefs];
 
-  // Always inject company snapshot: agents + projects
-  const [companyAgents, companyProjects] = await Promise.all([
+  // Always inject company snapshot: agents + projects + unnamed contacts
+  const [companyAgents, companyProjects, unnamedContacts] = await Promise.all([
     db.select({ id: agents.id, name: agents.name, role: agents.role, status: agents.status })
       .from(agents).where(eq(agents.companyId, companyId)),
     db.select({ id: projects.id, name: projects.name, status: projects.status, description: projects.description })
       .from(projects).where(eq(projects.companyId, companyId)),
+    db.select({ id: contacts.id, email: contacts.email })
+      .from(contacts)
+      .where(and(eq(contacts.companyId, companyId), isNull(contacts.firstName), isNull(contacts.lastName))),
   ]);
 
   const snapshot: string[] = [
     `\n\n--- PAPERCLIP COMPANY CONTEXT ---`,
     `Agents: ${companyAgents.map((a) => `${a.name} (${a.role}, ${a.status})`).join(", ") || "none"}`,
     `Projects: ${companyProjects.map((p) => `${p.name} [${p.status}]${p.description ? ` — ${p.description}` : ""}`).join("; ") || "none"}`,
+    unnamedContacts.length > 0
+      ? `Unnamed contacts (${unnamedContacts.length}): ${unnamedContacts.map((c) => c.email).join(", ")} — these have no name yet.`
+      : "",
+    `\n--- CONTACT RESOLUTION ---`,
+    `When operator asks about a person by name (e.g. "emails from Kevin"):`,
+    `1. Call search_contacts({query:"Kevin"}) first.`,
+    `2. Found with name: use their email in search_emails({from:"<email>"}).`,
+    `3. Found but firstName/lastName is null: tell operator "I found a contact at <email> but have no name for them. Is this Kevin?" If yes, call update_contact to save the name, then search_emails.`,
+    `4. Not found at all: search_emails broadly, show results to operator, ask "Is the sender one of these?" then call update_contact with the name they give.`,
   ];
 
   // Fetch details for explicitly selected context refs
