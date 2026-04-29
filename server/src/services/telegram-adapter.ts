@@ -51,10 +51,20 @@ export async function sendTelegramMessage(
   text: string,
   replyToMessageId?: number,
 ): Promise<{ messageId: number }> {
-  const body: Record<string, unknown> = { chat_id: chatId, text, parse_mode: "Markdown" };
-  if (replyToMessageId) body.reply_to_message_id = replyToMessageId;
-  const r = (await tgApi(token, "sendMessage", body)) as { message_id: number };
-  return { messageId: r.message_id };
+  const base: Record<string, unknown> = { chat_id: chatId, text };
+  if (replyToMessageId) base.reply_to_message_id = replyToMessageId;
+  try {
+    const r = (await tgApi(token, "sendMessage", { ...base, parse_mode: "Markdown" })) as { message_id: number };
+    return { messageId: r.message_id };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("can't parse entities") || msg.includes("parse entities")) {
+      // Agent reply has unmatched markdown — retry as plain text
+      const r = (await tgApi(token, "sendMessage", base)) as { message_id: number };
+      return { messageId: r.message_id };
+    }
+    throw err;
+  }
 }
 
 export async function sendTelegramChatAction(token: string, chatId: string, action = "typing"): Promise<void> {

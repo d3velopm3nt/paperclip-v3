@@ -1,8 +1,8 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog } from "@paperclipai/db";
-import { and, desc, eq } from "drizzle-orm";
+import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients } from "@paperclipai/db";
+import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { logActivity } from "../services/activity-log.js";
 
@@ -88,6 +88,52 @@ const TOOLS = [
       properties: {
         limit: { type: "number", description: "Max entries (default 20, max 50)" },
         agentId: { type: "string", description: "Filter by agent UUID" },
+      },
+    },
+  },
+  {
+    name: "search_emails",
+    description: "Search inbound emails received by this company. Filter by sender, subject keyword, processing state, or date. Returns message summaries with attachment counts.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Filter by sender address (partial match)" },
+        subject: { type: "string", description: "Filter by subject line (partial match)" },
+        state: { type: "string", description: "Filter by processing state: pending|analyzing|plan_proposed|clarifying|approved|declined|executed|ignored|error" },
+        since: { type: "string", description: "ISO 8601 datetime — only emails received after this (e.g. 2025-01-01T00:00:00Z)" },
+        limit: { type: "number", description: "Max results (default 20, max 50)" },
+      },
+    },
+  },
+  {
+    name: "get_email",
+    description: "Get full details of a single email: body, headers, processing state, matched agent/client, and attachment list.",
+    inputSchema: {
+      type: "object",
+      required: ["emailId"],
+      properties: {
+        emailId: { type: "string", description: "UUID of the email message" },
+      },
+    },
+  },
+  {
+    name: "list_email_attachments",
+    description: "List all attachments for an email message, including filename, MIME type, size in bytes, and whether it is inline.",
+    inputSchema: {
+      type: "object",
+      required: ["emailId"],
+      properties: {
+        emailId: { type: "string", description: "UUID of the email message" },
+      },
+    },
+  },
+  {
+    name: "list_clients",
+    description: "List clients for this company. Returns names, email domains, and extra contact addresses. Use this to resolve a contact name to an email address before calling search_emails.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Filter by client name (partial match)" },
       },
     },
   },
@@ -217,6 +263,155 @@ async function handleTool(
       .where(and(...filters))
       .orderBy(desc(activityLog.createdAt))
       .limit(limit);
+
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "search_emails") {
+    const limit = Math.min(Number(args.limit ?? 20), 50);
+    const filters: ReturnType<typeof eq>[] = [eq(emailAccounts.companyId, companyId)];
+    if (args.from) filters.push(ilike(emailMessages.fromAddr, `%${String(args.from)}%`));
+    if (args.subject) filters.push(ilike(emailMessages.subject, `%${String(args.subject)}%`));
+    if (args.state) filters.push(eq(emailMessages.processingState, String(args.state)));
+    if (args.since) {
+      const since = new Date(String(args.since));
+      if (!isNaN(since.getTime())) filters.push(gte(emailMessages.receivedAt, since));
+    }
+
+    const rows = await db
+      .select({
+        id: emailMessages.id,
+        fromAddr: emailMessages.fromAddr,
+        toAddrs: emailMessages.toAddrs,
+        subject: emailMessages.subject,
+        receivedAt: emailMessages.receivedAt,
+        processingState: emailMessages.processingState,
+        matchedAgentId: emailMessages.matchedAgentId,
+        matchedClientId: emailMessages.matchedClientId,
+        issueId: emailMessages.issueId,
+        hasAttachments: emailMessages.attachmentsPath,
+      })
+      .from(emailMessages)
+      .innerJoin(emailAccounts, eq(emailMessages.emailAccountId, emailAccounts.id))
+      .where(and(...filters))
+      .orderBy(desc(emailMessages.receivedAt))
+      .limit(limit);
+
+    // Fetch attachment counts in one query
+    const ids = rows.map((r) => r.id);
+    const attachCounts =
+      ids.length > 0
+        ? await db
+            .select({ emailMessageId: emailAttachments.emailMessageId, id: emailAttachments.id })
+            .from(emailAttachments)
+            .where(
+              or(...ids.map((id) => eq(emailAttachments.emailMessageId, id))),
+            )
+        : [];
+    const countById = attachCounts.reduce<Record<string, number>>((acc, a) => {
+      acc[a.emailMessageId] = (acc[a.emailMessageId] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    const result = rows.map(({ hasAttachments: _, ...r }) => ({
+      ...r,
+      attachmentCount: countById[r.id] ?? 0,
+    }));
+
+    return JSON.stringify(result, null, 2);
+  }
+
+  if (name === "get_email") {
+    const emailId = String(args.emailId ?? "").trim();
+    if (!emailId) return "Error: emailId is required";
+
+    const [row] = await db
+      .select({
+        id: emailMessages.id,
+        fromAddr: emailMessages.fromAddr,
+        toAddrs: emailMessages.toAddrs,
+        subject: emailMessages.subject,
+        body: emailMessages.body,
+        receivedAt: emailMessages.receivedAt,
+        processedAt: emailMessages.processedAt,
+        processingState: emailMessages.processingState,
+        inReplyToHeader: emailMessages.inReplyToHeader,
+        referencesHeaders: emailMessages.referencesHeaders,
+        matchedAgentId: emailMessages.matchedAgentId,
+        matchedClientId: emailMessages.matchedClientId,
+        issueId: emailMessages.issueId,
+        approvalId: emailMessages.approvalId,
+        errorText: emailMessages.errorText,
+      })
+      .from(emailMessages)
+      .innerJoin(emailAccounts, eq(emailMessages.emailAccountId, emailAccounts.id))
+      .where(and(eq(emailMessages.id, emailId), eq(emailAccounts.companyId, companyId)))
+      .limit(1);
+
+    if (!row) return "Error: email not found or access denied";
+
+    const attachments = await db
+      .select({
+        id: emailAttachments.id,
+        filename: emailAttachments.filename,
+        contentType: emailAttachments.contentType,
+        sizeBytes: emailAttachments.sizeBytes,
+        isInline: emailAttachments.isInline,
+        contentId: emailAttachments.contentId,
+      })
+      .from(emailAttachments)
+      .where(eq(emailAttachments.emailMessageId, emailId));
+
+    return JSON.stringify({ ...row, attachments }, null, 2);
+  }
+
+  if (name === "list_email_attachments") {
+    const emailId = String(args.emailId ?? "").trim();
+    if (!emailId) return "Error: emailId is required";
+
+    // Verify company access via the parent message
+    const [msg] = await db
+      .select({ id: emailMessages.id })
+      .from(emailMessages)
+      .innerJoin(emailAccounts, eq(emailMessages.emailAccountId, emailAccounts.id))
+      .where(and(eq(emailMessages.id, emailId), eq(emailAccounts.companyId, companyId)))
+      .limit(1);
+
+    if (!msg) return "Error: email not found or access denied";
+
+    const attachments = await db
+      .select({
+        id: emailAttachments.id,
+        filename: emailAttachments.filename,
+        contentType: emailAttachments.contentType,
+        sizeBytes: emailAttachments.sizeBytes,
+        isInline: emailAttachments.isInline,
+        contentId: emailAttachments.contentId,
+        createdAt: emailAttachments.createdAt,
+      })
+      .from(emailAttachments)
+      .where(eq(emailAttachments.emailMessageId, emailId))
+      .orderBy(emailAttachments.createdAt);
+
+    return JSON.stringify(attachments, null, 2);
+  }
+
+  if (name === "list_clients") {
+    const filters = [eq(clients.companyId, companyId)];
+    if (args.name) filters.push(ilike(clients.name, `%${String(args.name)}%`));
+
+    const rows = await db
+      .select({
+        id: clients.id,
+        name: clients.name,
+        emailDomain: clients.emailDomain,
+        extraEmails: clients.extraEmails,
+        trustLevel: clients.trustLevel,
+        notes: clients.notes,
+      })
+      .from(clients)
+      .where(and(...filters))
+      .orderBy(clients.name);
 
     return JSON.stringify(rows, null, 2);
   }
