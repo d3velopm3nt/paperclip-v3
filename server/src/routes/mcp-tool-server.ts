@@ -1,7 +1,7 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients } from "@paperclipai/db";
+import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { logActivity } from "../services/activity-log.js";
@@ -134,6 +134,32 @@ const TOOLS = [
       type: "object",
       properties: {
         name: { type: "string", description: "Filter by client name (partial match)" },
+      },
+    },
+  },
+  {
+    name: "search_contacts",
+    description: "Search contacts (individual people) for this company by name or email. Call this FIRST when the operator mentions a person by name (e.g. 'emails from Kevin') to get their email address, then pass that email to search_emails. If a contact has null firstName/lastName they are unnamed — ask the operator who they are and call update_contact.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "First name, last name, or email address (partial match). Omit to list all contacts." },
+      },
+    },
+  },
+  {
+    name: "update_contact",
+    description: "Save or update a contact's name and details. Use this when the operator tells you who an unnamed contact is (e.g. 'That is Kevin O Neill, Sales Manager'). Returns the updated contact.",
+    inputSchema: {
+      type: "object",
+      required: ["contactId"],
+      properties: {
+        contactId: { type: "string", description: "UUID of the contact to update" },
+        firstName: { type: "string", description: "First name" },
+        lastName: { type: "string", description: "Last name" },
+        phone: { type: "string", description: "Phone number (optional)" },
+        role: { type: "string", description: "Job title or role (optional)" },
+        notes: { type: "string", description: "Notes about this contact (optional)" },
       },
     },
   },
@@ -414,6 +440,78 @@ async function handleTool(
       .orderBy(clients.name);
 
     return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "search_contacts") {
+    const query = String(args.query ?? "").trim();
+    const baseWhere = eq(contacts.companyId, companyId);
+    const rows = query
+      ? await db
+          .select({
+            id: contacts.id,
+            email: contacts.email,
+            firstName: contacts.firstName,
+            lastName: contacts.lastName,
+            role: contacts.role,
+            clientId: contacts.clientId,
+          })
+          .from(contacts)
+          .where(
+            and(
+              baseWhere,
+              or(
+                ilike(contacts.firstName, `%${query}%`),
+                ilike(contacts.lastName, `%${query}%`),
+                ilike(contacts.email, `%${query}%`),
+              ),
+            ),
+          )
+          .orderBy(contacts.lastName, contacts.firstName)
+      : await db
+          .select({
+            id: contacts.id,
+            email: contacts.email,
+            firstName: contacts.firstName,
+            lastName: contacts.lastName,
+            role: contacts.role,
+            clientId: contacts.clientId,
+          })
+          .from(contacts)
+          .where(baseWhere)
+          .orderBy(contacts.lastName, contacts.firstName);
+
+    if (rows.length === 0 && query) {
+      return `No contacts found matching "${query}". They may exist as an unnamed contact — try search_emails to find their email, then ask the operator who they are, then call update_contact to save the name.`;
+    }
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "update_contact") {
+    const contactId = String(args.contactId ?? "").trim();
+    if (!contactId) return "Error: contactId is required";
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (args.firstName !== undefined) patch.firstName = String(args.firstName);
+    if (args.lastName !== undefined) patch.lastName = String(args.lastName);
+    if (args.phone !== undefined) patch.phone = String(args.phone);
+    if (args.role !== undefined) patch.role = String(args.role);
+    if (args.notes !== undefined) patch.notes = String(args.notes);
+
+    const [updated] = await db
+      .update(contacts)
+      .set(patch)
+      .where(and(eq(contacts.id, contactId), eq(contacts.companyId, companyId)))
+      .returning();
+
+    if (!updated) return "Error: contact not found or access denied";
+
+    void logActivity(db, {
+      companyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "contact.updated", entityType: "contact", entityId: contactId,
+      agentId: callerAgentId, details: { patch, via: "mcp-chat" },
+    });
+
+    return JSON.stringify(updated, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;
