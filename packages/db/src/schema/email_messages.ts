@@ -12,6 +12,7 @@ import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 import { issues } from "./issues.js";
 import { approvals } from "./approvals.js";
+import { contacts } from "./contacts.js";
 
 // v3: email monitoring — inbound mail archive + processing state
 export const emailMessages = pgTable(
@@ -38,6 +39,7 @@ export const emailMessages = pgTable(
     matchedAgentId: uuid("matched_agent_id").references(() => agents.id),
     // v3: client resolved from sender domain — enables per-client routing & policies
     matchedClientId: uuid("matched_client_id"),
+    matchedContactId: uuid("matched_contact_id").references(() => contacts.id, { onDelete: "set null" }),
     issueId: uuid("issue_id").references(() => issues.id),
     approvalId: uuid("approval_id").references(() => approvals.id),
     attachmentsPath: text("attachments_path"),
