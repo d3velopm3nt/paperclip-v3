@@ -16,6 +16,7 @@ import {
 } from "@paperclipai/db";
 import { saveAttachment } from "./attachment-storage.js";
 import { clientService } from "./clients.js";
+import { contactService } from "./contacts.js";
 import { issueService } from "./issues.js";
 import { sendEmailFromAccount } from "./email-sender.js";
 import { workflowEngine } from "./workflow-engine.js";
@@ -457,6 +458,13 @@ async function routeInbound(
   const companyId = account.companyId;
   const clientRec = await clientService(db).matchByEmail(companyId, fromAddr);
 
+  // Upsert contact stub from sender — name starts null, filled later via update_contact.
+  const contactRec = await contactService(db).upsertByEmail(
+    companyId,
+    fromAddr,
+    clientRec?.id ?? null,
+  );
+
   // Auto-link project if client has exactly one non-archived project.
   let autoProject: { id: string; name: string } | null = null;
   if (clientRec) {
@@ -468,13 +476,13 @@ async function routeInbound(
     if (clientProjects.length === 1) autoProject = clientProjects[0]!;
   }
 
-  // Stamp matchedCompanyId + matchedClientId even before planning so the
-  // inbox can filter by client.
+  // Stamp matchedCompanyId + matchedClientId + matchedContactId before planning.
   await db
     .update(emailMessages)
     .set({
       matchedCompanyId: companyId,
       matchedClientId: clientRec?.id ?? null,
+      matchedContactId: contactRec.id,
       processingState: "analyzing",
     })
     .where(eq(emailMessages.id, emailMessageId));
