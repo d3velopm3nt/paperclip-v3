@@ -2,6 +2,7 @@ import {
   pgTable,
   uuid,
   text,
+  boolean,
   jsonb,
   timestamp,
   index,
@@ -25,6 +26,7 @@ export const clients = pgTable(
     // personal domains don't match emailDomain).
     extraEmails: jsonb("extra_emails").$type<string[]>().notNull().default([]),
     trustLevel: text("trust_level").notNull().default("standard"),
+    isMyCompany: boolean("is_my_company").notNull().default(false),
     notes: text("notes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
