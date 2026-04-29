@@ -16,6 +16,7 @@ import {
   Mail,
   ShieldCheck,
   UsersRound,
+  Users,
   Activity,
   Hash,
   Radio,
@@ -144,6 +145,7 @@ export function Sidebar() {
         </SidebarSection>
 
         <SidebarSection label="Company">
+          <SidebarNavItem to="/team" label="Team" icon={Users} /> {/* v3: */}
           <SidebarNavItem to="/clients" label="Clients" icon={UsersRound} /> {/* v3: */}
           <SidebarNavItem to="/org" label="Org" icon={Network} />
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />

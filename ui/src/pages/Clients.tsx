@@ -1,6 +1,7 @@
 // v3: clients CRUD page — first-class external parties per company
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { useNavigate } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clientsApi, type Client } from "../api/clients";
 import { useCompany } from "../context/CompanyContext";
@@ -20,13 +21,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { UsersRound, Plus, Pencil, Trash2, Mail, AtSign } from "lucide-react";
+import { UsersRound, Plus, Pencil, Trash2, Mail, AtSign, ShieldCheck } from "lucide-react";
 
 interface ClientFormState {
   name: string;
   emailDomain: string;
-  extraEmails: string; // comma-separated in the UI
+  extraEmails: string;
   trustLevel: string;
+  isMyCompany: boolean;
   notes: string;
 }
 
@@ -35,6 +37,7 @@ const empty: ClientFormState = {
   emailDomain: "",
   extraEmails: "",
   trustLevel: "standard",
+  isMyCompany: false,
   notes: "",
 };
 
@@ -44,6 +47,7 @@ function toForm(c: Client): ClientFormState {
     emailDomain: c.emailDomain ?? "",
     extraEmails: (c.extraEmails ?? []).join(", "),
     trustLevel: c.trustLevel,
+    isMyCompany: c.isMyCompany,
     notes: c.notes ?? "",
   };
 }
@@ -53,6 +57,7 @@ export function Clients() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const companyId = selectedCompanyId!;
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -81,6 +86,7 @@ export function Clients() {
         emailDomain: form.emailDomain || null,
         extraEmails: parseList(form.extraEmails),
         trustLevel: form.trustLevel,
+        isMyCompany: form.isMyCompany,
         notes: form.notes || null,
       }),
     onSuccess: () => {
@@ -98,6 +104,7 @@ export function Clients() {
         emailDomain: form.emailDomain || null,
         extraEmails: parseList(form.extraEmails),
         trustLevel: form.trustLevel,
+        isMyCompany: form.isMyCompany,
         notes: form.notes || null,
       }),
     onSuccess: () => {
@@ -169,7 +176,11 @@ export function Clients() {
       ) : (
         <div className="grid gap-3">
           {clientsList.map((c) => (
-            <Card key={c.id} className="p-4 hover:border-border/80 transition-colors">
+            <Card
+              key={c.id}
+              className="p-4 hover:border-border/80 transition-colors cursor-pointer"
+              onClick={() => navigate(`/clients/${c.id}`)}
+            >
               <div className="flex items-start justify-between gap-4 flex-wrap">
                 <div className="flex-1 min-w-0 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -177,6 +188,11 @@ export function Clients() {
                     <span className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                       {c.trustLevel}
                     </span>
+                    {c.isMyCompany && (
+                      <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                        <ShieldCheck className="h-3 w-3" /> My company
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
                     {c.emailDomain && (
@@ -194,7 +210,7 @@ export function Clients() {
                   </div>
                   {c.notes && <p className="text-xs text-muted-foreground mt-1">{c.notes}</p>}
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
+                <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
                   <Button variant="ghost" size="icon-sm" onClick={() => openEdit(c)}>
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -246,6 +262,15 @@ export function Clients() {
                 <option value="high">high</option>
               </select>
             </Labeled>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                checked={form.isMyCompany}
+                onChange={(e) => setForm({ ...form, isMyCompany: e.target.checked })}
+                className="rounded border-border"
+              />
+              <span>This is my company / internal team</span>
+            </label>
             <Labeled label="Notes">
               <Textarea
                 value={form.notes}

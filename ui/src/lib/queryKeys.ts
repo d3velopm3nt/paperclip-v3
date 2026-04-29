@@ -152,6 +152,10 @@ export const queryKeys = {
     list: (companyId: string) => ["clients", companyId] as const,
     detail: (id: string) => ["clients", "detail", id] as const,
   },
+  contacts: {
+    forClient: (clientId: string) => ["contacts", "client", clientId] as const,
+    team: (companyId: string) => ["contacts", "team", companyId] as const,
+  },
   plans: {
     list: (companyId: string, decision?: string) =>
       ["plans", companyId, decision ?? "__all__"] as const,

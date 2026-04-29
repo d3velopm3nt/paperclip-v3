@@ -7,6 +7,7 @@ export interface Client {
   emailDomain: string | null;
   extraEmails: string[];
   trustLevel: string;
+  isMyCompany: boolean;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
@@ -17,6 +18,7 @@ export interface ClientCreateRequest {
   emailDomain?: string | null;
   extraEmails?: string[];
   trustLevel?: string;
+  isMyCompany?: boolean;
   notes?: string | null;
 }
 
@@ -25,6 +27,8 @@ export type ClientUpdateRequest = Partial<ClientCreateRequest>;
 export const clientsApi = {
   list: (companyId: string) =>
     api.get<Client[]>(`/companies/${encodeURIComponent(companyId)}/clients`),
+  get: (id: string) =>
+    api.get<Client>(`/clients/${encodeURIComponent(id)}`),
   create: (companyId: string, data: ClientCreateRequest) =>
     api.post<Client>(`/companies/${encodeURIComponent(companyId)}/clients`, data),
   update: (id: string, data: ClientUpdateRequest) =>

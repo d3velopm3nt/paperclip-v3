@@ -36,6 +36,8 @@ import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
 import { Channels } from "./pages/Channels"; // v3: channels
 import { ActionPolicies } from "./pages/ActionPolicies"; // v3:
 import { Clients } from "./pages/Clients"; // v3:
+import { ClientDetail } from "./pages/ClientDetail"; // v3:
+import { Team } from "./pages/Team"; // v3:
 import { Plans } from "./pages/Plans"; // v3:
 import { Analytics } from "./pages/Analytics";
 import { CompanyExport } from "./pages/CompanyExport";
@@ -155,6 +157,8 @@ function boardRoutes() {
       <Route path="documents" element={<DocumentLibrary />} /> {/* v3: document storage */}
       <Route path="governance/action-policies" element={<ActionPolicies />} /> {/* v3: */}
       <Route path="clients" element={<Clients />} /> {/* v3: */}
+      <Route path="clients/:clientId" element={<ClientDetail />} /> {/* v3: */}
+      <Route path="team" element={<Team />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
       <Route path="analytics" element={<Analytics />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
