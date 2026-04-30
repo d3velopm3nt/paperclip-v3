@@ -117,7 +117,8 @@ function SourceNode({
 }) {
   const label = node.source.localPath ?? node.source.name;
   const isSelected = selection.sourceId === node.sourceId && selection.folderPath === "";
-  const folders = getFolderNodes(node.docs, "");
+  const localPath = node.source.localPath;
+  const folders = getFolderNodes(node.docs, "", localPath);
 
   return (
     <div>
@@ -137,6 +138,7 @@ function SourceNode({
           key={folder}
           folderPath={folder}
           sourceId={node.sourceId}
+          localPath={localPath}
           docs={node.docs}
           selection={selection}
           onSelect={onSelect}
@@ -148,19 +150,25 @@ function SourceNode({
 }
 
 function FolderNode({
-  folderPath, sourceId, docs, selection, onSelect, depth,
+  folderPath, sourceId, localPath, docs, selection, onSelect, depth,
 }: {
   folderPath: string;
   sourceId: string;
+  localPath: string | null | undefined;
   docs: ReferenceDocument[];
   selection: Selection;
   onSelect: (sourceId: string | null, folderPath: string) => void;
   depth: number;
 }) {
   const isSelected = selection.sourceId === sourceId && selection.folderPath === folderPath;
-  const subFolders = getFolderNodes(docs, folderPath);
+  const subFolders = getFolderNodes(docs, folderPath, localPath);
   const label = folderPath.split("/").at(-1) ?? folderPath;
-  const count = docs.filter((d) => (d.sourcePath ?? "").startsWith(folderPath + "/")).length;
+  const count = docs.filter((d) => {
+    const rel = localPath
+      ? (d.sourcePath ?? "").slice((localPath.endsWith("/") ? localPath : localPath + "/").length)
+      : (d.sourcePath ?? "");
+    return rel.startsWith(folderPath + "/");
+  }).length;
 
   return (
     <div style={{ paddingLeft: `${depth * 12}px` }}>
@@ -180,6 +188,7 @@ function FolderNode({
           key={sub}
           folderPath={`${folderPath}/${sub}`}
           sourceId={sourceId}
+          localPath={localPath}
           docs={docs}
           selection={selection}
           onSelect={onSelect}

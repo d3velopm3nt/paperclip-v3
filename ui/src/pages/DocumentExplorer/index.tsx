@@ -66,7 +66,12 @@ export function DocumentExplorer() {
   const visibleDocs = useMemo(() => {
     if (selectedSourceId === "uploads") return tree.uploads;
     if (!activeSourceNode) return [];
-    return getDocsForPath(activeSourceNode.docs, selectedFolderPath);
+    if (selectedFolderPath === "") return activeSourceNode.docs;
+    return getDocsForPath(
+      activeSourceNode.docs,
+      selectedFolderPath,
+      activeSourceNode.source.localPath,
+    );
   }, [activeSourceNode, selectedFolderPath, selectedSourceId, tree.uploads]);
 
   const breadcrumb = useMemo(() => {

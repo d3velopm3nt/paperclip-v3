@@ -12,6 +12,14 @@ export interface TreeNode {
   uploads: ReferenceDocument[];
 }
 
+/** Strip source localPath prefix from absolute sourcePath to get relative path. */
+export function relativePath(sourcePath: string | null, localPath: string | null): string {
+  if (!sourcePath) return "";
+  if (!localPath) return sourcePath;
+  const prefix = localPath.endsWith("/") ? localPath : localPath + "/";
+  return sourcePath.startsWith(prefix) ? sourcePath.slice(prefix.length) : sourcePath;
+}
+
 export function buildTree(
   sources: DocumentSource[],
   docs: ReferenceDocument[],
@@ -19,67 +27,99 @@ export function buildTree(
   const localSources = sources.filter((s) => s.type === "local");
   const gdriveSources = sources.filter((s) => s.type === "gdrive");
 
-  const localDocs = docs.filter((d) => d.sourceType === "local");
-  const gdriveDocs = docs.filter((d) => d.sourceType === "gdrive");
+  // Assign local docs to sources by localPath prefix match
+  const localNodes: SourceTreeNode[] = localSources.map((source) => ({
+    sourceId: source.id,
+    source,
+    docs: docs.filter(
+      (d) =>
+        d.sourceType === "local" &&
+        d.sourcePath != null &&
+        (source.localPath
+          ? d.sourcePath!.startsWith(source.localPath + "/") || d.sourcePath === source.localPath
+          : false),
+    ),
+  }));
 
-  const assignToSources = (
-    sourcesOfType: DocumentSource[],
-    docsOfType: ReferenceDocument[],
-  ): SourceTreeNode[] => {
-    if (sourcesOfType.length === 0) return [];
-    if (sourcesOfType.length === 1) {
-      return [{ sourceId: sourcesOfType[0]!.id, source: sourcesOfType[0]!, docs: docsOfType }];
-    }
-    // Multiple sources: assign each doc to first source (future: use sourceId FK)
-    return sourcesOfType.map((source, i) => ({
-      sourceId: source.id,
-      source,
-      docs: i === 0 ? docsOfType : [],
-    }));
-  };
+  // Fallback: any local docs not matched by a source (e.g. source deleted)
+  const matchedLocalPaths = new Set(localNodes.flatMap((n) => n.docs.map((d) => d.id)));
+  const unmatchedLocal = docs.filter((d) => d.sourceType === "local" && !matchedLocalPaths.has(d.id));
+  if (unmatchedLocal.length > 0 && localNodes.length > 0) {
+    localNodes[0]!.docs = [...localNodes[0]!.docs, ...unmatchedLocal];
+  }
+
+  // GDrive docs assigned to sources by type (no path prefix needed)
+  const gdriveDocs = docs.filter((d) => d.sourceType === "gdrive");
+  const gdriveNodes: SourceTreeNode[] = gdriveSources.length > 0
+    ? gdriveSources.map((source, i) => ({
+        sourceId: source.id,
+        source,
+        docs: i === 0 ? gdriveDocs : [],
+      }))
+    : gdriveDocs.length > 0
+      ? [{
+          sourceId: "gdrive-unlinked",
+          source: {
+            id: "gdrive-unlinked",
+            companyId: "",
+            type: "gdrive",
+            name: "Google Drive",
+            localPath: null,
+            driveFolderId: null,
+            lastSyncedAt: null,
+            lastSyncError: null,
+            createdAt: "",
+          },
+          docs: gdriveDocs,
+        }]
+      : [];
 
   return {
-    local: assignToSources(localSources, localDocs),
-    gdrive: assignToSources(gdriveSources, gdriveDocs),
+    local: localNodes,
+    gdrive: gdriveNodes,
     uploads: docs.filter((d) => d.sourceType === "upload"),
   };
 }
 
+/** Get unique immediate subfolder names within pathPrefix, using relative paths. */
 export function getFolderNodes(
   docs: ReferenceDocument[],
   pathPrefix: string,
+  localPath?: string | null,
 ): string[] {
   const folders = new Set<string>();
   for (const doc of docs) {
-    const p = doc.sourcePath ?? "";
-    let relative: string | null;
+    const rel = relativePath(doc.sourcePath, localPath ?? null);
+    if (!rel) continue;
+    let segment: string | null;
     if (pathPrefix === "") {
-      relative = p;
+      segment = rel;
     } else {
-      relative = p.startsWith(pathPrefix + "/") ? p.slice(pathPrefix.length + 1) : null;
+      segment = rel.startsWith(pathPrefix + "/") ? rel.slice(pathPrefix.length + 1) : null;
     }
-    if (!relative) continue;
-    const parts = relative.split("/");
-    if (parts.length > 1) {
-      folders.add(parts[0]!);
+    if (!segment) continue;
+    const parts = segment.split("/");
+    if (parts.length > 1 && parts[0]) {
+      folders.add(parts[0]);
     }
   }
   return Array.from(folders).sort();
 }
 
+/** Get docs directly inside pathPrefix (not in subfolders), using relative paths. */
 export function getDocsForPath(
   docs: ReferenceDocument[],
   pathPrefix: string,
+  localPath?: string | null,
 ): ReferenceDocument[] {
   return docs.filter((doc) => {
-    const p = doc.sourcePath ?? "";
+    const rel = relativePath(doc.sourcePath, localPath ?? null);
     if (pathPrefix === "") {
-      return !p.includes("/");
+      return !rel.includes("/"); // "" (null sourcePath) also shows at root
     }
     const prefix = pathPrefix + "/";
-    if (!p.startsWith(prefix)) return false;
-    const rest = p.slice(prefix.length);
-    return !rest.includes("/");
+    if (!rel.startsWith(prefix)) return false;
+    return !rel.slice(prefix.length).includes("/");
   });
 }
 
