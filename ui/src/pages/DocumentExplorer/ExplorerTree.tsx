@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, Cloud, HardDrive, Paperclip } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, ChevronRight, Cloud, Folder, FolderOpen, HardDrive, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getFolderNodes } from "./tree-utils";
 import type { TreeNode, SourceTreeNode } from "./tree-utils";
@@ -115,25 +116,43 @@ function SourceNode({
   selection: Selection;
   onSelect: (sourceId: string | null, folderPath: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const label = node.source.localPath ?? node.source.name;
   const isSelected = selection.sourceId === node.sourceId && selection.folderPath === "";
   const localPath = node.source.localPath;
   const folders = getFolderNodes(node.docs, "", localPath);
+  const hasFolders = folders.length > 0;
 
   return (
     <div>
-      <button
+      <div
         className={cn(
-          "w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors",
+          "flex items-center text-xs hover:bg-accent/50 transition-colors cursor-pointer",
           isSelected && "bg-accent",
         )}
-        onClick={() => onSelect(node.sourceId, "")}
       >
-        <span className="w-3 shrink-0" />
-        <span className="flex-1 text-left truncate text-muted-foreground font-mono">{label}</span>
-        <span className="text-[10px] text-muted-foreground">{node.docs.length}</span>
-      </button>
-      {folders.map((folder) => (
+        <button
+          className="flex items-center justify-center w-5 h-full pl-3 shrink-0 text-muted-foreground"
+          onClick={(e) => { e.stopPropagation(); if (hasFolders) setExpanded((v) => !v); }}
+        >
+          {hasFolders
+            ? expanded
+              ? <ChevronDown className="h-3 w-3" />
+              : <ChevronRight className="h-3 w-3" />
+            : <span className="w-3" />}
+        </button>
+        <button
+          className="flex items-center gap-2 flex-1 min-w-0 pr-3 py-1.5"
+          onClick={() => { onSelect(node.sourceId, ""); if (hasFolders && !expanded) setExpanded(true); }}
+        >
+          {expanded
+            ? <FolderOpen className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            : <Folder className="h-3.5 w-3.5 text-amber-400 shrink-0" />}
+          <span className="flex-1 text-left truncate font-mono text-muted-foreground">{label}</span>
+          <span className="text-[10px] text-muted-foreground">{node.docs.length}</span>
+        </button>
+      </div>
+      {expanded && folders.map((folder) => (
         <FolderNode
           key={folder}
           folderPath={folder}
@@ -160,30 +179,49 @@ function FolderNode({
   onSelect: (sourceId: string | null, folderPath: string) => void;
   depth: number;
 }) {
+  const [expanded, setExpanded] = useState(false);
   const isSelected = selection.sourceId === sourceId && selection.folderPath === folderPath;
   const subFolders = getFolderNodes(docs, folderPath, localPath);
+  const hasSubs = subFolders.length > 0;
   const label = folderPath.split("/").at(-1) ?? folderPath;
   const count = docs.filter((d) => {
-    const rel = localPath
-      ? (d.sourcePath ?? "").slice((localPath.endsWith("/") ? localPath : localPath + "/").length)
-      : (d.sourcePath ?? "");
+    const prefix = localPath ? (localPath.endsWith("/") ? localPath : localPath + "/") : "";
+    const rel = prefix ? (d.sourcePath ?? "").slice(prefix.length) : (d.sourcePath ?? "");
     return rel.startsWith(folderPath + "/");
   }).length;
 
   return (
     <div style={{ paddingLeft: `${depth * 12}px` }}>
-      <button
+      <div
         className={cn(
-          "w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent/50 transition-colors",
+          "flex items-center text-xs hover:bg-accent/50 transition-colors cursor-pointer",
           isSelected && "bg-accent",
         )}
-        onClick={() => onSelect(sourceId, folderPath)}
       >
-        <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
-        <span className="flex-1 text-left truncate">📁 {label}</span>
-        <span className="text-[10px] text-muted-foreground">{count}</span>
-      </button>
-      {subFolders.map((sub) => (
+        {/* Chevron — toggle only */}
+        <button
+          className="flex items-center justify-center w-5 h-full pl-3 shrink-0 text-muted-foreground"
+          onClick={(e) => { e.stopPropagation(); if (hasSubs) setExpanded((v) => !v); }}
+        >
+          {hasSubs
+            ? expanded
+              ? <ChevronDown className="h-3 w-3" />
+              : <ChevronRight className="h-3 w-3" />
+            : <span className="w-3" />}
+        </button>
+        {/* Folder row — select + expand */}
+        <button
+          className="flex items-center gap-2 flex-1 min-w-0 pr-3 py-1.5"
+          onClick={() => { onSelect(sourceId, folderPath); if (hasSubs && !expanded) setExpanded(true); }}
+        >
+          {expanded
+            ? <FolderOpen className="h-3.5 w-3.5 text-amber-400 shrink-0" />
+            : <Folder className="h-3.5 w-3.5 text-amber-400 shrink-0" />}
+          <span className="flex-1 text-left truncate">{label}</span>
+          <span className="text-[10px] text-muted-foreground">{count}</span>
+        </button>
+      </div>
+      {expanded && subFolders.map((sub) => (
         <FolderNode
           key={sub}
           folderPath={`${folderPath}/${sub}`}
