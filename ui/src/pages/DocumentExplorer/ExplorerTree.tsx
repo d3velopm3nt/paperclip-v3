@@ -98,8 +98,8 @@ function RootNode({
         onClick={onToggle}
       >
         {expanded
-          ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
-          : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+          ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+          : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />}
         {icon}
         <span className="flex-1 text-left font-medium">{label}</span>
         <span className="text-[10px] text-muted-foreground">{count}</span>
@@ -205,8 +205,8 @@ function FolderNode({
         >
           {hasSubs
             ? expanded
-              ? <ChevronDown className="h-3 w-3" />
-              : <ChevronRight className="h-3 w-3" />
+              ? <ChevronDown className="h-4 w-4" />
+              : <ChevronRight className="h-4 w-4" />
             : <span className="w-3" />}
         </button>
         {/* Folder row — select + expand */}
