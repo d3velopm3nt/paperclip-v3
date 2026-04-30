@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { documentSources } from "@paperclipai/db";
+import { documentSources, companies } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import {
   extractTextFromFile,
@@ -172,4 +172,13 @@ export async function syncCompanyDocuments(db: Db, companyId: string): Promise<v
     }
   }
   logger.info({ companyId }, "document-sync: sync complete");
+}
+
+export async function syncAllCompaniesDocuments(db: Db): Promise<void> {
+  const allCompanies = await db.select({ id: companies.id }).from(companies);
+  for (const company of allCompanies) {
+    await syncCompanyDocuments(db, company.id).catch((err) =>
+      logger.warn({ err, companyId: company.id }, "document-sync: company sync failed"),
+    );
+  }
 }

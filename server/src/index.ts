@@ -34,6 +34,7 @@ import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { startEmailPollWorker } from "./workers/email-poll.js"; // v3:
+import { syncAllCompaniesDocuments } from "./services/document-sync.js"; // v3:
 
 type BetterAuthSessionUser = {
   id: string;
@@ -613,6 +614,20 @@ export async function startServer(): Promise<StartedServer> {
     }, config.heartbeatSchedulerIntervalMs);
   }
   
+  // Sync document sources every 30 minutes; also run once at startup
+  {
+    let docSyncInFlight = false;
+    const runDocSync = () => {
+      if (docSyncInFlight) return;
+      docSyncInFlight = true;
+      syncAllCompaniesDocuments(db as any)
+        .catch((err) => logger.error({ err }, "document-sync: periodic sync failed"))
+        .finally(() => { docSyncInFlight = false; });
+    };
+    void runDocSync();
+    setInterval(runDocSync, 30 * 60 * 1000);
+  }
+
   if (config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
     let backupInFlight = false;

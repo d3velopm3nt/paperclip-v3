@@ -94,11 +94,12 @@ export function referenceDocumentsRoutes(db: Db): Router {
     res.json(await svc.listSources(req.params.companyId));
   });
 
-  // Add sync source
+  // Add sync source — auto-trigger sync after creation
   router.post("/companies/:companyId/document-sources", async (req, res) => {
     assertCompanyAccess(req, req.params.companyId);
     const source = await svc.createSource(req.params.companyId, req.body);
     res.status(201).json(source);
+    syncCompanyDocuments(db, req.params.companyId).catch(() => {});
   });
 
   // Update sync source
