@@ -126,19 +126,84 @@ function GoogleOAuthCredsSection() {
   );
 }
 
-function parseDriveFolderId(input: string): string {
-  const trimmed = input.trim();
-  // Full URL: https://drive.google.com/drive/folders/FOLDER_ID or /u/0/folders/FOLDER_ID
-  const match = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
-  if (match) return match[1]!;
-  // Raw ID — alphanumeric + dashes/underscores, 20+ chars
-  if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed)) return trimmed;
-  return trimmed;
+function GDriveFolderPicker({
+  onSelect,
+}: {
+  onSelect: (folder: { id: string; name: string }) => void;
+}) {
+  const [parentId, setParentId] = useState<string>("root");
+  const [breadcrumb, setBreadcrumb] = useState<{ id: string; name: string }[]>([]);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["drive-folders", parentId],
+    queryFn: () => referenceDocumentsApi.listDriveFolders(parentId === "root" ? undefined : parentId),
+  });
+
+  function drillInto(folder: { id: string; name: string }) {
+    setBreadcrumb((prev) => [...prev, { id: parentId, name: parentId === "root" ? "My Drive" : prev.at(-1)?.name ?? "…" }]);
+    setParentId(folder.id);
+  }
+
+  function goBack(index: number) {
+    const crumb = breadcrumb[index]!;
+    setBreadcrumb((prev) => prev.slice(0, index));
+    setParentId(crumb.id);
+  }
+
+  return (
+    <div className="rounded-lg border border-border bg-card">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-border text-xs text-muted-foreground flex-wrap">
+        <button className="hover:text-foreground" onClick={() => { setBreadcrumb([]); setParentId("root"); }}>
+          My Drive
+        </button>
+        {breadcrumb.map((crumb, i) => (
+          <span key={crumb.id} className="flex items-center gap-1">
+            <span>/</span>
+            <button className="hover:text-foreground" onClick={() => goBack(i + 1)}>{crumb.name}</button>
+          </span>
+        ))}
+      </div>
+      {/* Folder list */}
+      <div className="max-h-52 overflow-y-auto">
+        {isLoading ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground">Loading...</div>
+        ) : (data?.folders.length ?? 0) === 0 ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground">No folders here</div>
+        ) : (
+          data!.folders.map((folder) => (
+            <div key={folder.id} className="flex items-center gap-2 px-3 py-2 hover:bg-accent/50 group">
+              <Cloud className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <span
+                className="flex-1 text-xs cursor-pointer"
+                onClick={() => drillInto(folder)}
+              >
+                {folder.name}
+              </span>
+              <button
+                className="text-[10px] text-primary opacity-0 group-hover:opacity-100 transition-opacity shrink-0 px-2 py-0.5 rounded border border-border hover:bg-accent"
+                onClick={() => onSelect(folder)}
+              >
+                Select
+              </button>
+              <button
+                className="text-[10px] text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                onClick={() => drillInto(folder)}
+                title="Open folder"
+              >
+                →
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
 }
 
 function GDriveFoldersSection({ companyId }: { companyId: string }) {
   const qc = useQueryClient();
-  const [input, setInput] = useState("");
+  const [picking, setPicking] = useState(false);
 
   const { data: sources = [] } = useQuery({
     queryKey: ["document-sources", companyId],
@@ -148,17 +213,15 @@ function GDriveFoldersSection({ companyId }: { companyId: string }) {
   const gdriveSources = sources.filter((s) => s.type === "gdrive");
 
   const addSource = useMutation({
-    mutationFn: () => {
-      const folderId = parseDriveFolderId(input);
-      return referenceDocumentsApi.createSource(companyId, {
+    mutationFn: (folder: { id: string; name: string }) =>
+      referenceDocumentsApi.createSource(companyId, {
         type: "gdrive",
-        name: `Drive: ${folderId.slice(0, 12)}…`,
-        driveFolderId: folderId,
-      });
-    },
+        name: folder.name,
+        driveFolderId: folder.id,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["document-sources", companyId] });
-      setInput("");
+      setPicking(false);
     },
   });
 
@@ -169,13 +232,23 @@ function GDriveFoldersSection({ companyId }: { companyId: string }) {
 
   return (
     <div className="mt-3 space-y-2">
-      <p className="text-xs text-muted-foreground font-medium">Synced folders</p>
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-muted-foreground font-medium">Synced folders</p>
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPicking((v) => !v)}>
+          <Plus className="h-3.5 w-3.5 mr-1" />{picking ? "Cancel" : "Add folder"}
+        </Button>
+      </div>
+
+      {picking && (
+        <GDriveFolderPicker onSelect={(folder) => addSource.mutate(folder)} />
+      )}
+
       {gdriveSources.length > 0 && (
         <div className="space-y-1.5">
           {gdriveSources.map((s) => (
             <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
               <Cloud className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-              <span className="flex-1 text-xs font-mono truncate">{s.driveFolderId}</span>
+              <span className="flex-1 text-xs truncate font-medium">{s.name}</span>
               {s.lastSyncError ? (
                 <span className="text-[10px] text-red-400 shrink-0">{s.lastSyncError.slice(0, 40)}</span>
               ) : s.lastSyncedAt ? (
@@ -197,27 +270,8 @@ function GDriveFoldersSection({ companyId }: { companyId: string }) {
           ))}
         </div>
       )}
-      <div className="flex gap-2">
-        <Input
-          placeholder="Paste Drive folder URL or ID"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          className="text-xs h-8 font-mono"
-          onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) addSource.mutate(); }}
-        />
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={!input.trim() || addSource.isPending}
-          onClick={() => addSource.mutate()}
-        >
-          <Plus className="h-3.5 w-3.5 mr-1" />Add
-        </Button>
-      </div>
-      {addSource.isError && (
-        <p className="text-xs text-destructive">
-          {addSource.error instanceof Error ? addSource.error.message : "Failed to add folder"}
-        </p>
+      {gdriveSources.length === 0 && !picking && (
+        <p className="text-xs text-muted-foreground">No folders added yet.</p>
       )}
     </div>
   );

@@ -3,7 +3,16 @@ import path from "node:path";
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
-import { getAuthUrl, exchangeCodeForTokens, getGDriveStatus, disconnectGDrive } from "../services/gdrive-auth.js";
+import {
+  getAuthUrl,
+  exchangeCodeForTokens,
+  getGDriveStatus,
+  disconnectGDrive,
+  saveGoogleAppCreds,
+  deleteGoogleAppCreds,
+  getGoogleAppCredsStatus,
+  getAuthenticatedDriveClient,
+} from "../services/gdrive-auth.js";
 import { SUPPORTED_EXTENSIONS } from "../services/document-extractor.js";
 
 const SKIP_DIRS = new Set([
@@ -37,6 +46,47 @@ function assertAdmin(req: Request) {
 export function instanceStorageRoutes(db: Db): Router {
   const router = Router();
 
+  // Google OAuth app credentials (client ID + secret stored in DB)
+  router.get("/instance/storage/gdrive/app-credentials", async (req, res) => {
+    assertAdmin(req);
+    res.json(await getGoogleAppCredsStatus(db));
+  });
+
+  router.put("/instance/storage/gdrive/app-credentials", async (req, res) => {
+    assertAdmin(req);
+    const { clientId, clientSecret } = req.body as { clientId?: string; clientSecret?: string };
+    if (!clientId?.trim() || !clientSecret?.trim()) {
+      res.status(400).json({ error: "clientId and clientSecret are required" });
+      return;
+    }
+    await saveGoogleAppCreds(db, clientId.trim(), clientSecret.trim());
+    res.json({ ok: true });
+  });
+
+  router.delete("/instance/storage/gdrive/app-credentials", async (req, res) => {
+    assertAdmin(req);
+    await deleteGoogleAppCreds(db);
+    res.json({ ok: true });
+  });
+
+  // List folders inside a Drive folder (parentId defaults to "root")
+  router.get("/instance/storage/gdrive/folders", async (req, res) => {
+    assertAdmin(req);
+    const parentId = (req.query.parentId as string | undefined) || "root";
+    const drive = await getAuthenticatedDriveClient(db);
+    if (!drive) {
+      res.status(400).json({ error: "Google Drive not connected" });
+      return;
+    }
+    const result = await drive.files.list({
+      q: `'${parentId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: "files(id, name)",
+      orderBy: "name",
+      pageSize: 200,
+    });
+    res.json({ folders: result.data.files ?? [], parentId });
+  });
+
   router.get("/instance/storage/gdrive/status", async (req, res) => {
     assertAdmin(req);
     res.json(await getGDriveStatus(db));
@@ -45,7 +95,7 @@ export function instanceStorageRoutes(db: Db): Router {
   router.get("/instance/storage/gdrive/auth", async (req, res) => {
     assertAdmin(req);
     const redirectUri = `${req.protocol}://${req.get("host")}/api/instance/storage/gdrive/callback`;
-    res.json({ url: getAuthUrl(redirectUri) });
+    res.json({ url: await getAuthUrl(db, redirectUri) });
   });
 
   router.get("/instance/storage/gdrive/callback", async (req, res) => {
@@ -54,9 +104,44 @@ export function instanceStorageRoutes(db: Db): Router {
     const redirectUri = `${req.protocol}://${req.get("host")}/api/instance/storage/gdrive/callback`;
     try {
       await exchangeCodeForTokens(db, code, redirectUri);
-      res.send("<html><body><script>window.close();</script><p>Connected! You can close this window.</p></body></html>");
+      res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Google Drive Connected</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e5e5e5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #141414; border: 1px solid #2a2a2a; border-radius: 12px; padding: 2rem; max-width: 360px; width: 100%; text-align: center; }
+    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
+    p { font-size: 0.875rem; color: #888; margin-bottom: 1.5rem; }
+    .btn { display: inline-block; background: #fff; color: #0a0a0a; font-size: 0.875rem; font-weight: 500; padding: 0.5rem 1.25rem; border-radius: 6px; text-decoration: none; cursor: pointer; border: none; }
+    .btn:hover { background: #e5e5e5; }
+    .close { display: inline-block; margin-left: 0.75rem; font-size: 0.875rem; color: #666; cursor: pointer; background: none; border: none; }
+    .close:hover { color: #aaa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✓</div>
+    <h1>Google Drive connected</h1>
+    <p>Your account has been linked. You can close this window or return to Paperclip.</p>
+    <a class="btn" href="javascript:void(0)" onclick="window.close()">Close window</a>
+    <button class="close" onclick="window.opener && window.opener.location.reload(); window.close()">Back to Paperclip</button>
+  </div>
+  <script>
+    if (window.opener) {
+      try { window.opener.postMessage('gdrive-connected', '*'); } catch(e) {}
+    }
+  </script>
+</body>
+</html>`);
     } catch (err) {
-      res.status(500).send("Failed to authenticate. Check GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.");
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[gdrive-callback] token exchange failed:", msg);
+      res.status(500).send(`Failed to authenticate: ${msg}`);
     }
   });
 

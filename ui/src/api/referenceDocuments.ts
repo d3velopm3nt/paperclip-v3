@@ -53,6 +53,22 @@ export const referenceDocumentsApi = {
   triggerSync: (companyId: string) =>
     api.post<{ ok: boolean }>(`/companies/${companyId}/document-sources/sync`, {}),
 
+  listDriveFolders: (parentId?: string) =>
+    api.get<{ folders: { id: string; name: string }[]; parentId: string }>(
+      `/instance/storage/gdrive/folders${parentId ? `?parentId=${encodeURIComponent(parentId)}` : ""}`,
+    ),
+
+  getGoogleAppCreds: () =>
+    api.get<{ configured: boolean; clientId: string | null; fromEnv: boolean }>(
+      "/instance/storage/gdrive/app-credentials",
+    ),
+
+  saveGoogleAppCreds: (clientId: string, clientSecret: string) =>
+    api.put<{ ok: boolean }>("/instance/storage/gdrive/app-credentials", { clientId, clientSecret }),
+
+  deleteGoogleAppCreds: () =>
+    api.delete<{ ok: boolean }>("/instance/storage/gdrive/app-credentials"),
+
   getGDriveStatus: () =>
     api.get<GoogleDriveStatus>("/instance/storage/gdrive/status"),
 
