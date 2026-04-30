@@ -132,7 +132,7 @@ function SourceNode({
         )}
       >
         <button
-          className="flex items-center justify-center w-6 h-full pl-3 shrink-0 text-muted-foreground"
+          className="flex items-center justify-center w-6 h-full shrink-0 text-muted-foreground"
           onClick={(e) => { e.stopPropagation(); if (hasFolders) setExpanded((v) => !v); }}
         >
           {hasFolders
@@ -191,16 +191,18 @@ function FolderNode({
   }).length;
 
   return (
-    <div style={{ paddingLeft: `${depth * 12}px` }}>
+    <div>
       <div
         className={cn(
           "flex items-center text-xs hover:bg-accent/50 transition-colors cursor-pointer",
           isSelected && "bg-accent",
         )}
       >
+        {/* Fixed-width indent spacer — keeps chevron same size at all depths */}
+        <span className="shrink-0" style={{ width: `${depth * 12}px` }} />
         {/* Chevron — toggle only */}
         <button
-          className="flex items-center justify-center w-5 h-full pl-3 shrink-0 text-muted-foreground"
+          className="flex items-center justify-center w-6 h-full shrink-0 text-muted-foreground"
           onClick={(e) => { e.stopPropagation(); if (hasSubs) setExpanded((v) => !v); }}
         >
           {hasSubs
