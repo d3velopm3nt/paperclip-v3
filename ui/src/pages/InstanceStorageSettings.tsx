@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, Globe, HardDrive, Pencil, Plus, RefreshCw, Trash2, X, XCircle } from "lucide-react";
+import { CheckCircle, Cloud, Globe, HardDrive, KeyRound, Pencil, Plus, RefreshCw, Trash2, X, XCircle } from "lucide-react";
 import { referenceDocumentsApi } from "../api/referenceDocuments";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -8,8 +8,228 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "../lib/utils";
 
-function GDriveSection() {
+function GoogleOAuthCredsSection() {
   const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+
+  const { data: credsStatus, isLoading } = useQuery({
+    queryKey: ["google-app-creds"],
+    queryFn: () => referenceDocumentsApi.getGoogleAppCreds(),
+  });
+
+  const save = useMutation({
+    mutationFn: () => referenceDocumentsApi.saveGoogleAppCreds(clientId.trim(), clientSecret.trim()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["google-app-creds"] });
+      setEditing(false);
+      setClientId("");
+      setClientSecret("");
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: () => referenceDocumentsApi.deleteGoogleAppCreds(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["google-app-creds"] }),
+  });
+
+  const configured = credsStatus?.configured ?? false;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <KeyRound className="h-4 w-4 text-yellow-400" />
+        <h3 className="text-sm font-semibold">Google OAuth App Credentials</h3>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Required to connect Google Drive. Create an OAuth 2.0 Client ID in{" "}
+        <span className="font-mono">Google Cloud Console → APIs &amp; Services → Credentials</span>.
+        Set the authorised redirect URI to{" "}
+        <span className="font-mono text-xs">[your-host]/api/instance/storage/gdrive/callback</span>.
+      </p>
+
+      {isLoading ? (
+        <div className="text-xs text-muted-foreground">Checking...</div>
+      ) : configured && !editing ? (
+        <div className="rounded-lg border border-border p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-green-400 shrink-0" />
+              <div>
+                <p className="text-sm font-medium">
+                  {credsStatus?.fromEnv ? "Configured via environment variables" : "Configured"}
+                </p>
+                {credsStatus?.clientId && (
+                  <p className="text-xs text-muted-foreground font-mono truncate max-w-xs">
+                    {credsStatus.clientId}
+                  </p>
+                )}
+              </div>
+            </div>
+            {!credsStatus?.fromEnv && (
+              <div className="flex gap-2 shrink-0">
+                <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => remove.mutate()}
+                  disabled={remove.isPending}
+                >
+                  Remove
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="space-y-2">
+            <Input
+              placeholder="Client ID"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="text-sm h-8 font-mono"
+            />
+            <Input
+              placeholder="Client Secret"
+              type="password"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              className="text-sm h-8 font-mono"
+            />
+          </div>
+          {save.isError && (
+            <p className="text-xs text-destructive">
+              {save.error instanceof Error ? save.error.message : "Failed to save"}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={!clientId.trim() || !clientSecret.trim() || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {save.isPending ? "Saving..." : "Save"}
+            </Button>
+            {editing && (
+              <Button size="sm" variant="ghost" onClick={() => { setEditing(false); setClientId(""); setClientSecret(""); }}>
+                Cancel
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function parseDriveFolderId(input: string): string {
+  const trimmed = input.trim();
+  // Full URL: https://drive.google.com/drive/folders/FOLDER_ID or /u/0/folders/FOLDER_ID
+  const match = trimmed.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1]!;
+  // Raw ID — alphanumeric + dashes/underscores, 20+ chars
+  if (/^[a-zA-Z0-9_-]{10,}$/.test(trimmed)) return trimmed;
+  return trimmed;
+}
+
+function GDriveFoldersSection({ companyId }: { companyId: string }) {
+  const qc = useQueryClient();
+  const [input, setInput] = useState("");
+
+  const { data: sources = [] } = useQuery({
+    queryKey: ["document-sources", companyId],
+    queryFn: () => referenceDocumentsApi.listSources(companyId),
+  });
+
+  const gdriveSources = sources.filter((s) => s.type === "gdrive");
+
+  const addSource = useMutation({
+    mutationFn: () => {
+      const folderId = parseDriveFolderId(input);
+      return referenceDocumentsApi.createSource(companyId, {
+        type: "gdrive",
+        name: `Drive: ${folderId.slice(0, 12)}…`,
+        driveFolderId: folderId,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["document-sources", companyId] });
+      setInput("");
+    },
+  });
+
+  const deleteSource = useMutation({
+    mutationFn: (id: string) => referenceDocumentsApi.deleteSource(companyId, id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["document-sources", companyId] }),
+  });
+
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="text-xs text-muted-foreground font-medium">Synced folders</p>
+      {gdriveSources.length > 0 && (
+        <div className="space-y-1.5">
+          {gdriveSources.map((s) => (
+            <div key={s.id} className="flex items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <Cloud className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+              <span className="flex-1 text-xs font-mono truncate">{s.driveFolderId}</span>
+              {s.lastSyncError ? (
+                <span className="text-[10px] text-red-400 shrink-0">{s.lastSyncError.slice(0, 40)}</span>
+              ) : s.lastSyncedAt ? (
+                <span className="text-[10px] text-muted-foreground shrink-0">
+                  Synced {new Date(s.lastSyncedAt).toLocaleTimeString()}
+                </span>
+              ) : (
+                <span className="text-[10px] text-muted-foreground shrink-0">Never synced</span>
+              )}
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => deleteSource.mutate(s.id)}
+                disabled={deleteSource.isPending}
+              >
+                <Trash2 className="h-3.5 w-3.5 text-muted-foreground" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Input
+          placeholder="Paste Drive folder URL or ID"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          className="text-xs h-8 font-mono"
+          onKeyDown={(e) => { if (e.key === "Enter" && input.trim()) addSource.mutate(); }}
+        />
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={!input.trim() || addSource.isPending}
+          onClick={() => addSource.mutate()}
+        >
+          <Plus className="h-3.5 w-3.5 mr-1" />Add
+        </Button>
+      </div>
+      {addSource.isError && (
+        <p className="text-xs text-destructive">
+          {addSource.error instanceof Error ? addSource.error.message : "Failed to add folder"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function GDriveSection({ companyId }: { companyId: string | null }) {
+  const qc = useQueryClient();
+
+  const { data: credsStatus } = useQuery({
+    queryKey: ["google-app-creds"],
+    queryFn: () => referenceDocumentsApi.getGoogleAppCreds(),
+  });
 
   const { data: status, isLoading } = useQuery({
     queryKey: ["gdrive-status"],
@@ -21,9 +241,17 @@ function GDriveSection() {
       const { url } = await referenceDocumentsApi.getGDriveAuthUrl();
       const popup = window.open(url, "gdrive-auth", "width=600,height=700,noopener");
       if (!popup) { window.location.href = url; return; }
+      const onMessage = (e: MessageEvent) => {
+        if (e.data === "gdrive-connected") {
+          window.removeEventListener("message", onMessage);
+          qc.invalidateQueries({ queryKey: ["gdrive-status"] });
+        }
+      };
+      window.addEventListener("message", onMessage);
       const timer = setInterval(() => {
         if (popup.closed) {
           clearInterval(timer);
+          window.removeEventListener("message", onMessage);
           qc.invalidateQueries({ queryKey: ["gdrive-status"] });
         }
       }, 500);
@@ -37,42 +265,45 @@ function GDriveSection() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["gdrive-status"] }),
   });
 
+  const credsConfigured = credsStatus?.configured ?? false;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
         <Globe className="h-4 w-4 text-blue-400" />
         <h3 className="text-sm font-semibold">Google Drive</h3>
       </div>
-      <p className="text-xs text-muted-foreground">
-        Requires <code className="font-mono text-xs bg-muted px-1 rounded">GOOGLE_CLIENT_ID</code> and{" "}
-        <code className="font-mono text-xs bg-muted px-1 rounded">GOOGLE_CLIENT_SECRET</code> environment variables.
-      </p>
       {isLoading ? (
         <div className="text-xs text-muted-foreground">Checking status...</div>
       ) : status?.connected ? (
-        <div className="flex items-center justify-between rounded-lg border border-border p-3">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="h-4 w-4 text-green-400" />
-            <span className="text-sm">
-              Connected as <span className="font-medium">{status.email}</span>
-            </span>
+        <>
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-4 w-4 text-green-400" />
+              <span className="text-sm">
+                Connected as <span className="font-medium">{status.email}</span>
+              </span>
+            </div>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => disconnect.mutate()}
+              disabled={disconnect.isPending}
+            >
+              Disconnect
+            </Button>
           </div>
-          <Button
-            variant="destructive"
-            size="sm"
-            onClick={() => disconnect.mutate()}
-            disabled={disconnect.isPending}
-          >
-            Disconnect
-          </Button>
-        </div>
+          {companyId && <GDriveFoldersSection companyId={companyId} />}
+        </>
       ) : (
         <div className="flex items-center justify-between rounded-lg border border-border p-3">
           <div className="flex items-center gap-2">
             <XCircle className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">Not connected</span>
+            <span className="text-sm text-muted-foreground">
+              {credsConfigured ? "Not connected" : "OAuth credentials required above"}
+            </span>
           </div>
-          <Button variant="outline" size="sm" onClick={connect}>
+          <Button variant="outline" size="sm" onClick={connect} disabled={!credsConfigured}>
             Connect Google Drive
           </Button>
         </div>
@@ -335,7 +566,11 @@ export function InstanceStorageSettings() {
         )}
       </div>
 
-      <GDriveSection />
+      <GoogleOAuthCredsSection />
+
+      <div className="border-t border-border pt-6">
+        <GDriveSection companyId={selectedCompanyId ?? null} />
+      </div>
 
       <div className="border-t border-border pt-6">
         {selectedCompanyId ? (
