@@ -6,6 +6,7 @@ import { logger } from "../middleware/logger.js";
 
 const SINGLETON_KEY = "default";
 const GDRIVE_SETTINGS_KEY = "gdriveOAuth";
+const GOOGLE_APP_KEY = "googleOAuthApp";
 
 interface GDriveTokens {
   accessToken: string;
@@ -14,10 +15,9 @@ interface GDriveTokens {
   expiresAt: number;
 }
 
-function getOAuthClient(redirectUri: string) {
-  const clientId = process.env.GOOGLE_CLIENT_ID ?? "";
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET ?? "";
-  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+interface GoogleAppCreds {
+  clientId: string;
+  clientSecret: string;
 }
 
 async function getSettings(db: Db) {
@@ -29,26 +29,69 @@ async function getSettings(db: Db) {
   return rows[0] ?? null;
 }
 
-async function setGDriveTokens(db: Db, tokens: GDriveTokens): Promise<void> {
+async function upsertGeneral(db: Db, patch: Record<string, unknown>): Promise<void> {
   const existing = await getSettings(db);
-  const general = ((existing?.general ?? {}) as Record<string, unknown>);
-  const updated = { ...general, [GDRIVE_SETTINGS_KEY]: tokens };
+  const general = { ...((existing?.general ?? {}) as Record<string, unknown>), ...patch };
   if (existing) {
     await db
       .update(instanceSettings)
-      .set({ general: updated, updatedAt: new Date() })
+      .set({ general, updatedAt: new Date() })
       .where(eq(instanceSettings.singletonKey, SINGLETON_KEY));
   } else {
     await db.insert(instanceSettings).values({
       singletonKey: SINGLETON_KEY,
-      general: updated,
+      general,
       experimental: {},
     });
   }
 }
 
-export function getAuthUrl(redirectUri: string): string {
-  const oauth2 = getOAuthClient(redirectUri);
+async function getGoogleAppCreds(db: Db): Promise<{ clientId: string; clientSecret: string }> {
+  const row = await getSettings(db);
+  const stored = (row?.general as Record<string, unknown>)?.[GOOGLE_APP_KEY] as GoogleAppCreds | undefined;
+  return {
+    clientId: stored?.clientId || process.env.GOOGLE_CLIENT_ID || "",
+    clientSecret: stored?.clientSecret || process.env.GOOGLE_CLIENT_SECRET || "",
+  };
+}
+
+async function getOAuthClient(db: Db, redirectUri: string) {
+  const { clientId, clientSecret } = await getGoogleAppCreds(db);
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+}
+
+export async function saveGoogleAppCreds(db: Db, clientId: string, clientSecret: string): Promise<void> {
+  await upsertGeneral(db, { [GOOGLE_APP_KEY]: { clientId, clientSecret } });
+  logger.info("gdrive-auth: app credentials saved to DB");
+}
+
+export async function deleteGoogleAppCreds(db: Db): Promise<void> {
+  const row = await getSettings(db);
+  if (!row) return;
+  const general = { ...(row.general as Record<string, unknown>) };
+  delete general[GOOGLE_APP_KEY];
+  await db
+    .update(instanceSettings)
+    .set({ general, updatedAt: new Date() })
+    .where(eq(instanceSettings.singletonKey, SINGLETON_KEY));
+}
+
+export async function getGoogleAppCredsStatus(db: Db): Promise<{ configured: boolean; clientId: string | null; fromEnv: boolean }> {
+  const row = await getSettings(db);
+  const stored = (row?.general as Record<string, unknown>)?.[GOOGLE_APP_KEY] as GoogleAppCreds | undefined;
+  if (stored?.clientId && stored?.clientSecret) {
+    return { configured: true, clientId: stored.clientId, fromEnv: false };
+  }
+  const envId = process.env.GOOGLE_CLIENT_ID;
+  const envSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (envId && envSecret) {
+    return { configured: true, clientId: envId, fromEnv: true };
+  }
+  return { configured: false, clientId: null, fromEnv: false };
+}
+
+export async function getAuthUrl(db: Db, redirectUri: string): Promise<string> {
+  const oauth2 = await getOAuthClient(db, redirectUri);
   return oauth2.generateAuthUrl({
     access_type: "offline",
     scope: [
@@ -64,7 +107,7 @@ export async function exchangeCodeForTokens(
   code: string,
   redirectUri: string,
 ): Promise<void> {
-  const oauth2 = getOAuthClient(redirectUri);
+  const oauth2 = await getOAuthClient(db, redirectUri);
   const { tokens } = await oauth2.getToken(code);
   oauth2.setCredentials(tokens);
 
@@ -72,11 +115,13 @@ export async function exchangeCodeForTokens(
   const userInfo = await oauth2Api.userinfo.get();
   const email = userInfo.data.email ?? "";
 
-  await setGDriveTokens(db, {
-    accessToken: tokens.access_token ?? "",
-    refreshToken: tokens.refresh_token ?? "",
-    email,
-    expiresAt: tokens.expiry_date ?? 0,
+  await upsertGeneral(db, {
+    [GDRIVE_SETTINGS_KEY]: {
+      accessToken: tokens.access_token ?? "",
+      refreshToken: tokens.refresh_token ?? "",
+      email,
+      expiresAt: tokens.expiry_date ?? 0,
+    },
   });
   logger.info({ email }, "gdrive-auth: tokens stored");
 }
@@ -86,7 +131,7 @@ export async function getAuthenticatedDriveClient(db: Db) {
   const tokens = (row?.general as Record<string, unknown>)?.[GDRIVE_SETTINGS_KEY] as GDriveTokens | undefined;
   if (!tokens?.refreshToken) return null;
 
-  const oauth2 = getOAuthClient("");
+  const oauth2 = await getOAuthClient(db, "");
   oauth2.setCredentials({
     access_token: tokens.accessToken,
     refresh_token: tokens.refreshToken,

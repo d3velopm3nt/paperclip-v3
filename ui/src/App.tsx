@@ -387,6 +387,7 @@ export function App() {
           <Route path="email/workflows" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/action-policies" element={<UnprefixedBoardRedirect />} />
           <Route path="clients" element={<UnprefixedBoardRedirect />} />
+          <Route path="team" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/plans" element={<UnprefixedBoardRedirect />} />
           <Route path="rooms" element={<UnprefixedBoardRedirect />} />
           <Route path="rooms/:id" element={<UnprefixedBoardRedirect />} />

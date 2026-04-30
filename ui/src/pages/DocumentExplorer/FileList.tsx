@@ -58,6 +58,9 @@ export function FileList({
           <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
             <FileText className="h-6 w-6 opacity-30" />
             <p className="text-xs">{search ? "No matches" : "No files here"}</p>
+            {!search && docs.length === 0 && (
+              <p className="text-[11px] text-muted-foreground/60">Run Sync to pull files from this source</p>
+            )}
           </div>
         ) : (
           filtered.map((doc) => (

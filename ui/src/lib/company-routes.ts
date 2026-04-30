@@ -18,6 +18,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "email", // v3:
   "governance", // v3:
   "clients", // v3:
+  "team", // v3:
   "rooms", // v3:
   "channels", // v3:
   "chat", // v3:

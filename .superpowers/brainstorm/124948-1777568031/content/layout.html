@@ -1,0 +1,91 @@
+<h2>Document Explorer — Layout Options</h2>
+<p class="subtitle">Which layout feels right for the file explorer?</p>
+
+<div class="cards">
+
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;height:180px;background:#0d0d0d;border-radius:6px;overflow:hidden;font-size:11px;">
+        <!-- Tree panel -->
+        <div style="width:220px;border-right:1px solid #2a2a2a;padding:8px;flex-shrink:0;">
+          <div style="color:#666;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Explorer</div>
+          <div style="color:#e5e5e5;padding:3px 4px;display:flex;align-items:center;gap:5px;"><span style="color:#f59e0b">▼</span><span>💻 My PC</span></div>
+          <div style="color:#aaa;padding:3px 4px 3px 20px;display:flex;align-items:center;gap:5px;"><span style="color:#aaa">▶</span><span>📁 /docs</span></div>
+          <div style="color:#aaa;padding:3px 4px 3px 20px;display:flex;align-items:center;gap:5px;"><span style="color:#aaa">▶</span><span>📁 /notes</span></div>
+          <div style="color:#e5e5e5;padding:3px 4px;display:flex;align-items:center;gap:5px;margin-top:4px;"><span style="color:#3b82f6">▶</span><span>☁️ Google Drive</span></div>
+          <div style="color:#aaa;padding:3px 4px;display:flex;align-items:center;gap:5px;margin-top:4px;"><span style="color:#aaa">▶</span><span>📎 Uploads</span></div>
+        </div>
+        <!-- File list -->
+        <div style="flex:1;padding:8px;">
+          <div style="color:#666;font-size:10px;margin-bottom:6px;">My PC / docs</div>
+          <div style="color:#e5e5e5;padding:3px 0;display:flex;align-items:center;gap:6px;border-bottom:1px solid #1a1a1a;">📄 <span>getting-started.md</span><span style="margin-left:auto;color:#666;font-size:10px;">2h ago</span></div>
+          <div style="color:#e5e5e5;padding:3px 0;display:flex;align-items:center;gap:6px;border-bottom:1px solid #1a1a1a;">📄 <span>api-reference.pdf</span><span style="margin-left:auto;color:#666;font-size:10px;">1d ago</span></div>
+          <div style="color:#e5e5e5;padding:3px 0;display:flex;align-items:center;gap:6px;">📄 <span>roadmap.txt</span><span style="margin-left:auto;color:#666;font-size:10px;">3d ago</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Split Panel</h3>
+      <p>Tree on left, file list on right. Classic explorer feel. Click folder in tree → files appear on right.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="height:180px;background:#0d0d0d;border-radius:6px;overflow:hidden;font-size:11px;padding:8px;">
+        <div style="color:#666;font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Documents</div>
+        <!-- Root nodes inline expand -->
+        <div style="border:1px solid #2a2a2a;border-radius:5px;margin-bottom:4px;">
+          <div style="padding:6px 8px;display:flex;align-items:center;gap:6px;color:#e5e5e5;">
+            <span style="color:#f59e0b">▼</span><span>💻 My PC</span><span style="margin-left:auto;color:#666;font-size:10px;">14 files</span>
+          </div>
+          <div style="border-top:1px solid #1a1a1a;padding:4px 8px 4px 22px;background:#111;">
+            <div style="padding:2px 0;display:flex;align-items:center;gap:5px;color:#aaa;"><span>▶</span><span>📁 /docs</span><span style="margin-left:auto;color:#555;font-size:10px;">8 files</span></div>
+            <div style="padding:2px 0;display:flex;align-items:center;gap:5px;color:#aaa;"><span>▶</span><span>📁 /notes</span><span style="margin-left:auto;color:#555;font-size:10px;">6 files</span></div>
+          </div>
+        </div>
+        <div style="border:1px solid #2a2a2a;border-radius:5px;">
+          <div style="padding:6px 8px;display:flex;align-items:center;gap:6px;color:#e5e5e5;">
+            <span style="color:#3b82f6">▶</span><span>☁️ Google Drive</span><span style="margin-left:auto;color:#666;font-size:10px;">22 files</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Inline Tree</h3>
+      <p>Single panel. Sources expand in-place. Folders expand to show subfolders then files inline. Everything in one column.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div style="display:flex;height:180px;background:#0d0d0d;border-radius:6px;overflow:hidden;font-size:11px;">
+        <!-- Narrow tree -->
+        <div style="width:160px;border-right:1px solid #2a2a2a;padding:8px;flex-shrink:0;">
+          <div style="color:#e5e5e5;padding:4px 6px;border-radius:4px;background:#1a1a1a;margin-bottom:2px;display:flex;align-items:center;gap:4px;"><span>💻</span><span>My PC</span></div>
+          <div style="color:#aaa;padding:4px 6px 4px 18px;margin-bottom:2px;display:flex;align-items:center;gap:4px;"><span>📁</span><span>/docs</span></div>
+          <div style="color:#aaa;padding:4px 6px 4px 18px;margin-bottom:2px;display:flex;align-items:center;gap:4px;"><span>📁</span><span>/notes</span></div>
+          <div style="color:#3b82f6;padding:4px 6px;margin-bottom:2px;display:flex;align-items:center;gap:4px;"><span>☁️</span><span>Google Drive</span></div>
+        </div>
+        <!-- Preview pane -->
+        <div style="flex:1;padding:8px;">
+          <div style="color:#e5e5e5;font-size:10px;margin-bottom:6px;font-weight:600;">getting-started.md</div>
+          <div style="color:#666;font-size:10px;line-height:1.6;">
+            # Getting Started<br/>
+            Welcome to Paperclip...<br/>
+            This guide covers setup<br/>
+            and configuration steps.
+          </div>
+          <div style="margin-top:8px;display:flex;gap:4px;">
+            <div style="background:#1a1a1a;border:1px solid #2a2a2a;border-radius:3px;padding:2px 6px;color:#aaa;font-size:10px;">✓ In context</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Split + Preview</h3>
+      <p>Tree left, file list middle, document preview right. Three panels. Most powerful but needs more space.</p>
+    </div>
+  </div>
+
+</div>
