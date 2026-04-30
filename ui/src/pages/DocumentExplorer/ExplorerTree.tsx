@@ -132,14 +132,14 @@ function SourceNode({
         )}
       >
         <button
-          className="flex items-center justify-center w-5 h-full pl-3 shrink-0 text-muted-foreground"
+          className="flex items-center justify-center w-6 h-full pl-3 shrink-0 text-muted-foreground"
           onClick={(e) => { e.stopPropagation(); if (hasFolders) setExpanded((v) => !v); }}
         >
           {hasFolders
             ? expanded
-              ? <ChevronDown className="h-3 w-3" />
-              : <ChevronRight className="h-3 w-3" />
-            : <span className="w-3" />}
+              ? <ChevronDown className="h-4 w-4" />
+              : <ChevronRight className="h-4 w-4" />
+            : <span className="w-4" />}
         </button>
         <button
           className="flex items-center gap-2 flex-1 min-w-0 pr-3 py-1.5"
