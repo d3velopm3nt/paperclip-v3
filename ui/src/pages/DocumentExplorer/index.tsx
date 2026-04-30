@@ -66,7 +66,6 @@ export function DocumentExplorer() {
   const visibleDocs = useMemo(() => {
     if (selectedSourceId === "uploads") return tree.uploads;
     if (!activeSourceNode) return [];
-    if (selectedFolderPath === "") return activeSourceNode.docs;
     return getDocsForPath(
       activeSourceNode.docs,
       selectedFolderPath,
