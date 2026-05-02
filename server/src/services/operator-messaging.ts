@@ -244,11 +244,40 @@ export function operatorMessagingService(db: Db) {
 
   // ── handleInbound ──────────────────────────────────────────────────────────
 
+  async function handleNewProjectCommand(
+    companyId: string,
+    msg: InboundMessage,
+    name: string,
+  ): Promise<boolean> {
+    if (!name) {
+      const adapter = getAdapter(msg.platform);
+      if (adapter && msg.threadKey) {
+        await adapter.reply(msg.threadKey, "Usage: /newproject <project name>");
+      }
+      return true;
+    }
+    const { projectService } = await import("./projects.js");
+    const project = await projectService(db).create(companyId, { name });
+    logger.info({ companyId, projectId: project.id, name }, "operator-messaging: project created via command");
+    const adapter = getAdapter(msg.platform);
+    if (adapter && msg.threadKey) {
+      await adapter.reply(msg.threadKey, `✅ Project created: *${project.name}*\nID: \`${project.id}\``);
+    }
+    return true;
+  }
+
   async function handleInbound(
     companyId: string,
     voiceAccountId: string,
     msg: InboundMessage,
   ): Promise<void> {
+    // Command: /newproject <name>
+    const cmdMatch = msg.body.trim().match(/^\/newproject\s*(.*)/is);
+    if (cmdMatch) {
+      await handleNewProjectCommand(companyId, msg, cmdMatch[1]?.trim() ?? "");
+      return;
+    }
+
     // Direct-to-agent: bypass mention parsing when caller specifies agentId
     if (msg.toAgentId) {
       const [agentRow] = await db
