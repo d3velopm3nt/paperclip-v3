@@ -80,7 +80,23 @@ export function referenceDocumentsService(db: Db) {
         .from(referenceDocuments)
         .where(and(eq(referenceDocuments.companyId, companyId), eq(referenceDocuments.id, docId)))
         .limit(1);
-      return row ? toDocumentWithContent(row) : null;
+      if (!row) return null;
+
+      // Lazy extraction for local files that haven't been extracted yet
+      if (row.sourceType === "local" && row.sourcePath && row.extractedText === null) {
+        const { extractTextFromFile } = await import("../services/document-extractor.js");
+        const text = await extractTextFromFile(row.sourcePath).catch(() => null);
+        if (text) {
+          const [updated] = await db
+            .update(referenceDocuments)
+            .set({ extractedText: text.slice(0, 50_000), updatedAt: new Date() })
+            .where(eq(referenceDocuments.id, row.id))
+            .returning();
+          return updated ? toDocumentWithContent(updated) : toDocumentWithContent(row);
+        }
+      }
+
+      return toDocumentWithContent(row);
     },
 
     updateDocument: async (

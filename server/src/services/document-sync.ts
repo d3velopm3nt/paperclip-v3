@@ -50,16 +50,20 @@ async function syncLocalSource(
 
   for (const filePath of files) {
     try {
+      const stat = await fs.stat(filePath).catch(() => null);
+      if (!stat) continue;
       const raw = await fs.readFile(filePath);
       const checksum = computeChecksum(raw);
-      const text = await extractTextFromFile(filePath);
-      if (text === null) continue;
+      const ext = path.extname(filePath).slice(1).toLowerCase();
+      const mimeType = ext === "pdf" ? "application/pdf"
+        : ext === "docx" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : `text/${ext}`;
       const title = path.basename(filePath, path.extname(filePath));
       await svc.upsertBySourcePath(companyId, filePath, {
         title,
         sourceType: "local",
-        mimeType: `text/${path.extname(filePath).slice(1)}`,
-        extractedText: text.slice(0, 50_000),
+        mimeType,
+        extractedText: null, // extracted lazily on first read
         checksum,
         syncedAt: new Date(),
       });
