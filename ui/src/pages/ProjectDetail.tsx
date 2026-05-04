@@ -25,6 +25,8 @@ import { Tabs } from "@/components/ui/tabs";
 import { PluginLauncherOutlet } from "@/plugins/launchers";
 import { PluginSlotMount, PluginSlotOutlet, usePluginSlots } from "@/plugins/slots";
 import { RepoTab } from "./RepoTab";
+import { clientsApi } from "../api/clients";
+import { FolderOpen, ExternalLink } from "lucide-react";
 
 /* ── Top-level tab types ── */
 
@@ -203,6 +205,52 @@ function ProjectIssuesList({ projectId, companyId }: { projectId: string; compan
 }
 
 /* ── Main project page ── */
+
+function ProjectStorageSection({ clientId, projectId }: { clientId: string | null; projectId: string }) {
+  const { data: storage } = useQuery({
+    queryKey: ["project-storage", clientId, projectId],
+    queryFn: () => clientsApi.getProjectStorage(clientId!, projectId),
+    enabled: !!clientId,
+  });
+
+  if (!clientId) {
+    return (
+      <div className="rounded border border-border px-3 py-2 text-xs text-muted-foreground">
+        Assign a client to this project to enable document storage.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <h4 className="text-sm font-medium flex items-center gap-2">
+        <FolderOpen className="h-4 w-4 text-amber-400" />
+        Document Folder
+      </h4>
+      {storage?.localPath && (
+        <div className="rounded border border-border px-3 py-2 text-xs font-mono text-muted-foreground">
+          📁 {storage.localPath}
+        </div>
+      )}
+      {storage?.driveFolderId && (
+        <div className="rounded border border-border px-3 py-2 text-xs flex items-center justify-between gap-2">
+          <span className="font-mono text-muted-foreground truncate">☁️ {storage.driveFolderId}</span>
+          {storage.driveWebUrl && (
+            <a href={storage.driveWebUrl} target="_blank" rel="noreferrer"
+               className="shrink-0 text-primary hover:underline flex items-center gap-1 text-xs">
+              Open <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      )}
+      {!storage?.localPath && !storage?.driveFolderId && (
+        <p className="text-xs text-muted-foreground">
+          Folder will be created automatically once a company storage root is configured.
+        </p>
+      )}
+    </div>
+  );
+}
 
 export function ProjectDetail() {
   const { companyPrefix, projectId, filter } = useParams<{
@@ -602,7 +650,7 @@ export function ProjectDetail() {
       )}
 
       {activeTab === "configuration" && (
-        <div className="max-w-4xl">
+        <div className="max-w-4xl space-y-6">
           <ProjectProperties
             project={project}
             onUpdate={(data) => updateProject.mutate(data)}
@@ -611,6 +659,9 @@ export function ProjectDetail() {
             onArchive={(archived) => archiveProject.mutate(archived)}
             archivePending={archiveProject.isPending}
           />
+          <div className="border-t border-border pt-4">
+            <ProjectStorageSection clientId={project.clientId ?? null} projectId={project.id} />
+          </div>
         </div>
       )}
 
