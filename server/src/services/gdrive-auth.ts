@@ -137,7 +137,19 @@ export async function getAuthenticatedDriveClient(db: Db) {
     refresh_token: tokens.refreshToken,
     expiry_date: tokens.expiresAt,
   });
-  return google.drive({ version: "v3", auth: oauth2 });
+  const drive = google.drive({ version: "v3", auth: oauth2 });
+
+  // Safety guard: Paperclip must never delete Drive files or folders.
+  // Wrap the client to throw if delete/trash is attempted anywhere in the codebase.
+  const safeFiles = new Proxy(drive.files, {
+    get(target, prop) {
+      if (prop === "delete" || prop === "trash") {
+        return () => { throw new Error(`paperclip: Drive ${String(prop)} is disabled — files are never deleted by Paperclip`); };
+      }
+      return (target as unknown as Record<string | symbol, unknown>)[prop];
+    },
+  });
+  return { ...drive, files: safeFiles } as typeof drive;
 }
 
 export async function getGDriveStatus(db: Db): Promise<{ connected: boolean; email: string | null }> {

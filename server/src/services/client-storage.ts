@@ -52,6 +52,13 @@ async function ensureLocalDir(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
+// Paperclip never deletes local storage files or folders.
+// This function exists to make that contract explicit — call it instead of fs.rm/unlink.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function _neverDeleteLocalFile(_path: string): never {
+  throw new Error("paperclip: local storage file deletion is disabled");
+}
+
 function safeName(name: string): string {
   return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").trim() || "unnamed";
 }
