@@ -5,6 +5,7 @@ import type {
   CreateDocumentSourceInput,
   UpdateReferenceDocumentInput,
   GoogleDriveStatus,
+  CompanyStorageRoot,
 } from "@paperclipai/shared";
 import { api } from "./client";
 
@@ -83,4 +84,8 @@ export const referenceDocumentsApi = {
       "/instance/storage/local/test",
       { localPath },
     ),
+  getCompanyStorageRoot: () =>
+    api.get<CompanyStorageRoot>("/instance/storage/root"),
+  setCompanyStorageRoot: (root: CompanyStorageRoot) =>
+    api.put<{ ok: boolean }>("/instance/storage/root", root),
 };

@@ -1,4 +1,5 @@
 import { api } from "./client";
+import type { ClientStorageInfo } from "@paperclipai/shared";
 
 export interface Client {
   id: string;
@@ -34,4 +35,10 @@ export const clientsApi = {
   update: (id: string, data: ClientUpdateRequest) =>
     api.patch<Client>(`/clients/${encodeURIComponent(id)}`, data),
   delete: (id: string) => api.delete<void>(`/clients/${encodeURIComponent(id)}`),
+  getStorage: (id: string) =>
+    api.get<ClientStorageInfo>(`/clients/${encodeURIComponent(id)}/storage`),
+  setStorage: (id: string, body: { localPath?: string | null; driveFolderId?: string | null; autoCreate?: boolean }) =>
+    api.put<ClientStorageInfo>(`/clients/${encodeURIComponent(id)}/storage`, body),
+  getProjectStorage: (clientId: string, projectId: string) =>
+    api.get<ClientStorageInfo>(`/clients/${encodeURIComponent(clientId)}/projects/${encodeURIComponent(projectId)}/storage`),
 };
