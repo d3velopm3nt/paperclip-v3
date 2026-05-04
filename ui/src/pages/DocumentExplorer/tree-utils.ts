@@ -62,6 +62,8 @@ export function buildTree(
           source: {
             id: "gdrive-unlinked",
             companyId: "",
+            clientId: null,
+            projectId: null,
             type: "gdrive",
             name: "Google Drive",
             localPath: null,

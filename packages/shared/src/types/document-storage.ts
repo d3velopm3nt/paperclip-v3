@@ -26,6 +26,8 @@ export interface ReferenceDocumentWithContent extends ReferenceDocument {
 export interface DocumentSource {
   id: string;
   companyId: string;
+  clientId: string | null;
+  projectId: string | null;
   type: "local" | "gdrive";
   name: string;
   localPath: string | null;
@@ -40,6 +42,8 @@ export interface CreateDocumentSourceInput {
   name: string;
   localPath?: string;
   driveFolderId?: string;
+  clientId?: string;
+  projectId?: string;
 }
 
 export interface UpdateReferenceDocumentInput {
@@ -53,4 +57,17 @@ export interface UpdateReferenceDocumentInput {
 export interface GoogleDriveStatus {
   connected: boolean;
   email: string | null;
+}
+
+/** Storage location for a client or project folder. */
+export interface ClientStorageInfo {
+  localPath: string | null;
+  driveFolderId: string | null;
+  driveWebUrl: string | null;
+}
+
+/** Company-level storage root stored in instanceSettings. */
+export interface CompanyStorageRoot {
+  localPath: string | null;
+  driveFolderId: string | null;
 }

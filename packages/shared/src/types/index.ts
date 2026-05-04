@@ -201,4 +201,6 @@ export type {
   CreateDocumentSourceInput,
   UpdateReferenceDocumentInput,
   GoogleDriveStatus,
+  ClientStorageInfo,
+  CompanyStorageRoot,
 } from "./document-storage.js";

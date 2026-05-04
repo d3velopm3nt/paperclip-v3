@@ -28,6 +28,8 @@ const makeDoc = (overrides: Partial<ReferenceDocument>): ReferenceDocument => ({
 const makeSource = (overrides: Partial<DocumentSource>): DocumentSource => ({
   id: "s1",
   companyId: "c1",
+  clientId: null,
+  projectId: null,
   type: "local",
   name: "My Docs",
   localPath: "/home/docs",
