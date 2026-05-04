@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, ChevronDown, ChevronUp, MessageSquare, Radio, Terminal, X } from "lucide-react";
+import { Activity, ChevronDown, ChevronUp, Mail, MessageSquare, Radio, Terminal, X } from "lucide-react";
 import type { ActivityEvent } from "@paperclipai/shared";
 import { activityApi } from "../api/activity";
 import { agentsApi } from "../api/agents";
 import { channelsApi, type ChannelMessage } from "../api/channels";
+import { emailMessagesApi, type EmailMessageSummary } from "../api/emailMessages";
 import { useMutation } from "@tanstack/react-query";
 import { queryKeys } from "../lib/queryKeys";
 import { cn } from "../lib/utils";
@@ -22,7 +23,7 @@ const STORAGE_TAB = "paperclip.logsPanel.tab";
 const DEFAULT_HEIGHT = 240;
 const MIN_HEIGHT = 80;
 
-type Tab = "activity" | "chat" | "llm" | "channels";
+type Tab = "activity" | "chat" | "llm" | "channels" | "email";
 
 function storedBool(key: string, fallback: boolean): boolean {
   try {
@@ -43,7 +44,7 @@ function storedNum(key: string, fallback: number): number {
 function storedTab(fallback: Tab): Tab {
   try {
     const v = localStorage.getItem(STORAGE_TAB);
-    return v === "activity" || v === "chat" || v === "llm" || v === "channels" ? v : fallback;
+    return v === "activity" || v === "chat" || v === "llm" || v === "channels" || v === "email" ? v : fallback;
   } catch {
     return fallback;
   }
@@ -287,6 +288,13 @@ export function LogsPanel({ companyId }: { companyId: string | null }) {
     refetchInterval: open && tab === "channels" ? 3000 : false,
   });
 
+  const { data: emailMessages = [] } = useQuery({
+    queryKey: ["email-messages-log", companyId],
+    queryFn: () => emailMessagesApi.list(companyId!),
+    enabled: !!companyId && open && tab === "email",
+    refetchInterval: open && tab === "email" ? 5000 : false,
+  });
+
   const testTelegramMutation = useMutation({
     mutationFn: () => channelsApi.testTelegram(),
   });
@@ -372,6 +380,20 @@ export function LogsPanel({ companyId }: { companyId: string | null }) {
           Channels
         </button>
 
+        <button
+          type="button"
+          onClick={() => { setTab("email"); setOpen(true); }}
+          className={cn(
+            "flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium rounded transition-colors",
+            tab === "email" && open
+              ? "text-foreground bg-accent"
+              : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Mail className="h-3.5 w-3.5" />
+          Email
+        </button>
+
         {open && (
           <>
             <div className="w-px h-4 bg-border mx-1" />
@@ -412,7 +434,35 @@ export function LogsPanel({ companyId }: { companyId: string | null }) {
           className="overflow-y-auto bg-neutral-950 dark:bg-neutral-950 flex flex-col"
           style={{ height }}
         >
-          {tab === "channels" ? (
+          {tab === "email" ? (
+            emailMessages.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-xs text-neutral-500">
+                No email messages yet
+              </div>
+            ) : (
+              <div className="divide-y divide-white/5">
+                {emailMessages.map((msg: EmailMessageSummary) => (
+                  <div key={msg.id} className="flex gap-2 px-3 py-1.5 hover:bg-white/5 font-mono text-xs">
+                    <span className="text-neutral-600 shrink-0 tabular-nums">{formatTs(msg.receivedAt)}</span>
+                    <span className={cn(
+                      "shrink-0 font-semibold w-4 text-center",
+                      msg.processingState === "failed" ? "text-red-400" :
+                      msg.processingState === "processed" ? "text-green-400" : "text-yellow-400",
+                    )}>
+                      {msg.processingState === "failed" ? "✗" : msg.processingState === "processed" ? "✓" : "…"}
+                    </span>
+                    <span className="text-neutral-400 shrink-0 truncate max-w-[140px]">{msg.fromAddr}</span>
+                    <span className="text-neutral-300 truncate flex-1">{msg.subject}</span>
+                    {msg.errorText && (
+                      <span className="text-red-400 truncate max-w-[200px] shrink-0" title={msg.errorText}>
+                        {msg.errorText.slice(0, 60)}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )
+          ) : tab === "channels" ? (
             channelMessages.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-xs text-neutral-500">
                 <span>No channel messages yet</span>
