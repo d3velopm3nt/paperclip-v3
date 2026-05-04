@@ -28,6 +28,9 @@ export const clients = pgTable(
     trustLevel: text("trust_level").notNull().default("standard"),
     isMyCompany: boolean("is_my_company").notNull().default(false),
     notes: text("notes"),
+    // v3: document storage — client folder location
+    localPath: text("local_path"),
+    driveFolderId: text("drive_folder_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
