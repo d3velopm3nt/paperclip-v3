@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { projects, projectGoals, goals, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
+import { ensureProjectFolder } from "./client-storage.js";
 import {
   PROJECT_COLORS,
   deriveProjectUrlKey,
@@ -460,6 +461,8 @@ export function projectService(db: Db) {
 
       const [withGoals] = await attachGoals(db, [row]);
       const [enriched] = withGoals ? await attachWorkspaces(db, [withGoals]) : [];
+      // Fire-and-forget — folder creation is async and non-blocking
+      ensureProjectFolder(db, row.id).catch(() => {});
       return enriched!;
     },
 

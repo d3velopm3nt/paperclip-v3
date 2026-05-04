@@ -4,6 +4,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { clients } from "@paperclipai/db";
+import { ensureClientFolder } from "./client-storage.js";
 
 export type ClientRow = typeof clients.$inferSelect;
 
@@ -62,6 +63,8 @@ export function clientService(db: Db) {
         updatedAt: new Date(),
       })
       .returning();
+    // Fire-and-forget — folder creation is async and non-blocking
+    ensureClientFolder(db, row!.id).catch(() => {});
     return row!;
   }
 
