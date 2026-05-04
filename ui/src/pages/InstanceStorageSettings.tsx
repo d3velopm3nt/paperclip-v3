@@ -11,8 +11,8 @@ import { cn } from "../lib/utils";
 function CompanyStorageRootSection({ companyId }: { companyId: string | null }) {
   const qc = useQueryClient();
   const [localPath, setLocalPath] = useState("");
-  const [driveFolderId, setDriveFolderId] = useState("");
   const [editing, setEditing] = useState(false);
+  const [showDrivePicker, setShowDrivePicker] = useState(false);
 
   const { data: root } = useQuery({
     queryKey: ["company-storage-root", companyId],
@@ -29,15 +29,16 @@ function CompanyStorageRootSection({ companyId }: { companyId: string | null }) 
   const otherConfigured = otherCompanies.filter((c) => c.id !== companyId);
 
   const save = useMutation({
-    mutationFn: () =>
+    mutationFn: (opts: { localPath?: string | null; driveFolderId?: string | null }) =>
       referenceDocumentsApi.setCompanyStorageRoot(companyId!, {
-        localPath: localPath.trim() || null,
-        driveFolderId: driveFolderId.trim() || null,
+        localPath: opts.localPath ?? null,
+        driveFolderId: opts.driveFolderId ?? null,
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["company-storage-root", companyId] });
       qc.invalidateQueries({ queryKey: ["companies-with-storage"] });
       setEditing(false);
+      setShowDrivePicker(false);
     },
   });
 
@@ -97,7 +98,7 @@ function CompanyStorageRootSection({ companyId }: { companyId: string | null }) 
           <div className="flex gap-2 mt-1">
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => {
               setLocalPath(root?.localPath ?? "");
-              setDriveFolderId(root?.driveFolderId ?? "");
+              setShowDrivePicker(false);
               setEditing(true);
             }}>Edit</Button>
             {otherConfigured.length > 0 && (
@@ -114,27 +115,58 @@ function CompanyStorageRootSection({ companyId }: { companyId: string | null }) 
           </div>
         </div>
       ) : (
-        <div className="space-y-2">
-          <Input
-            placeholder="Local path (e.g. /home/user/company-docs)"
-            value={localPath}
-            onChange={(e) => setLocalPath(e.target.value)}
-            className="text-xs h-8 font-mono"
-          />
-          <Input
-            placeholder="OR Google Drive folder ID"
-            value={driveFolderId}
-            onChange={(e) => setDriveFolderId(e.target.value)}
-            className="text-xs h-8 font-mono"
-          />
-          <div className="flex gap-2">
-            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? "Saving..." : "Save"}
-            </Button>
-            {editing && (
-              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+        <div className="space-y-3">
+          {/* Local path option */}
+          <div className="space-y-1.5">
+            <p className="text-xs text-muted-foreground font-medium">Local folder</p>
+            <div className="flex gap-2">
+              <Input
+                placeholder="/home/user/company-docs"
+                value={localPath}
+                onChange={(e) => setLocalPath(e.target.value)}
+                className="text-xs h-8 font-mono"
+              />
+              <Button
+                size="sm"
+                disabled={!localPath.trim() || save.isPending}
+                onClick={() => save.mutate({ localPath: localPath.trim() })}
+              >
+                {save.isPending ? "Saving..." : "Set"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="flex-1 border-t border-border" />
+            <span className="text-[10px] text-muted-foreground uppercase">or</span>
+            <div className="flex-1 border-t border-border" />
+          </div>
+
+          {/* Drive folder picker */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-muted-foreground font-medium">Google Drive folder</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-xs"
+                onClick={() => setShowDrivePicker((v) => !v)}
+              >
+                {showDrivePicker ? "Cancel" : "Browse Drive"}
+              </Button>
+            </div>
+            {showDrivePicker && (
+              <GDriveFolderPicker
+                onSelect={(folder) => save.mutate({ driveFolderId: folder.id })}
+              />
             )}
           </div>
+
+          {editing && (
+            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setEditing(false); setShowDrivePicker(false); }}>
+              Cancel
+            </Button>
+          )}
           {save.isError && (
             <p className="text-xs text-destructive">
               {save.error instanceof Error ? save.error.message : "Save failed"}
