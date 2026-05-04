@@ -8,6 +8,92 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "../lib/utils";
 
+function CompanyStorageRootSection() {
+  const qc = useQueryClient();
+  const [localPath, setLocalPath] = useState("");
+  const [driveFolderId, setDriveFolderId] = useState("");
+  const [editing, setEditing] = useState(false);
+
+  const { data: root } = useQuery({
+    queryKey: ["company-storage-root"],
+    queryFn: () => referenceDocumentsApi.getCompanyStorageRoot(),
+  });
+
+  const save = useMutation({
+    mutationFn: () =>
+      referenceDocumentsApi.setCompanyStorageRoot({
+        localPath: localPath.trim() || null,
+        driveFolderId: driveFolderId.trim() || null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["company-storage-root"] });
+      setEditing(false);
+    },
+  });
+
+  const configured = !!(root?.localPath || root?.driveFolderId);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <HardDrive className="h-4 w-4 text-amber-400" />
+        <h3 className="text-sm font-semibold">Company Storage Root</h3>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Base folder for all client and project documents. Client folders are created as{" "}
+        <span className="font-mono text-xs">root/Clients/ClientName/</span> automatically.
+        Set either a local path OR a Google Drive folder ID.
+      </p>
+
+      {configured && !editing ? (
+        <div className="rounded-lg border border-border p-3 space-y-1.5">
+          {root?.localPath && (
+            <p className="text-xs font-mono text-muted-foreground">📁 {root.localPath}</p>
+          )}
+          {root?.driveFolderId && (
+            <p className="text-xs font-mono text-muted-foreground">
+              ☁️ Drive folder: {root.driveFolderId}
+            </p>
+          )}
+          <Button size="sm" variant="outline" className="h-7 text-xs mt-1" onClick={() => {
+            setLocalPath(root?.localPath ?? "");
+            setDriveFolderId(root?.driveFolderId ?? "");
+            setEditing(true);
+          }}>Edit</Button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Input
+            placeholder="Local path (e.g. /home/user/company-docs)"
+            value={localPath}
+            onChange={(e) => setLocalPath(e.target.value)}
+            className="text-xs h-8 font-mono"
+          />
+          <Input
+            placeholder="OR Google Drive folder ID"
+            value={driveFolderId}
+            onChange={(e) => setDriveFolderId(e.target.value)}
+            className="text-xs h-8 font-mono"
+          />
+          <div className="flex gap-2">
+            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? "Saving..." : "Save"}
+            </Button>
+            {editing && (
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>Cancel</Button>
+            )}
+          </div>
+          {save.isError && (
+            <p className="text-xs text-destructive">
+              {save.error instanceof Error ? save.error.message : "Save failed"}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function GoogleOAuthCredsSection() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -620,7 +706,11 @@ export function InstanceStorageSettings() {
         )}
       </div>
 
-      <GoogleOAuthCredsSection />
+      <CompanyStorageRootSection />
+
+      <div className="border-t border-border pt-6">
+        <GoogleOAuthCredsSection />
+      </div>
 
       <div className="border-t border-border pt-6">
         <GDriveSection companyId={selectedCompanyId ?? null} />
