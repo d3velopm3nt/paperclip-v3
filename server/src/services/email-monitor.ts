@@ -116,10 +116,19 @@ async function runIMAPCycle(
     }
 
     imap.once("ready", () => {
+      logger.info({ accountId: account.id, host: account.imapHost, folder: account.folder }, "email-monitor: IMAP connected");
       imap.openBox(account.folder, false, (err) => {
         if (err) return done(err);
-        imap.search(["UNSEEN"], (searchErr, uids) => {
+
+        // Fetch UNSEEN + anything received in the last 7 days (catches emails
+        // marked read by another client while Paperclip was offline).
+        const since = new Date();
+        since.setDate(since.getDate() - 7);
+        const criteria = [["OR", ["UNSEEN"], ["SINCE", since]]];
+
+        imap.search(criteria, (searchErr, uids) => {
           if (searchErr) return done(searchErr);
+          logger.info({ accountId: account.id, candidateCount: uids?.length ?? 0 }, "email-monitor: search complete");
           if (!uids || uids.length === 0) return done(null, 0);
           const fetch = imap.fetch(uids, { bodies: "", markSeen: true });
           const pending: Array<Promise<void>> = [];
@@ -136,9 +145,15 @@ async function runIMAPCycle(
                     emailAccountId: account.id,
                     rawBytes: raw,
                   })
-                  .then(() => undefined)
+                  .then((result) => {
+                    if (result.duplicated) {
+                      logger.debug({ accountId: account.id, messageId: result.emailMessageId }, "email-monitor: skipped duplicate");
+                    } else {
+                      logger.info({ accountId: account.id, emailMessageId: result.emailMessageId }, "email-monitor: inbound message processed");
+                    }
+                  })
                   .catch((e: Error) => {
-                    logger.warn({ err: e, accountId: account.id }, "email-monitor: process failed");
+                    logger.warn({ err: e.message, accountId: account.id }, "email-monitor: process failed");
                   }),
               );
             });
@@ -151,7 +166,14 @@ async function runIMAPCycle(
       });
     });
 
-    imap.once("error", (err: Error) => done(err));
+    imap.once("error", (err: Error) => {
+      logger.warn({ accountId: account.id, err: err.message }, "email-monitor: IMAP error");
+      done(err);
+    });
+    imap.once("end", () => {
+      logger.debug({ accountId: account.id }, "email-monitor: IMAP connection closed");
+    });
+    logger.info({ accountId: account.id, host: account.imapHost }, "email-monitor: connecting");
     imap.connect();
 
     setTimeout(() => done(new Error("IMAP cycle timed out")), 60_000);

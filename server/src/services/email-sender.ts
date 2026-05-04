@@ -50,6 +50,10 @@ export async function sendEmailFromAccount(db: Db, opts: SendEmailOpts): Promise
     tls: { rejectUnauthorized: false },
   });
 
+  logger.info(
+    { accountId: opts.accountId, to: opts.to, subject: opts.subject, from: account.fromEmail },
+    "email-sender: sending",
+  );
   try {
     const info = await transporter.sendMail({
       from: `"${account.fromName}" <${account.fromEmail}>`,
@@ -62,14 +66,30 @@ export async function sendEmailFromAccount(db: Db, opts: SendEmailOpts): Promise
       references: opts.references ?? undefined,
     });
     logger.info(
-      { accountId: opts.accountId, messageId: info.messageId, to: opts.to },
+      {
+        accountId: opts.accountId,
+        messageId: info.messageId,
+        to: opts.to,
+        subject: opts.subject,
+        accepted: info.accepted,
+        rejected: info.rejected,
+      },
       "email-sender: sent",
     );
+    if ((info.rejected ?? []).length > 0) {
+      logger.warn({ accountId: opts.accountId, rejected: info.rejected, to: opts.to }, "email-sender: some recipients rejected");
+    }
     return {
       messageId: info.messageId,
       accepted: (info.accepted ?? []).map(String),
       rejected: (info.rejected ?? []).map(String),
     };
+  } catch (err) {
+    logger.error(
+      { accountId: opts.accountId, to: opts.to, subject: opts.subject, err: err instanceof Error ? err.message : String(err) },
+      "email-sender: send failed",
+    );
+    throw err;
   } finally {
     transporter.close();
   }
