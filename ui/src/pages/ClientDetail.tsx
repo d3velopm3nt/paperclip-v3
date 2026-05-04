@@ -20,10 +20,10 @@ import {
 } from "@/components/ui/dialog";
 import {
   UsersRound, Building2, AtSign, Mail, Pencil, Trash2,
-  Plus, User, Phone, Briefcase, ArrowLeft, ShieldCheck,
+  Plus, User, Phone, Briefcase, ArrowLeft, ShieldCheck, FolderOpen, ExternalLink,
 } from "lucide-react";
 
-type ClientTab = "overview" | "contacts";
+type ClientTab = "overview" | "contacts" | "storage";
 
 // ── Contact form ─────────────────────────────────────────────────────────────
 
@@ -310,6 +310,76 @@ function toClientForm(c: Client): ClientFormState {
   };
 }
 
+// ── Storage tab ───────────────────────────────────────────────────────────────
+
+function StorageTab({ client }: { client: Client }) {
+  const qc = useQueryClient();
+  const { pushToast } = useToast();
+
+  const { data: storage, isLoading } = useQuery({
+    queryKey: ["client-storage", client.id],
+    queryFn: () => clientsApi.getStorage(client.id),
+  });
+
+  const autoCreate = useMutation({
+    mutationFn: () => clientsApi.setStorage(client.id, { autoCreate: true }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["client-storage", client.id] });
+      pushToast({ title: "Folder created" });
+    },
+    onError: (err) => pushToast({ tone: "warn", title: "Failed", body: err instanceof Error ? err.message : "Unknown error" }),
+  });
+
+  const configured = !!(storage?.localPath || storage?.driveFolderId);
+
+  return (
+    <div className="max-w-xl space-y-4">
+      <Card className="p-5 space-y-3">
+        <h3 className="font-semibold text-sm flex items-center gap-2">
+          <FolderOpen className="h-4 w-4 text-amber-400" />
+          Document Folder
+        </h3>
+        {isLoading ? (
+          <p className="text-xs text-muted-foreground">Loading...</p>
+        ) : configured ? (
+          <div className="space-y-2">
+            {storage?.localPath && (
+              <div className="rounded border border-border px-3 py-2 text-xs font-mono text-muted-foreground">
+                📁 {storage.localPath}
+              </div>
+            )}
+            {storage?.driveFolderId && (
+              <div className="rounded border border-border px-3 py-2 text-xs flex items-center justify-between gap-2">
+                <span className="font-mono text-muted-foreground truncate">☁️ {storage.driveFolderId}</span>
+                {storage.driveWebUrl && (
+                  <a href={storage.driveWebUrl} target="_blank" rel="noreferrer"
+                     className="shrink-0 text-primary hover:underline flex items-center gap-1 text-xs">
+                    Open <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Subfolders: <span className="font-mono">_shared/</span> (cross-project docs, email attachments),{" "}
+              <span className="font-mono">Projects/</span> (per-project docs)
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              No folder configured. Set a company storage root in{" "}
+              <strong>Instance Settings → Storage</strong>, then create the folder.
+            </p>
+            <Button size="sm" onClick={() => autoCreate.mutate()} disabled={autoCreate.isPending}>
+              {autoCreate.isPending ? "Creating..." : "Create folder"}
+            </Button>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export function ClientDetail() {
@@ -385,6 +455,7 @@ export function ClientDetail() {
           items={[
             { value: "overview", label: "Overview" },
             { value: "contacts", label: "Contacts" },
+            { value: "storage", label: "Storage" },
           ]}
           value={activeTab}
           onValueChange={(v) => setActiveTab(v as ClientTab)}
@@ -403,6 +474,7 @@ export function ClientDetail() {
           />
         )}
         {activeTab === "contacts" && <ContactsTab client={client} />}
+        {activeTab === "storage" && <StorageTab client={client} />}
       </div>
 
       {/* Edit client dialog */}
