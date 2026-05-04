@@ -6,12 +6,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { clients, projects, documentSources, instanceSettings } from "@paperclipai/db";
+import { clients, projects, documentSources, companies } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import { createDriveFolder, getAuthenticatedDriveClient } from "./gdrive-auth.js";
 import { logger } from "../middleware/logger.js";
-
-const SINGLETON_KEY = "default";
 
 // ── Company storage root ──────────────────────────────────────────────────────
 
@@ -20,42 +18,32 @@ export interface StorageRoot {
   driveFolderId: string | null;
 }
 
-export async function getCompanyStorageRoot(db: Db): Promise<StorageRoot> {
+export async function getCompanyStorageRoot(db: Db, companyId: string): Promise<StorageRoot> {
   const [row] = await db
-    .select({ general: instanceSettings.general })
-    .from(instanceSettings)
-    .where(eq(instanceSettings.singletonKey, SINGLETON_KEY))
+    .select({ storageLocalPath: companies.storageLocalPath, storageDriveFolderId: companies.storageDriveFolderId })
+    .from(companies)
+    .where(eq(companies.id, companyId))
     .limit(1);
-  const g = (row?.general ?? {}) as Record<string, unknown>;
   return {
-    localPath: (g.storageRootLocalPath as string | null) ?? null,
-    driveFolderId: (g.storageRootDriveFolderId as string | null) ?? null,
+    localPath: row?.storageLocalPath ?? null,
+    driveFolderId: row?.storageDriveFolderId ?? null,
   };
 }
 
-export async function setCompanyStorageRoot(db: Db, root: StorageRoot): Promise<void> {
-  const [existing] = await db
-    .select({ general: instanceSettings.general })
-    .from(instanceSettings)
-    .where(eq(instanceSettings.singletonKey, SINGLETON_KEY))
-    .limit(1);
-  const general = {
-    ...((existing?.general ?? {}) as Record<string, unknown>),
-    storageRootLocalPath: root.localPath ?? null,
-    storageRootDriveFolderId: root.driveFolderId ?? null,
-  };
-  if (existing) {
-    await db
-      .update(instanceSettings)
-      .set({ general, updatedAt: new Date() })
-      .where(eq(instanceSettings.singletonKey, SINGLETON_KEY));
-  } else {
-    await db.insert(instanceSettings).values({
-      singletonKey: SINGLETON_KEY,
-      general,
-      experimental: {},
-    });
-  }
+export async function setCompanyStorageRoot(db: Db, companyId: string, root: StorageRoot): Promise<void> {
+  await db.update(companies).set({
+    storageLocalPath: root.localPath ?? null,
+    storageDriveFolderId: root.driveFolderId ?? null,
+    updatedAt: new Date(),
+  }).where(eq(companies.id, companyId));
+}
+
+/** List all companies that have a storage root configured — for the "copy from" picker. */
+export async function listCompaniesWithStorage(db: Db): Promise<Array<{ id: string; name: string; localPath: string | null; driveFolderId: string | null }>> {
+  const rows = await db
+    .select({ id: companies.id, name: companies.name, localPath: companies.storageLocalPath, driveFolderId: companies.storageDriveFolderId })
+    .from(companies);
+  return rows.filter((r) => r.localPath || r.driveFolderId);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -95,7 +83,7 @@ export async function ensureClientFolder(db: Db, clientId: string): Promise<void
   if (!client) return;
   if (client.localPath || client.driveFolderId) return;
 
-  const root = await getCompanyStorageRoot(db);
+  const root = await getCompanyStorageRoot(db, client.companyId);
   const folderName = safeName(client.name);
 
   try {
@@ -166,7 +154,7 @@ export async function ensureProjectFolder(db: Db, projectId: string): Promise<vo
   }
 
   if (!parentDriveId && !parentLocalPath) {
-    const root = await getCompanyStorageRoot(db);
+    const root = await getCompanyStorageRoot(db, project.companyId);
     if (root.driveFolderId) parentDriveId = root.driveFolderId;
     else if (root.localPath) parentLocalPath = path.join(root.localPath, "Projects");
   }

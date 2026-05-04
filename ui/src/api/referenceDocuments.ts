@@ -84,8 +84,12 @@ export const referenceDocumentsApi = {
       "/instance/storage/local/test",
       { localPath },
     ),
-  getCompanyStorageRoot: () =>
-    api.get<CompanyStorageRoot>("/instance/storage/root"),
-  setCompanyStorageRoot: (root: CompanyStorageRoot) =>
-    api.put<{ ok: boolean }>("/instance/storage/root", root),
+  getCompanyStorageRoot: (companyId: string) =>
+    api.get<CompanyStorageRoot>(`/companies/${encodeURIComponent(companyId)}/storage/root`),
+  setCompanyStorageRoot: (companyId: string, body: CompanyStorageRoot & { copyFromCompanyId?: string }) =>
+    api.put<{ ok: boolean }>(`/companies/${encodeURIComponent(companyId)}/storage/root`, body),
+  listCompaniesWithStorage: () =>
+    api.get<Array<{ id: string; name: string; localPath: string | null; driveFolderId: string | null }>>(
+      "/instance/storage/companies-with-storage",
+    ),
 };

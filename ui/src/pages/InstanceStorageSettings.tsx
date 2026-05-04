@@ -8,28 +8,48 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "../lib/utils";
 
-function CompanyStorageRootSection() {
+function CompanyStorageRootSection({ companyId }: { companyId: string | null }) {
   const qc = useQueryClient();
   const [localPath, setLocalPath] = useState("");
   const [driveFolderId, setDriveFolderId] = useState("");
   const [editing, setEditing] = useState(false);
 
   const { data: root } = useQuery({
-    queryKey: ["company-storage-root"],
-    queryFn: () => referenceDocumentsApi.getCompanyStorageRoot(),
+    queryKey: ["company-storage-root", companyId],
+    queryFn: () => referenceDocumentsApi.getCompanyStorageRoot(companyId!),
+    enabled: !!companyId,
   });
+
+  const { data: otherCompanies = [] } = useQuery({
+    queryKey: ["companies-with-storage"],
+    queryFn: () => referenceDocumentsApi.listCompaniesWithStorage(),
+    enabled: !!companyId,
+  });
+
+  const otherConfigured = otherCompanies.filter((c) => c.id !== companyId);
 
   const save = useMutation({
     mutationFn: () =>
-      referenceDocumentsApi.setCompanyStorageRoot({
+      referenceDocumentsApi.setCompanyStorageRoot(companyId!, {
         localPath: localPath.trim() || null,
         driveFolderId: driveFolderId.trim() || null,
       }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["company-storage-root"] });
+      qc.invalidateQueries({ queryKey: ["company-storage-root", companyId] });
+      qc.invalidateQueries({ queryKey: ["companies-with-storage"] });
       setEditing(false);
     },
   });
+
+  const copyFrom = useMutation({
+    mutationFn: (fromCompanyId: string) =>
+      referenceDocumentsApi.setCompanyStorageRoot(companyId!, { localPath: null, driveFolderId: null, copyFromCompanyId: fromCompanyId }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["company-storage-root", companyId] });
+    },
+  });
+
+  if (!companyId) return null;
 
   const configured = !!(root?.localPath || root?.driveFolderId);
 
@@ -40,10 +60,29 @@ function CompanyStorageRootSection() {
         <h3 className="text-sm font-semibold">Company Storage Root</h3>
       </div>
       <p className="text-xs text-muted-foreground">
-        Base folder for all client and project documents. Client folders are created as{" "}
-        <span className="font-mono text-xs">root/Clients/ClientName/</span> automatically.
-        Set either a local path OR a Google Drive folder ID.
+        Base folder for this company's client and project documents. Client folders auto-created as{" "}
+        <span className="font-mono text-xs">root/Clients/ClientName/</span>.
+        Set a local path OR a Google Drive folder ID.
       </p>
+
+      {/* Copy from another company */}
+      {otherConfigured.length > 0 && !configured && (
+        <div className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2 flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-muted-foreground shrink-0">Copy from:</span>
+          {otherConfigured.map((c) => (
+            <Button
+              key={c.id}
+              size="sm"
+              variant="outline"
+              className="h-6 text-xs"
+              disabled={copyFrom.isPending}
+              onClick={() => copyFrom.mutate(c.id)}
+            >
+              {c.name}
+            </Button>
+          ))}
+        </div>
+      )}
 
       {configured && !editing ? (
         <div className="rounded-lg border border-border p-3 space-y-1.5">
@@ -55,11 +94,24 @@ function CompanyStorageRootSection() {
               ☁️ Drive folder: {root.driveFolderId}
             </p>
           )}
-          <Button size="sm" variant="outline" className="h-7 text-xs mt-1" onClick={() => {
-            setLocalPath(root?.localPath ?? "");
-            setDriveFolderId(root?.driveFolderId ?? "");
-            setEditing(true);
-          }}>Edit</Button>
+          <div className="flex gap-2 mt-1">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => {
+              setLocalPath(root?.localPath ?? "");
+              setDriveFolderId(root?.driveFolderId ?? "");
+              setEditing(true);
+            }}>Edit</Button>
+            {otherConfigured.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">or copy from:</span>
+                {otherConfigured.map((c) => (
+                  <Button key={c.id} size="sm" variant="ghost" className="h-6 text-xs"
+                    disabled={copyFrom.isPending} onClick={() => copyFrom.mutate(c.id)}>
+                    {c.name}
+                  </Button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -706,7 +758,7 @@ export function InstanceStorageSettings() {
         )}
       </div>
 
-      <CompanyStorageRootSection />
+      <CompanyStorageRootSection companyId={selectedCompanyId ?? null} />
 
       <div className="border-t border-border pt-6">
         <GoogleOAuthCredsSection />

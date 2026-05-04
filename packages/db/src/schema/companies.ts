@@ -22,6 +22,9 @@ export const companies = pgTable(
     ownerEmail: text("owner_email"),
     // v3: email-triage agent override (nullable, defaults to CEO resolution)
     triageAgentId: uuid("triage_agent_id"),
+    // v3: per-company document storage root
+    storageLocalPath: text("storage_local_path"),
+    storageDriveFolderId: text("storage_drive_folder_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
