@@ -15,6 +15,7 @@ import {
   projects,
 } from "@paperclipai/db";
 import { saveAttachment } from "./attachment-storage.js";
+import { fileAttachmentToClientFolder } from "./client-storage.js";
 import { clientService } from "./clients.js";
 import { contactService } from "./contacts.js";
 import { issueService } from "./issues.js";
@@ -149,6 +150,33 @@ export function emailProcessorService(db: Db) {
     // operators can retry later.
     try {
       await routeInbound(db, inserted!.id, input.emailAccountId, fromAddr, toAddrs, subject);
+
+      // File attachments to client folder (fire-and-forget, non-fatal)
+      if (attachmentCount > 0) {
+        const [emailRow] = await db
+          .select({ matchedClientId: emailMessages.matchedClientId, attachmentsPath: emailMessages.attachmentsPath })
+          .from(emailMessages)
+          .where(eq(emailMessages.id, inserted!.id))
+          .limit(1);
+        if (emailRow?.matchedClientId && emailRow?.attachmentsPath) {
+          const { resolveEmailAttachmentsRoot } = await import("../home-paths.js");
+          const { readdir } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          const attachDir = join(resolveEmailAttachmentsRoot(), emailRow.attachmentsPath);
+          readdir(attachDir).then((files) => {
+            for (const file of files) {
+              void fileAttachmentToClientFolder(
+                db,
+                join(attachDir, file),
+                file,
+                emailRow.matchedClientId!,
+                "emails",
+              );
+            }
+          }).catch(() => {});
+        }
+      }
+
       // Workflow eval is for inbound triage only. Agent-voice replies and
       // other non-triage paths set matchedAgentId/issueId by other means.
       // Skip workflow for self-loop emails (ignored by routeInbound loop guard).
