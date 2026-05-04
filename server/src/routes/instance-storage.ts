@@ -14,6 +14,7 @@ import {
   getAuthenticatedDriveClient,
 } from "../services/gdrive-auth.js";
 import { SUPPORTED_EXTENSIONS } from "../services/document-extractor.js";
+import { getCompanyStorageRoot, setCompanyStorageRoot } from "../services/client-storage.js";
 
 const SKIP_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next", ".nuxt",
@@ -174,6 +175,22 @@ export function instanceStorageRoutes(db: Db): Router {
     } catch {
       res.json({ ok: false, error: `Cannot access path: ${p}` });
     }
+  });
+
+  // Company storage root (for client/project folder hierarchy)
+  router.get("/instance/storage/root", async (req, res) => {
+    assertAdmin(req);
+    res.json(await getCompanyStorageRoot(db));
+  });
+
+  router.put("/instance/storage/root", async (req, res) => {
+    assertAdmin(req);
+    const { localPath, driveFolderId } = req.body as { localPath?: string | null; driveFolderId?: string | null };
+    await setCompanyStorageRoot(db, {
+      localPath: localPath?.trim() || null,
+      driveFolderId: driveFolderId?.trim() || null,
+    });
+    res.json({ ok: true });
   });
 
   return router;

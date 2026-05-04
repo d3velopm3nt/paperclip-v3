@@ -1,8 +1,11 @@
 // v3: clients CRUD + sender-domain matching.
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
+import { clients, projects } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import { clientService } from "../services/clients.js";
 import { contactService } from "../services/contacts.js";
+import { ensureClientFolder } from "../services/client-storage.js";
 import { badRequest, notFound } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
 
@@ -131,6 +134,61 @@ export function clientRoutes(db: Db) {
     assertCompanyAccess(req, found.companyId);
     await contactSvc.remove(found.companyId, req.params.contactId);
     res.status(204).send();
+  });
+
+  // ── Storage endpoints ─────────────────────────────────────────────────────
+
+  router.get("/clients/:id/storage", async (req, res) => {
+    const row = await svc.getById(req.params.id);
+    if (!row) throw notFound("Client not found");
+    assertCompanyAccess(req, row.companyId);
+    const driveWebUrl = row.driveFolderId
+      ? `https://drive.google.com/drive/folders/${row.driveFolderId}`
+      : null;
+    res.json({ localPath: row.localPath, driveFolderId: row.driveFolderId, driveWebUrl });
+  });
+
+  router.put("/clients/:id/storage", async (req, res) => {
+    const row = await svc.getById(req.params.id);
+    if (!row) throw notFound("Client not found");
+    assertCompanyAccess(req, row.companyId);
+    const { localPath, driveFolderId, autoCreate } = req.body as {
+      localPath?: string | null;
+      driveFolderId?: string | null;
+      autoCreate?: boolean;
+    };
+    if (autoCreate) {
+      await ensureClientFolder(db, row.id);
+      const updated = await svc.getById(row.id);
+      const webUrl = updated?.driveFolderId
+        ? `https://drive.google.com/drive/folders/${updated.driveFolderId}`
+        : null;
+      res.json({ localPath: updated?.localPath ?? null, driveFolderId: updated?.driveFolderId ?? null, driveWebUrl: webUrl });
+      return;
+    }
+    await db.update(clients).set({
+      localPath: localPath?.trim() || null,
+      driveFolderId: driveFolderId?.trim() || null,
+      updatedAt: new Date(),
+    }).where(eq(clients.id, row.id));
+    const webUrl = driveFolderId ? `https://drive.google.com/drive/folders/${driveFolderId}` : null;
+    res.json({ localPath: localPath ?? null, driveFolderId: driveFolderId ?? null, driveWebUrl: webUrl });
+  });
+
+  router.get("/clients/:clientId/projects/:projectId/storage", async (req, res) => {
+    const client = await svc.getById(req.params.clientId);
+    if (!client) throw notFound("Client not found");
+    assertCompanyAccess(req, client.companyId);
+    const [project] = await db
+      .select({ id: projects.id, localPath: projects.localPath, driveFolderId: projects.driveFolderId })
+      .from(projects)
+      .where(eq(projects.id, req.params.projectId))
+      .limit(1);
+    if (!project) throw notFound("Project not found");
+    const driveWebUrl = project.driveFolderId
+      ? `https://drive.google.com/drive/folders/${project.driveFolderId}`
+      : null;
+    res.json({ localPath: project.localPath, driveFolderId: project.driveFolderId, driveWebUrl });
   });
 
   return router;
