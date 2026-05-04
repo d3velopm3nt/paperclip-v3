@@ -95,7 +95,7 @@ export async function getAuthUrl(db: Db, redirectUri: string): Promise<string> {
   return oauth2.generateAuthUrl({
     access_type: "offline",
     scope: [
-      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive", // full access — needed for folder/file creation
       "https://www.googleapis.com/auth/userinfo.email",
     ],
     prompt: "consent",
@@ -155,4 +155,33 @@ export async function disconnectGDrive(db: Db): Promise<void> {
     .update(instanceSettings)
     .set({ general, updatedAt: new Date() })
     .where(eq(instanceSettings.singletonKey, SINGLETON_KEY));
+}
+
+/**
+ * Creates a folder in Google Drive and returns its ID.
+ * parentId defaults to "root" (My Drive root).
+ */
+export async function createDriveFolder(
+  db: Db,
+  name: string,
+  parentId = "root",
+): Promise<string> {
+  const drive = await getAuthenticatedDriveClient(db);
+  if (!drive) throw new Error("Google Drive not authenticated");
+  const res = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    },
+    fields: "id",
+  });
+  const id = res.data.id;
+  if (!id) throw new Error("Drive folder creation returned no ID");
+  return id;
+}
+
+/** Returns the web URL for a Drive folder by ID. */
+export function driveFolderWebUrl(folderId: string): string {
+  return `https://drive.google.com/drive/folders/${folderId}`;
 }
