@@ -10,9 +10,8 @@ import { logger } from "../middleware/logger.js";
 import { assertBoard } from "./authz.js";
 import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
 import { readInstanceToken, writeInstanceToken, deleteInstanceToken } from "../services/instance-token-store.js";
-import { sendTelegramMessage } from "../services/telegram-adapter.js";
+import { routeInboundMessage } from "../services/inbound-router.js";
 
-const WA_OPERATOR_TELEGRAM_CHAT_ID = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
 const WA_COMPANY_ID = process.env.WHATSAPP_COMPANY_ID ?? "";
 
 // ─── Startup helper ───────────────────────────────────────────────────────────
@@ -218,37 +217,13 @@ async function handleInboundWhatsApp(
 
   logger.info({ fromPhone: normalizedFrom, contactName, text }, "whatsapp: inbound message ✓");
 
-  const { chatService } = await import("../services/chat.js");
-  const { chatDirectReply, pickAgentForDispatcher } = await import("../services/chat-direct.js");
-
-  const thread = await chatService(db).getOrCreateWhatsAppThread(companyId, normalizedFrom, contactName);
-
-  const agentId = await pickAgentForDispatcher(db, companyId, text);
-  if (!agentId) {
-    logger.warn({ companyId, fromPhone }, "whatsapp webhook: no agent available for analysis");
-    return;
-  }
-
-  logger.info({ fromPhone, agentId, threadId: thread.id }, "whatsapp webhook: running agent analysis");
-
-  // Run agent analysis — result stored in DB for operator review in /chat
-  await chatDirectReply(db, companyId, agentId, thread.id, text, {
+  await routeInboundMessage(db, {
+    companyId,
     platform: "whatsapp",
-    whatsappFrom: normalizedFrom,
-    contactName,
-    raw,
+    fromAddr: normalizedFrom,
+    body: text,
+    threadKey: normalizedFrom,
   });
-
-  // Notify operator via Telegram (if configured)
-  const tgToken = process.env.TELEGRAM_BOT_TOKEN ?? "";
-  const tgChatId = WA_OPERATOR_TELEGRAM_CHAT_ID;
-  if (tgToken && tgChatId) {
-    const preview = text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    const notif = `📱 *WhatsApp* from ${contactName} (${normalizedFrom})\n\n${preview}\n\n_Analysis ready in /chat_`;
-    sendTelegramMessage(tgToken, tgChatId, notif).catch((err) =>
-      logger.warn({ err }, "whatsapp: operator Telegram notification failed"),
-    );
-  }
 }
 
 // ─── Status helper (used by channels/status endpoint) ────────────────────────
