@@ -1,5 +1,5 @@
 // v3: inbox view of processed inbound email for the selected company.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@/lib/router";
 import { useToast } from "../context/ToastContext";
@@ -30,6 +30,9 @@ import {
   Trash2,
   Bot,
   Users,
+  Eye,
+  Download,
+  FileText,
 } from "lucide-react";
 
 type MailboxTab = "inbound" | "agent_voice";
@@ -323,6 +326,95 @@ function MessageRow({
   );
 }
 
+function AttachmentRow({ messageId, att }: {
+  messageId: string;
+  att: EmailMessageDetail["attachments"][0];
+}) {
+  const [previewing, setPreviewing] = useState(false);
+  const isImage = att.contentType.startsWith("image/");
+  const isPdf = att.contentType === "application/pdf";
+  const previewUrl = emailMessagesApi.attachmentUrl(messageId, att.id, true);
+  const downloadUrl = emailMessagesApi.attachmentUrl(messageId, att.id, false);
+
+  return (
+    <div className="rounded-md border border-border/70 bg-background overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+        <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
+        <span className="flex-1 truncate">{att.filename}</span>
+        <span className="text-xs text-muted-foreground shrink-0">{formatBytes(att.sizeBytes)}</span>
+        {(isImage || isPdf) && (
+          <button
+            className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
+            onClick={() => setPreviewing((v) => !v)}
+          >
+            <Eye className="h-3.5 w-3.5" />{previewing ? "Hide" : "Preview"}
+          </button>
+        )}
+        <a href={downloadUrl} download className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0">
+          <Download className="h-3.5 w-3.5" />
+        </a>
+      </div>
+      {previewing && isImage && (
+        <div className="border-t border-border/50 p-2 bg-muted/20 flex justify-center">
+          <img src={previewUrl} alt={att.filename} className="max-h-80 max-w-full object-contain rounded" />
+        </div>
+      )}
+      {previewing && isPdf && (
+        <div className="border-t border-border/50">
+          <iframe src={previewUrl} title={att.filename} className="w-full h-96" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EmailBodyRenderer({ messageId, plainBody }: { messageId: string; plainBody: string }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["email-html", messageId],
+    queryFn: () => emailMessagesApi.getHtml(messageId),
+  });
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Auto-size iframe to content height
+  const handleIframeLoad = () => {
+    const frame = iframeRef.current;
+    if (!frame?.contentDocument?.body) return;
+    frame.style.height = `${frame.contentDocument.body.scrollHeight + 32}px`;
+  };
+
+  if (isLoading) {
+    return <Card className="p-4"><p className="text-xs text-muted-foreground">Loading...</p></Card>;
+  }
+
+  if (data?.html) {
+    // Sandboxed iframe: allow-same-origin for image loading, NO allow-scripts
+    const darkStyles = `<style>
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: #e5e5e5; background: transparent; margin: 0; padding: 16px; word-break: break-word; }
+      a { color: #60a5fa; } img { max-width: 100%; height: auto; }
+    </style>`;
+    const srcDoc = `<!DOCTYPE html><html><head>${darkStyles}</head><body>${data.html}</body></html>`;
+    return (
+      <Card className="overflow-hidden">
+        <iframe
+          ref={iframeRef}
+          srcDoc={srcDoc}
+          sandbox="allow-same-origin"
+          title="Email body"
+          className="w-full min-h-32 border-0"
+          style={{ height: "400px" }}
+          onLoad={handleIframeLoad}
+        />
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-4">
+      <pre className="text-sm whitespace-pre-wrap break-words font-sans">{plainBody || "(empty body)"}</pre>
+    </Card>
+  );
+}
+
 function MessageDetail({
   detail,
   loading,
@@ -408,32 +500,21 @@ function MessageDetail({
         </Card>
       )}
 
-      {detail.attachments.length > 0 && (
+      {detail.attachments.filter((a) => !a.isInline).length > 0 && (
         <div>
-          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2">
-            Attachments ({detail.attachments.length})
+          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground mb-2 flex items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5" />
+            Attachments ({detail.attachments.filter((a) => !a.isInline).length})
           </h3>
           <div className="flex flex-col gap-1.5">
-            {detail.attachments.map((a) => (
-              <a
-                key={a.id}
-                href={emailMessagesApi.attachmentUrl(detail.id, a.id)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 rounded-md border border-border/70 bg-background px-3 py-2 text-sm hover:border-foreground/30"
-              >
-                <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
-                <span className="flex-1 truncate">{a.filename}</span>
-                <span className="text-xs text-muted-foreground shrink-0">{formatBytes(a.sizeBytes)}</span>
-              </a>
+            {detail.attachments.filter((a) => !a.isInline).map((a) => (
+              <AttachmentRow key={a.id} messageId={detail.id} att={a} />
             ))}
           </div>
         </div>
       )}
 
-      <Card className="p-4">
-        <pre className="text-sm whitespace-pre-wrap break-words font-sans">{detail.body || "(empty body)"}</pre>
-      </Card>
+      <EmailBodyRenderer messageId={detail.id} plainBody={detail.body} />
 
       {(detail.issueId || detail.approvalId) && (
         <div className="flex items-center gap-2 text-xs text-muted-foreground">

@@ -49,8 +49,10 @@ export const emailMessagesApi = {
   },
   get: (id: string) =>
     api.get<EmailMessageDetail>(`/email-messages/${encodeURIComponent(id)}`),
-  attachmentUrl: (messageId: string, attachmentId: string) =>
-    `/api/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}`,
+  attachmentUrl: (messageId: string, attachmentId: string, preview = false) =>
+    `/api/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}${preview ? "?preview=true" : ""}`,
+  getHtml: (id: string) =>
+    api.get<{ html: string | null }>(`/email-messages/${encodeURIComponent(id)}/html`),
   reprocess: (id: string) =>
     api.post<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}/reprocess`, {}),
   remove: (id: string) =>
