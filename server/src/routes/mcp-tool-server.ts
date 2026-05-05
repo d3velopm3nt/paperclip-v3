@@ -1,10 +1,14 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts } from "@paperclipai/db";
+import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { logActivity } from "../services/activity-log.js";
+import { logger } from "../middleware/logger.js";
+import { sendTelegramMessage } from "../services/telegram-adapter.js";
+import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
+import { readInstanceToken } from "../services/instance-token-store.js";
 
 // ── JSON-RPC helpers ──────────────────────────────────────────────────────────
 
@@ -160,6 +164,96 @@ const TOOLS = [
         phone: { type: "string", description: "Phone number (optional)" },
         role: { type: "string", description: "Job title or role (optional)" },
         notes: { type: "string", description: "Notes about this contact (optional)" },
+      },
+    },
+  },
+  {
+    name: "create_plan",
+    description: "Create a plan for an issue and queue it for operator approval. Returns the approval ID. The operator will see the proposal and can approve, decline, or question it.",
+    inputSchema: {
+      type: "object",
+      required: ["issueId", "proposalText"],
+      properties: {
+        issueId: { type: "string", description: "UUID of the issue this plan addresses" },
+        proposalText: { type: "string", description: "Full human-readable plan shown to operator for approval" },
+        steps: { type: "array", items: { type: "string" }, description: "Ordered list of plan steps (optional, rendered inside proposalText)" },
+      },
+    },
+  },
+  {
+    name: "add_issue_comment",
+    description: "Add a comment to an issue. Use for progress updates, agent questions, or blocking reasons.",
+    inputSchema: {
+      type: "object",
+      required: ["issueId", "body"],
+      properties: {
+        issueId: { type: "string" },
+        body: { type: "string", description: "Comment body (markdown supported)" },
+      },
+    },
+  },
+  {
+    name: "create_project",
+    description: "Create a new project for this company.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string" },
+        description: { type: "string" },
+        clientId: { type: "string", description: "UUID of client to associate" },
+        status: { type: "string", description: "backlog|active (default: backlog)" },
+      },
+    },
+  },
+  {
+    name: "notify_operator",
+    description: "Send an immediate notification to the operator via Telegram (or store in-app if Telegram not configured). Use for alerts, updates, and questions that don't need a formal approval.",
+    inputSchema: {
+      type: "object",
+      required: ["body"],
+      properties: {
+        body: { type: "string", description: "Message text to send to operator" },
+        issueId: { type: "string", description: "Optional — attaches message to this issue thread" },
+      },
+    },
+  },
+  {
+    name: "send_client_reply",
+    description: "Prepare an outbound reply to a client. Creates a 'client_reply' approval for operator review (unless approval is disabled in settings). The message is NOT sent until the operator approves it. Returns the approval ID.",
+    inputSchema: {
+      type: "object",
+      required: ["clientId", "body", "channel"],
+      properties: {
+        clientId: { type: "string", description: "UUID of the client to reply to" },
+        body: { type: "string", description: "Full message body to send to the client" },
+        channel: { type: "string", description: "email | whatsapp — channel to use for sending" },
+        threadKey: { type: "string", description: "Reply-to thread key (email Message-ID or WhatsApp phone number)" },
+        issueId: { type: "string", description: "Optional issue this reply relates to" },
+        subject: { type: "string", description: "Email subject (only for email channel)" },
+      },
+    },
+  },
+  {
+    name: "set_issue_blocked",
+    description: "Mark an issue as blocked and add a comment explaining why. Automatically notifies the operator via Telegram.",
+    inputSchema: {
+      type: "object",
+      required: ["issueId", "reason"],
+      properties: {
+        issueId: { type: "string" },
+        reason: { type: "string", description: "Why the issue is blocked — shown in the comment and operator notification" },
+      },
+    },
+  },
+  {
+    name: "get_client",
+    description: "Get details for a specific client: name, email domain, extra emails, open issues, and storage info.",
+    inputSchema: {
+      type: "object",
+      required: ["clientId"],
+      properties: {
+        clientId: { type: "string" },
       },
     },
   },
@@ -512,6 +606,139 @@ async function handleTool(
     });
 
     return JSON.stringify(updated, null, 2);
+  }
+
+  if (name === "create_plan") {
+    const { issueId, proposalText, steps } = args as { issueId: string; proposalText: string; steps?: string[] };
+    const stepsText = steps?.length ? "\n\nSteps:\n" + steps.map((s, i) => `  ${i + 1}. ${s}`).join("\n") : "";
+    const fullProposal = `${proposalText}${stepsText}`;
+    const [approval] = await db.insert(approvals).values({
+      companyId,
+      type: "plan",
+      requestedByAgentId: null,
+      status: "pending",
+      payload: { issueId, proposalText: fullProposal, steps: steps ?? [] },
+    }).returning({ id: approvals.id });
+    return `Plan created. Approval ID: ${approval!.id}. Awaiting operator approval.`;
+  }
+
+  if (name === "add_issue_comment") {
+    const { issueId, body: commentBody } = args as { issueId: string; body: string };
+    const [existing] = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1);
+    if (!existing) return `Issue ${issueId} not found`;
+    await db.insert(issueComments).values({
+      issueId,
+      companyId: existing.companyId,
+      body: commentBody,
+      authorAgentId: null,
+    });
+    return `Comment added to issue ${issueId}.`;
+  }
+
+  if (name === "create_project") {
+    const { name: projectName, description, clientId, status } = args as {
+      name: string; description?: string; clientId?: string; status?: string;
+    };
+    const [project] = await db.insert(projects).values({
+      companyId,
+      name: projectName,
+      description: description ?? null,
+      clientId: clientId ?? null,
+      status: status ?? "backlog",
+    }).returning({ id: projects.id, name: projects.name });
+    return `Project created: "${project!.name}" (ID: ${project!.id})`;
+  }
+
+  if (name === "notify_operator") {
+    const { body: notifyBody, issueId: notifyIssueId } = args as { body: string; issueId?: string };
+    const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
+    const chatId = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+    if (token && chatId) {
+      await sendTelegramMessage(token, chatId, notifyBody).catch((err) => {
+        logger.warn({ err }, "notify_operator: telegram send failed");
+      });
+    } else {
+      await db.insert(operatorMessages).values({
+        companyId,
+        issueId: notifyIssueId ?? null,
+        direction: "outbound",
+        platform: "chat",
+        source: "orchestrator",
+        body: notifyBody,
+        rawPayload: null,
+      });
+    }
+    return `Operator notified.`;
+  }
+
+  if (name === "send_client_reply") {
+    const { clientId: replyClientId, body: replyBody, channel, threadKey: replyThreadKey, issueId: replyIssueId, subject: replySubject } = args as {
+      clientId: string; body: string; channel: string; threadKey?: string; issueId?: string; subject?: string;
+    };
+    const [settings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
+    const general = (settings?.general ?? {}) as Record<string, unknown>;
+    const requireApproval = (general.requireClientReplyApproval as boolean | undefined) ?? true;
+
+    if (!requireApproval && channel === "whatsapp" && replyThreadKey) {
+      const waToken = (await readInstanceToken(db, "whatsappToken")) ?? (process.env.WHATSAPP_TOKEN ?? "");
+      const waPhone = (await readInstanceToken(db, "whatsappPhoneNumberId")) ?? (process.env.WHATSAPP_PHONE_NUMBER_ID ?? "");
+      if (waToken && waPhone) {
+        const phone = replyThreadKey.replace(/\D/g, "");
+        await sendWhatsAppMessage(waToken, waPhone, phone, replyBody);
+        return `Reply sent directly to client via WhatsApp (approval bypassed per company settings).`;
+      }
+    }
+
+    const [approval] = await db.insert(approvals).values({
+      companyId,
+      type: "client_reply",
+      requestedByAgentId: null,
+      status: "pending",
+      payload: {
+        clientId: replyClientId,
+        body: replyBody,
+        channel,
+        threadKey: replyThreadKey ?? null,
+        issueId: replyIssueId ?? null,
+        subject: replySubject ?? null,
+      },
+    }).returning({ id: approvals.id });
+    return `Client reply queued for approval. Approval ID: ${approval!.id}. Operator must approve before message is sent.`;
+  }
+
+  if (name === "set_issue_blocked") {
+    const { issueId: blockedId, reason } = args as { issueId: string; reason: string };
+    const [existing] = await db.select({ companyId: issues.companyId, title: issues.title }).from(issues).where(eq(issues.id, blockedId)).limit(1);
+    if (!existing) return `Issue ${blockedId} not found`;
+    await db.update(issues).set({ status: "blocked", updatedAt: new Date() }).where(eq(issues.id, blockedId));
+    await db.insert(issueComments).values({
+      issueId: blockedId,
+      companyId: existing.companyId,
+      body: `🚫 **Blocked:** ${reason}`,
+      authorAgentId: null,
+    });
+    const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
+    const chatId = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+    if (token && chatId) {
+      await sendTelegramMessage(token, chatId, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
+    }
+    return `Issue marked as blocked. Operator notified.`;
+  }
+
+  if (name === "get_client") {
+    const { clientId: gcId } = args as { clientId: string };
+    const [client] = await db
+      .select({ id: clients.id, name: clients.name, emailDomain: clients.emailDomain, extraEmails: clients.extraEmails, notes: clients.notes, localPath: clients.localPath, driveFolderId: clients.driveFolderId })
+      .from(clients)
+      .where(and(eq(clients.id, gcId), eq(clients.companyId, companyId)))
+      .limit(1);
+    if (!client) return `Client ${gcId} not found`;
+    const openIssues = await db
+      .select({ id: issues.id, title: issues.title, status: issues.status })
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.clientId, gcId)))
+      .limit(10);
+    return JSON.stringify({ ...client, openIssues }, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;
