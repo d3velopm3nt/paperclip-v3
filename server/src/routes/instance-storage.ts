@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Router, type Request } from "express";
 import type { Db } from "@paperclipai/db";
+import { instanceSettings } from "@paperclipai/db";
+import { eq, sql } from "drizzle-orm";
 import { forbidden } from "../errors.js";
 import {
   getAuthUrl,
@@ -207,6 +209,37 @@ export function instanceStorageRoutes(db: Db): Router {
   router.get("/instance/storage/companies-with-storage", async (req, res) => {
     assertAdmin(req);
     res.json(await listCompaniesWithStorage(db));
+  });
+
+  // Approval gate settings
+  router.get("/instance/approval-settings", async (req, res) => {
+    assertAdmin(req);
+    const [row] = await db.select({ general: instanceSettings.general }).from(instanceSettings).where(eq(instanceSettings.singletonKey, "default")).limit(1);
+    const g = (row?.general ?? {}) as Record<string, unknown>;
+    res.json({
+      requireClientReplyApproval: (g.requireClientReplyApproval as boolean | undefined) ?? true,
+      requirePlanApproval: (g.requirePlanApproval as boolean | undefined) ?? true,
+    });
+  });
+
+  router.put("/instance/approval-settings", async (req, res) => {
+    assertAdmin(req);
+    const { requireClientReplyApproval, requirePlanApproval } = req.body as {
+      requireClientReplyApproval: boolean;
+      requirePlanApproval: boolean;
+    };
+    const patch = JSON.stringify({ requireClientReplyApproval: !!requireClientReplyApproval, requirePlanApproval: !!requirePlanApproval });
+    await db
+      .insert(instanceSettings)
+      .values({ singletonKey: "default", general: { requireClientReplyApproval: !!requireClientReplyApproval, requirePlanApproval: !!requirePlanApproval }, experimental: {} })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: {
+          general: sql`instance_settings.general || ${patch}::jsonb`,
+          updatedAt: new Date(),
+        },
+      });
+    res.json({ ok: true });
   });
 
   return router;

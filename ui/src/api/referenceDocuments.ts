@@ -94,4 +94,8 @@ export const referenceDocumentsApi = {
     api.get<Array<{ id: string; name: string; localPath: string | null; driveFolderId: string | null }>>(
       "/instance/storage/companies-with-storage",
     ),
+  getApprovalSettings: () =>
+    api.get<{ requireClientReplyApproval: boolean; requirePlanApproval: boolean }>("/instance/approval-settings"),
+  setApprovalSettings: (settings: { requireClientReplyApproval: boolean; requirePlanApproval: boolean }) =>
+    api.put<{ ok: boolean }>("/instance/approval-settings", settings),
 };

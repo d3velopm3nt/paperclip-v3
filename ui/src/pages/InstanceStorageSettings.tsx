@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle, Cloud, Globe, HardDrive, KeyRound, Pencil, Plus, RefreshCw, Trash2, X, XCircle } from "lucide-react";
+import { CheckCircle, Cloud, Globe, HardDrive, KeyRound, Pencil, Plus, RefreshCw, Shield, Trash2, X, XCircle } from "lucide-react";
 import { referenceDocumentsApi } from "../api/referenceDocuments";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -751,6 +751,58 @@ function LocalSourcesSection({ companyId }: { companyId: string }) {
   );
 }
 
+function ApprovalSettingsSection() {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({
+    queryKey: ["approval-settings"],
+    queryFn: () => referenceDocumentsApi.getApprovalSettings(),
+  });
+
+  const save = useMutation({
+    mutationFn: (settings: { requireClientReplyApproval: boolean; requirePlanApproval: boolean }) =>
+      referenceDocumentsApi.setApprovalSettings(settings),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["approval-settings"] }),
+  });
+
+  if (isLoading || !data) return null;
+
+  function toggle(key: "requireClientReplyApproval" | "requirePlanApproval") {
+    save.mutate({ ...data!, [key]: !data![key] });
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <Shield className="h-4 w-4 text-amber-400" />
+        <h3 className="text-sm font-semibold">Approval Gates</h3>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Control which actions require operator approval before executing.
+      </p>
+      <div className="space-y-2">
+        {([
+          { key: "requireClientReplyApproval" as const, label: "Client replies", desc: "Approve before any message is sent to a client" },
+          { key: "requirePlanApproval" as const, label: "Plans", desc: "Approve plans before agents execute them" },
+        ]).map(({ key, label, desc }) => (
+          <div key={key} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+            <div>
+              <p className="text-sm font-medium">{label}</p>
+              <p className="text-xs text-muted-foreground">{desc}</p>
+            </div>
+            <button
+              className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors ${data[key] ? "bg-primary" : "bg-muted"}`}
+              onClick={() => toggle(key)}
+              disabled={save.isPending}
+            >
+              <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${data[key] ? "translate-x-4" : "translate-x-0"}`} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function InstanceStorageSettings() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { selectedCompanyId } = useCompany();
@@ -806,6 +858,10 @@ export function InstanceStorageSettings() {
         ) : (
           <p className="text-sm text-muted-foreground">Select a company to configure local folders.</p>
         )}
+      </div>
+
+      <div className="border-t border-border pt-6">
+        <ApprovalSettingsSection />
       </div>
     </div>
   );
