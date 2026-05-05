@@ -68,6 +68,7 @@ export function emailProcessorService(db: Db) {
     const toAddrs = extractEmailAddresses(parsed.to);
     const subject = parsed.subject ?? "";
     const body = parsed.text ?? parsed.html ?? "";
+    const htmlBody = typeof parsed.html === "string" && parsed.html.trim() ? parsed.html : null;
     const receivedAt = parsed.date ?? input.fallbackReceivedAt ?? new Date();
 
     // Dedup check — unique index on (emailAccountId, messageIdHeader) would
@@ -98,6 +99,7 @@ export function emailProcessorService(db: Db) {
         toAddrs,
         subject,
         body: typeof body === "string" ? body : "",
+        htmlBody: htmlBody ?? null,
         receivedAt,
         rawHeaders: Object.fromEntries(parsed.headers ?? []) as Record<string, unknown>,
       })
