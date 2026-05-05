@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FolderSelector, type FolderSelection } from "../components/FolderSelector";
 import {
   Inbox as InboxIcon,
   Mail,
@@ -34,6 +35,7 @@ import {
   Eye,
   Download,
   FileText,
+  FolderOpen,
 } from "lucide-react";
 
 type MailboxTab = "inbound" | "agent_voice";
@@ -278,6 +280,7 @@ export function EmailInbox() {
                 if (ok) deleteMutation.mutate(id);
               }}
               deleting={deleteMutation.isPending}
+              companyId={companyId}
             />
           </div>
         )}
@@ -327,16 +330,39 @@ function MessageRow({
   );
 }
 
-function AttachmentRow({ messageId, att }: {
+function AttachmentRow({ messageId, att, companyId }: {
   messageId: string;
   att: EmailMessageDetail["attachments"][0];
+  companyId: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [fileOpen, setFileOpen] = useState(false);
+  const qc = useQueryClient();
   const isImage = att.contentType.startsWith("image/");
   const isPdf = att.contentType === "application/pdf";
   const canPreview = isImage || isPdf;
   const previewUrl = emailMessagesApi.attachmentUrl(messageId, att.id, true);
   const downloadUrl = emailMessagesApi.attachmentUrl(messageId, att.id, false);
+
+  const fileMutation = useMutation({
+    mutationFn: (opts: { driveFolderId?: string; localPath?: string; clientId?: string }) =>
+      emailMessagesApi.fileAttachment(messageId, att.id, opts),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["email-message", messageId] });
+      setFileOpen(false);
+    },
+  });
+
+  function handleFolderSelect(sel: FolderSelection) {
+    if (sel.type === "source") {
+      if (sel.source.driveFolderId) fileMutation.mutate({ driveFolderId: sel.source.driveFolderId });
+      else if (sel.source.localPath) fileMutation.mutate({ localPath: sel.source.localPath });
+    } else if (sel.type === "drive") {
+      fileMutation.mutate({ driveFolderId: sel.folderId });
+    } else {
+      fileMutation.mutate({ localPath: sel.path });
+    }
+  }
 
   return (
     <>
@@ -350,7 +376,12 @@ function AttachmentRow({ messageId, att }: {
             <CheckCircle2 className="h-3.5 w-3.5" />Filed
           </span>
         ) : (
-          <span className="text-[11px] text-muted-foreground/50 shrink-0">Not filed</span>
+          <button
+            className="text-[11px] text-muted-foreground/60 hover:text-foreground shrink-0 flex items-center gap-1 transition-colors"
+            onClick={() => setFileOpen(true)}
+          >
+            <FolderOpen className="h-3.5 w-3.5" />File
+          </button>
         )}
         {canPreview && (
           <button
@@ -365,6 +396,30 @@ function AttachmentRow({ messageId, att }: {
         </a>
       </div>
 
+      {/* File dialog */}
+      <Dialog open={fileOpen} onOpenChange={setFileOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <FolderOpen className="h-4 w-4 text-amber-400" />
+              File "{att.filename}"
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <FolderSelector companyId={companyId} onSelect={handleFolderSelect} />
+            {fileMutation.isPending && (
+              <p className="text-xs text-muted-foreground">Filing…</p>
+            )}
+            {fileMutation.isError && (
+              <p className="text-xs text-destructive">
+                {fileMutation.error instanceof Error ? fileMutation.error.message : "Failed to file"}
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Preview dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           className="flex flex-col p-0 gap-0"
@@ -456,6 +511,7 @@ function MessageDetail({
   reprocessing,
   onDelete,
   deleting,
+  companyId,
 }: {
   detail: EmailMessageDetail | null;
   loading: boolean;
@@ -464,6 +520,7 @@ function MessageDetail({
   reprocessing: boolean;
   onDelete: (id: string) => void;
   deleting: boolean;
+  companyId: string;
 }) {
   const navigate = useNavigate();
   if (loading || !detail) {
@@ -541,7 +598,7 @@ function MessageDetail({
           </h3>
           <div className="flex flex-col gap-1.5">
             {detail.attachments.filter((a) => !a.isInline).map((a) => (
-              <AttachmentRow key={a.id} messageId={detail.id} att={a} />
+              <AttachmentRow key={a.id} messageId={detail.id} att={a} companyId={companyId} />
             ))}
           </div>
         </div>

@@ -9,6 +9,7 @@ import { badRequest, notFound } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
 import { resolveEmailAttachmentsRoot } from "../home-paths.js";
 import { emailProcessorService } from "../services/email-processor.js";
+import { fileAttachmentToClientFolder } from "../services/client-storage.js";
 
 export function emailMessageRoutes(db: Db) {
   const router = Router();
@@ -219,6 +220,74 @@ export function emailMessageRoutes(db: Db) {
 
     const [updated] = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
     res.json(updated);
+  });
+
+  // POST /api/email-messages/:id/attachments/:attachmentId/file
+  // Manually file an attachment to a chosen folder (Drive folder ID or local path).
+  router.post("/email-messages/:id/attachments/:attachmentId/file", async (req, res) => {
+    const { id, attachmentId } = req.params;
+    const { driveFolderId, localPath, clientId } = req.body as {
+      driveFolderId?: string;
+      localPath?: string;
+      clientId?: string;
+    };
+
+    const [msg] = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    const [att] = await db
+      .select()
+      .from(emailAttachments)
+      .where(and(eq(emailAttachments.id, attachmentId), eq(emailAttachments.emailMessageId, id)))
+      .limit(1);
+    if (!att) throw notFound("Attachment not found");
+
+    const root = resolveEmailAttachmentsRoot();
+    const resolved = path.resolve(att.storagePath);
+    const rel = path.relative(root, resolved);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) throw badRequest("Attachment path outside storage root");
+    if (!existsSync(resolved)) throw notFound("Attachment file missing on disk");
+
+    if (clientId) {
+      // File via client folder logic (handles both Drive and local)
+      await fileAttachmentToClientFolder(db, att.storagePath, att.filename, clientId, "emails", att.id);
+    } else if (driveFolderId) {
+      // File to an arbitrary Drive folder
+      const { getAuthenticatedDriveClient } = await import("../services/gdrive-auth.js");
+      const drive = await getAuthenticatedDriveClient(db);
+      if (!drive) { res.status(422).json({ error: "Google Drive not connected" }); return; }
+      const { readFile } = await import("node:fs/promises");
+      const content = await readFile(resolved);
+      const result = await drive.files.create({
+        requestBody: { name: att.filename, parents: [driveFolderId] },
+        media: { body: Buffer.from(content) },
+        fields: "id",
+      });
+      const filedPath = result.data.id ? `drive:${result.data.id}` : `drive:${driveFolderId}/${att.filename}`;
+      await db.update(emailAttachments).set({ filedAt: new Date(), filedPath }).where(eq(emailAttachments.id, att.id));
+    } else if (localPath) {
+      const { mkdir, copyFile } = await import("node:fs/promises");
+      await mkdir(localPath, { recursive: true });
+      const dest = path.join(localPath, att.filename);
+      await copyFile(resolved, dest);
+      await db.update(emailAttachments).set({ filedAt: new Date(), filedPath: dest }).where(eq(emailAttachments.id, att.id));
+    } else {
+      throw badRequest("Provide driveFolderId, localPath, or clientId");
+    }
+
+    const [updatedAtt] = await db.select().from(emailAttachments).where(eq(emailAttachments.id, att.id)).limit(1);
+    res.json({
+      id: updatedAtt!.id,
+      filedAt: updatedAtt!.filedAt?.toISOString() ?? null,
+      filedPath: updatedAtt!.filedPath ?? null,
+    });
   });
 
   return router;

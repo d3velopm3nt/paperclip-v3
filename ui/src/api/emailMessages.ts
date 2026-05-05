@@ -25,6 +25,7 @@ export interface EmailMessageSummary {
   processedAt: string | null;
   processingState: string;
   matchedCompanyId: string | null;
+  matchedClientId: string | null;
   matchedAgentId: string | null;
   issueId: string | null;
   approvalId: string | null;
@@ -55,6 +56,11 @@ export const emailMessagesApi = {
     `/api/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}${preview ? "?preview=true" : ""}`,
   getHtml: (id: string) =>
     api.get<{ html: string | null }>(`/email-messages/${encodeURIComponent(id)}/html`),
+  fileAttachment: (messageId: string, attachmentId: string, opts: { driveFolderId?: string; localPath?: string; clientId?: string }) =>
+    api.post<{ id: string; filedAt: string | null; filedPath: string | null }>(
+      `/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/file`,
+      opts,
+    ),
   reprocess: (id: string) =>
     api.post<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}/reprocess`, {}),
   remove: (id: string) =>
