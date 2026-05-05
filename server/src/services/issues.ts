@@ -33,6 +33,8 @@ import { redactCurrentUserText } from "../log-redaction.js";
 import { resolveIssueGoalId, resolveNextIssueGoalId } from "./issue-goal-fallback.js";
 import { getDefaultCompanyGoal } from "./goals.js";
 import { logger } from "../middleware/logger.js";
+import { sendTelegramMessage } from "./telegram-adapter.js";
+import { readInstanceToken } from "./instance-token-store.js";
 
 const ALL_ISSUE_STATUSES = ["backlog", "todo", "in_progress", "in_review", "blocked", "done", "cancelled"];
 const MAX_ISSUE_COMMENT_PAGE_LIMIT = 500;
@@ -1066,6 +1068,19 @@ export function issueService(db: Db) {
         const [enriched] = await withIssueLabels(tx, [updated]);
         return enriched;
       }).then(async (enriched) => {
+        // Notify operator via Telegram when issue is blocked
+        if (enriched && issueData.status === "blocked") {
+          const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
+          const chatId = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+          if (token && chatId) {
+            sendTelegramMessage(
+              token,
+              chatId,
+              `🚫 Issue blocked: *${enriched.title ?? id}*\n\nIssue: \`${id}\`\n\nCheck the issue for details and unblock by replying.`,
+            ).catch((err) => logger.warn({ err, issueId: id }, "issues: blocked notify failed"));
+          }
+        }
+
         // When a child issue goes done, wake the parent issue's assignee so
         // the parent agent (e.g. CEO triage) can synthesize and respond.
         if (enriched && issueData.status === "done" && existing.parentId) {
