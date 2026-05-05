@@ -31,6 +31,8 @@ export const emailMessages = pgTable(
     toAddrs: jsonb("to_addrs").$type<string[]>().notNull().default([]),
     subject: text("subject").notNull().default(""),
     body: text("body").notNull().default(""),
+    // v3: raw HTML body stored separately for rich rendering with inline images
+    htmlBody: text("html_body"),
     receivedAt: timestamp("received_at", { withTimezone: true }).notNull(),
     processedAt: timestamp("processed_at", { withTimezone: true }),
     // pending | analyzing | plan_proposed | clarifying | approved | declined | executed | ignored | error
