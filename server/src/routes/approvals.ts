@@ -1,5 +1,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
+import { clients, emailAccounts } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
 import {
   addApprovalCommentSchema,
   createApprovalSchema,
@@ -7,6 +9,9 @@ import {
   resolveApprovalSchema,
   resubmitApprovalSchema,
 } from "@paperclipai/shared";
+import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
+import { sendEmailFromAccount } from "../services/email-sender.js";
+import { readInstanceToken } from "../services/instance-token-store.js";
 import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
 import {
@@ -145,6 +150,63 @@ export function approvalRoutes(db: Db) {
           linkedIssueIds,
         },
       });
+
+      // Dispatch client reply if this is a client_reply approval
+      if (approval.type === "client_reply") {
+        const payload = approval.payload as {
+          clientId: string;
+          body: string;
+          channel: string;
+          threadKey: string | null;
+          issueId: string | null;
+          subject: string | null;
+        };
+        try {
+          if (payload.channel === "whatsapp" && payload.threadKey) {
+            const waToken = (await readInstanceToken(db, "whatsappToken")) ?? (process.env.WHATSAPP_TOKEN ?? "");
+            const waPhone = (await readInstanceToken(db, "whatsappPhoneNumberId")) ?? (process.env.WHATSAPP_PHONE_NUMBER_ID ?? "");
+            if (waToken && waPhone) {
+              const toPhone = payload.threadKey.replace(/\D/g, "");
+              await sendWhatsAppMessage(waToken, waPhone, toPhone, payload.body);
+              logger.info({ approvalId: approval.id, toPhone }, "client_reply: sent via WhatsApp");
+            } else {
+              logger.warn({ approvalId: approval.id }, "client_reply: WhatsApp not configured");
+            }
+          } else if (payload.channel === "email") {
+            const [voiceAccount] = await db
+              .select({ id: emailAccounts.id })
+              .from(emailAccounts)
+              .where(and(eq(emailAccounts.companyId, approval.companyId), eq(emailAccounts.role, "agent_voice")))
+              .limit(1);
+            if (voiceAccount) {
+              const [client] = await db
+                .select({ emailDomain: clients.emailDomain, extraEmails: clients.extraEmails })
+                .from(clients)
+                .where(eq(clients.id, payload.clientId))
+                .limit(1);
+              const toEmail = (client?.extraEmails?.[0] as string | undefined)
+                ?? (client?.emailDomain ? `contact@${client.emailDomain}` : null);
+              if (toEmail) {
+                await sendEmailFromAccount(db, {
+                  accountId: voiceAccount.id,
+                  to: [toEmail],
+                  subject: payload.subject ?? "Reply from Paperclip",
+                  text: payload.body,
+                  inReplyTo: payload.threadKey ?? undefined,
+                  references: payload.threadKey ? [payload.threadKey] : [],
+                });
+                logger.info({ approvalId: approval.id, toEmail }, "client_reply: sent via email");
+              } else {
+                logger.warn({ approvalId: approval.id, clientId: payload.clientId }, "client_reply: no email address for client");
+              }
+            } else {
+              logger.warn({ approvalId: approval.id }, "client_reply: no agent_voice email account");
+            }
+          }
+        } catch (sendErr) {
+          logger.error({ sendErr, approvalId: approval.id }, "client_reply: send failed");
+        }
+      }
 
       if (approval.requestedByAgentId) {
         try {
