@@ -505,6 +505,13 @@
       "when": 1777986232314,
       "tag": "0071_careful_forgotten_one",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1777990228836,
+      "tag": "0072_moaning_malice",
+      "breakpoints": true
     }
   ]
 }

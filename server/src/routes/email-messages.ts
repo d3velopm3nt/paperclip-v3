@@ -89,6 +89,8 @@ export function emailMessageRoutes(db: Db) {
         contentId: a.contentId,
         isInline: a.isInline,
         sizeBytes: a.sizeBytes,
+        filedAt: a.filedAt?.toISOString() ?? null,
+        filedPath: a.filedPath ?? null,
       })),
     });
   });

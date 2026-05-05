@@ -162,20 +162,24 @@ export function emailProcessorService(db: Db) {
           .limit(1);
         if (emailRow?.matchedClientId && emailRow?.attachmentsPath) {
           const { resolveEmailAttachmentsRoot } = await import("../home-paths.js");
-          const { readdir } = await import("node:fs/promises");
           const { join } = await import("node:path");
           const attachDir = join(resolveEmailAttachmentsRoot(), emailRow.attachmentsPath);
-          readdir(attachDir).then((files) => {
-            for (const file of files) {
-              void fileAttachmentToClientFolder(
-                db,
-                join(attachDir, file),
-                file,
-                emailRow.matchedClientId!,
-                "emails",
-              );
-            }
-          }).catch(() => {});
+          // Fetch attachments with IDs so we can record filing status
+          db.select({ id: emailAttachments.id, storagePath: emailAttachments.storagePath, filename: emailAttachments.filename })
+            .from(emailAttachments)
+            .where(eq(emailAttachments.emailMessageId, inserted!.id))
+            .then((atts) => {
+              for (const att of atts) {
+                void fileAttachmentToClientFolder(
+                  db,
+                  att.storagePath,
+                  att.filename,
+                  emailRow.matchedClientId!,
+                  "emails",
+                  att.id,
+                );
+              }
+            }).catch(() => {});
         }
       }
 

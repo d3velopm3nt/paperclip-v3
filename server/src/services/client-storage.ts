@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { clients, projects, documentSources, companies } from "@paperclipai/db";
+import { clients, projects, documentSources, companies, emailAttachments } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import { createDriveFolder, getAuthenticatedDriveClient } from "./gdrive-auth.js";
 import { logger } from "../middleware/logger.js";
@@ -215,16 +215,19 @@ export async function fileAttachmentToClientFolder(
   filename: string,
   clientId: string,
   subdir = "emails",
+  attachmentId?: string,
 ): Promise<void> {
   const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1);
   if (!client) return;
 
+  let filedPath: string | null = null;
   try {
     if (client.localPath) {
       const destDir = path.join(client.localPath, "_shared", subdir);
       await ensureLocalDir(destDir);
       const dest = path.join(destDir, filename);
       await fs.copyFile(storagePath, dest);
+      filedPath = dest;
       logger.info({ clientId, dest }, "client-storage: attachment filed locally");
 
     } else if (client.driveFolderId) {
@@ -233,12 +236,20 @@ export async function fileAttachmentToClientFolder(
       const sharedId = await getOrCreateDriveSubfolder(db, client.driveFolderId, "_shared");
       const emailsId = await getOrCreateDriveSubfolder(db, sharedId, subdir);
       const content = await fs.readFile(storagePath);
-      await drive.files.create({
+      const result = await drive.files.create({
         requestBody: { name: filename, parents: [emailsId] },
         media: { body: Buffer.from(content) },
         fields: "id",
       });
+      filedPath = result.data.id ? `drive:${result.data.id}` : `drive:${emailsId}/${filename}`;
       logger.info({ clientId, filename }, "client-storage: attachment uploaded to Drive");
+    }
+
+    // Record filing status on the attachment row
+    if (filedPath && attachmentId) {
+      await db.update(emailAttachments)
+        .set({ filedAt: new Date(), filedPath })
+        .where(eq(emailAttachments.id, attachmentId));
     }
   } catch (err) {
     logger.warn({ err, clientId, filename }, "client-storage: attachment filing failed");

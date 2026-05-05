@@ -8,6 +8,8 @@ export interface EmailAttachmentSummary {
   contentId: string | null;
   isInline: boolean;
   sizeBytes: number;
+  filedAt: string | null;
+  filedPath: string | null;
 }
 
 export interface EmailMessageSummary {

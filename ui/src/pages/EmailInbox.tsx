@@ -344,6 +344,14 @@ function AttachmentRow({ messageId, att }: {
         <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="flex-1 truncate">{att.filename}</span>
         <span className="text-xs text-muted-foreground shrink-0">{formatBytes(att.sizeBytes)}</span>
+        {/* Filed indicator */}
+        {att.filedAt ? (
+          <span className="flex items-center gap-1 text-[11px] text-green-400 shrink-0" title={`Filed ${new Date(att.filedAt).toLocaleString()}${att.filedPath ? ` → ${att.filedPath}` : ""}`}>
+            <CheckCircle2 className="h-3.5 w-3.5" />Filed
+          </span>
+        ) : (
+          <span className="text-[11px] text-muted-foreground/50 shrink-0">Not filed</span>
+        )}
         {canPreview && (
           <button
             className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"

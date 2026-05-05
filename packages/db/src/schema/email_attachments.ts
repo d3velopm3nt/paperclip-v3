@@ -23,6 +23,9 @@ export const emailAttachments = pgTable(
     isInline: boolean("is_inline").notNull().default(false),
     sizeBytes: integer("size_bytes").notNull(),
     storagePath: text("storage_path").notNull(),
+    // v3: set when attachment is filed to client/project folder
+    filedAt: timestamp("filed_at", { withTimezone: true }),
+    filedPath: text("filed_path"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
