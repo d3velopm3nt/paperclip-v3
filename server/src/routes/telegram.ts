@@ -17,6 +17,7 @@ import {
 import { getWhatsAppStatus } from "./whatsapp.js";
 import { registerAdapter } from "../services/operator-messaging.js";
 import { readInstanceToken, writeInstanceToken, deleteInstanceToken } from "../services/instance-token-store.js";
+import { routeInboundMessage } from "../services/inbound-router.js";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const OPERATOR_CHAT_ID = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
@@ -76,60 +77,19 @@ export function telegramRoutes(db: Db): Router {
       return;
     }
 
-    // Route through chat system — creates a Telegram thread and replies via chatDirectReply
+    // Route through unified orchestrator
     res.status(200).json({ ok: true }); // Respond to Telegram immediately
 
-    const { chatService } = await import("../services/chat.js");
-    const { chatDirectReply, pickAgentForDispatcher } = await import("../services/chat-direct.js");
-
-    try {
-      const chatTitle = msg.chat.title ?? msg.chat.first_name ?? `Telegram ${chatId}`;
-      const thread = await chatService(db).getOrCreateTelegramThread(companyId, chatId, chatTitle);
-
-      const agentId = await pickAgentForDispatcher(db, companyId, msg.text);
-      if (!agentId) {
-        logger.warn({ companyId, chatId }, "telegram webhook: no agent available");
-        await sendTelegramMessage(BOT_TOKEN, chatId, "⚠ No agent available to respond.");
-        return;
-      }
-
-      logger.info({ chatId, agentId, threadId: thread.id }, "telegram webhook: routing to chatDirectReply");
-
-      const startedAt = Date.now();
-      const handled = await chatDirectReply(db, companyId, agentId, thread.id, msg.text, {
+    const msgText = msg.text;
+    setImmediate(() => {
+      routeInboundMessage(db, {
+        companyId,
         platform: "telegram",
-        telegramChatId: chatId,
-        fromId,
-        raw: update,
-      });
-
-      // Poll for the outbound reply and send to Telegram (claude takes 15-60s)
-      if (handled) {
-        const poll = async (attempt: number) => {
-          try {
-            const messages = await chatService(db).listMessages(companyId, thread.id, 3);
-            const outbound = messages.find(
-              (m) => m.direction === "outbound" && new Date(m.createdAt).getTime() > startedAt,
-            );
-            if (outbound?.body) {
-              logger.info({ chatId, attempt, elapsedMs: Date.now() - startedAt }, "telegram webhook: sending reply");
-              await sendTelegramMessage(BOT_TOKEN, chatId, outbound.body);
-              return;
-            }
-            if (Date.now() - startedAt < 120_000 && attempt < 40) {
-              setTimeout(() => poll(attempt + 1), 3_000);
-            } else {
-              logger.warn({ chatId }, "telegram webhook: reply timeout, no outbound message found");
-            }
-          } catch (err) {
-            logger.warn({ err }, "telegram webhook: poll error");
-          }
-        };
-        setTimeout(() => poll(1), 5_000);
-      }
-    } catch (err) {
-      logger.error({ err, chatId }, "telegram webhook: chat routing failed");
-    }
+        fromAddr: chatId,
+        body: msgText,
+        threadKey: chatId,
+      }).catch((err) => logger.error({ err, chatId }, "telegram webhook: inbound-router failed"));
+    });
   });
 
   // ── Telegram bot token (stored encrypted in DB) ──────────────────────────
