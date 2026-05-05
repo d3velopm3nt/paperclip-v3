@@ -358,7 +358,10 @@ function AttachmentRow({ messageId, att }: {
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-0 gap-0">
+        <DialogContent
+          className="flex flex-col p-0 gap-0"
+          style={{ width: "95vw", maxWidth: "95vw", height: "95vh" }}
+        >
           <DialogHeader className="px-4 py-3 border-b border-border shrink-0">
             <DialogTitle className="text-sm truncate flex items-center gap-2">
               <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
