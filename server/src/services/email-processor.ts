@@ -23,6 +23,7 @@ import { sendEmailFromAccount } from "./email-sender.js";
 import { workflowEngine } from "./workflow-engine.js";
 import { inboundEmailWorkflow } from "./workflows/inbound-email.js";
 import { logger } from "../middleware/logger.js";
+import { routeInboundMessage } from "./inbound-router.js";
 
 export interface ProcessEmailInput {
   emailAccountId: string;
@@ -107,6 +108,7 @@ export function emailProcessorService(db: Db) {
 
     const attachments = asArray(parsed.attachments);
     let attachmentCount = 0;
+    const savedAttachmentNames: string[] = [];
     for (let i = 0; i < attachments.length; i++) {
       const att = attachments[i]!;
       const content = att.content;
@@ -130,6 +132,7 @@ export function emailProcessorService(db: Db) {
           storagePath: saved.storagePath,
         });
         attachmentCount++;
+        savedAttachmentNames.push(rawName);
       } catch (err) {
         logger.warn(
           { err, emailMessageId: inserted!.id, filename: rawName },
@@ -147,11 +150,42 @@ export function emailProcessorService(db: Db) {
         .where(eq(emailMessages.id, inserted!.id));
     }
 
-    // v3: route inbound email — match to a client + propose a plan via the gate.
-    // Failures here don't discard the email; the row stays at pending and
-    // operators can retry later.
+    // v3: route inbound email through the unified orchestrator.
+    // Failures here don't discard the email; the row stays at pending.
     try {
-      await routeInbound(db, inserted!.id, input.emailAccountId, fromAddr, toAddrs, subject);
+      const [emailAccount] = await db
+        .select({ companyId: emailAccounts.companyId })
+        .from(emailAccounts)
+        .where(eq(emailAccounts.id, input.emailAccountId))
+        .limit(1);
+
+      if (emailAccount) {
+        // Self-loop guard: skip emails from our own agent_voice accounts.
+        const ownVoice = await db
+          .select({ fromEmail: emailAccounts.fromEmail })
+          .from(emailAccounts)
+          .where(and(eq(emailAccounts.companyId, emailAccount.companyId), eq(emailAccounts.role, "agent_voice")));
+        const ownSet = new Set(ownVoice.map((r) => r.fromEmail.toLowerCase()));
+        if (ownSet.has(fromAddr.toLowerCase())) {
+          await db.update(emailMessages).set({
+            processingState: "ignored",
+            matchedCompanyId: emailAccount.companyId,
+            processedAt: new Date(),
+            errorText: `Self-loop: from=${fromAddr} is one of our agent_voice accounts.`,
+          }).where(eq(emailMessages.id, inserted!.id));
+          logger.info({ emailMessageId: inserted!.id, fromAddr }, "email-processor: ignored self-loop email");
+        } else {
+          await routeInboundMessage(db, {
+            companyId: emailAccount.companyId,
+            platform: "email",
+            fromAddr,
+            body: typeof body === "string" ? body : "",
+            subject,
+            threadKey: messageIdHeader,
+            attachmentSummaries: savedAttachmentNames,
+          });
+        }
+      }
 
       // File attachments to client folder (fire-and-forget, non-fatal)
       if (attachmentCount > 0) {
@@ -355,6 +389,8 @@ export function emailProcessorService(db: Db) {
         fromAddr: emailMessages.fromAddr,
         toAddrs: emailMessages.toAddrs,
         subject: emailMessages.subject,
+        body: emailMessages.body,
+        messageIdHeader: emailMessages.messageIdHeader,
       })
       .from(emailMessages)
       .where(eq(emailMessages.id, emailMessageId))
@@ -377,7 +413,21 @@ export function emailProcessorService(db: Db) {
       })
       .where(eq(emailMessages.id, emailMessageId));
 
-    await routeInbound(db, row.id, row.emailAccountId, row.fromAddr, row.toAddrs ?? [], row.subject);
+    const [reprocessAccount] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, row.emailAccountId))
+      .limit(1);
+    if (reprocessAccount) {
+      await routeInboundMessage(db, {
+        companyId: reprocessAccount.companyId,
+        platform: "email",
+        fromAddr: row.fromAddr,
+        body: row.body,
+        subject: row.subject,
+        threadKey: row.messageIdHeader,
+      });
+    }
     const [acctState2] = await db
       .select({ role: emailAccounts.role, processingState: emailMessages.processingState })
       .from(emailAccounts)
