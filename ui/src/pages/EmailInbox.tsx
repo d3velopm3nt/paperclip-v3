@@ -381,7 +381,7 @@ function AttachmentRow({ messageId, att }: {
             )}
             {isPdf && (
               <iframe
-                src={previewUrl}
+                src={`${previewUrl}#zoom=100`}
                 title={att.filename}
                 className="w-full h-full border-0"
               />
