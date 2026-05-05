@@ -16,6 +16,7 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Inbox as InboxIcon,
   Mail,
@@ -330,41 +331,62 @@ function AttachmentRow({ messageId, att }: {
   messageId: string;
   att: EmailMessageDetail["attachments"][0];
 }) {
-  const [previewing, setPreviewing] = useState(false);
+  const [open, setOpen] = useState(false);
   const isImage = att.contentType.startsWith("image/");
   const isPdf = att.contentType === "application/pdf";
+  const canPreview = isImage || isPdf;
   const previewUrl = emailMessagesApi.attachmentUrl(messageId, att.id, true);
   const downloadUrl = emailMessagesApi.attachmentUrl(messageId, att.id, false);
 
   return (
-    <div className="rounded-md border border-border/70 bg-background overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 text-sm">
+    <>
+      <div className="flex items-center gap-2 rounded-md border border-border/70 bg-background px-3 py-2 text-sm">
         <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="flex-1 truncate">{att.filename}</span>
         <span className="text-xs text-muted-foreground shrink-0">{formatBytes(att.sizeBytes)}</span>
-        {(isImage || isPdf) && (
+        {canPreview && (
           <button
             className="text-xs text-primary hover:underline flex items-center gap-1 shrink-0"
-            onClick={() => setPreviewing((v) => !v)}
+            onClick={() => setOpen(true)}
           >
-            <Eye className="h-3.5 w-3.5" />{previewing ? "Hide" : "Preview"}
+            <Eye className="h-3.5 w-3.5" />Preview
           </button>
         )}
         <a href={downloadUrl} download className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 shrink-0">
           <Download className="h-3.5 w-3.5" />
         </a>
       </div>
-      {previewing && isImage && (
-        <div className="border-t border-border/50 p-2 bg-muted/20 flex justify-center">
-          <img src={previewUrl} alt={att.filename} className="max-h-80 max-w-full object-contain rounded" />
-        </div>
-      )}
-      {previewing && isPdf && (
-        <div className="border-t border-border/50">
-          <iframe src={previewUrl} title={att.filename} className="w-full h-96" />
-        </div>
-      )}
-    </div>
+
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col p-0 gap-0">
+          <DialogHeader className="px-4 py-3 border-b border-border shrink-0">
+            <DialogTitle className="text-sm truncate flex items-center gap-2">
+              <Paperclip className="h-4 w-4 text-muted-foreground shrink-0" />
+              {att.filename}
+              <span className="text-xs text-muted-foreground font-normal ml-1">{formatBytes(att.sizeBytes)}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-hidden">
+            {isImage && (
+              <div className="flex items-center justify-center h-full bg-muted/20 p-4">
+                <img
+                  src={previewUrl}
+                  alt={att.filename}
+                  className="max-h-full max-w-full object-contain rounded"
+                />
+              </div>
+            )}
+            {isPdf && (
+              <iframe
+                src={previewUrl}
+                title={att.filename}
+                className="w-full h-full border-0"
+              />
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 
