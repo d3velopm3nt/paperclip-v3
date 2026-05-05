@@ -124,10 +124,54 @@ export function emailMessageRoutes(db: Db) {
 
     res.setHeader("Content-Type", att.contentType || "application/octet-stream");
     res.setHeader("Content-Length", String(statSync(resolved).size));
-    if (!att.isInline) {
+    // ?preview=true or inline attachments → serve inline so browser can render
+    const isPreview = req.query.preview === "true" || att.isInline;
+    if (!isPreview) {
       res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(att.filename)}"`);
+    } else {
+      res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(att.filename)}"`);
     }
     createReadStream(resolved).pipe(res);
+  });
+
+  // GET /api/email-messages/:id/html — sanitized HTML body with cid: refs replaced.
+  router.get("/email-messages/:id/html", async (req, res) => {
+    const { id } = req.params;
+    const [msg] = await db
+      .select({ htmlBody: emailMessages.htmlBody, emailAccountId: emailMessages.emailAccountId })
+      .from(emailMessages)
+      .where(eq(emailMessages.id, id))
+      .limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    if (!msg.htmlBody) {
+      res.json({ html: null });
+      return;
+    }
+
+    // Replace cid: references with API URLs so inline images render
+    const inlineAtts = await db
+      .select({ id: emailAttachments.id, contentId: emailAttachments.contentId })
+      .from(emailAttachments)
+      .where(and(eq(emailAttachments.emailMessageId, id), eq(emailAttachments.isInline, true)));
+
+    let html = msg.htmlBody;
+    for (const att of inlineAtts) {
+      if (att.contentId) {
+        const cid = att.contentId.replace(/^<|>$/g, "");
+        const url = `/api/email-messages/${encodeURIComponent(id)}/attachments/${encodeURIComponent(att.id)}?preview=true`;
+        html = html.replaceAll(`cid:${cid}`, url);
+      }
+    }
+
+    res.json({ html });
   });
 
   // DELETE /api/email-messages/:id — removes the email and all derived
