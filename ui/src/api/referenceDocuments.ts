@@ -41,6 +41,8 @@ export const referenceDocumentsApi = {
 
   listSources: (companyId: string) =>
     api.get<DocumentSource[]>(`/companies/${companyId}/document-sources`),
+  syncSource: (companyId: string, sourceId: string) =>
+    api.post<{ ok: boolean }>(`/companies/${companyId}/document-sources/${sourceId}/sync`, {}),
 
   createSource: (companyId: string, input: CreateDocumentSourceInput) =>
     api.post<DocumentSource>(`/companies/${companyId}/document-sources`, input),

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { clientsApi, type Client } from "../api/clients";
+import { referenceDocumentsApi } from "../api/referenceDocuments";
 import { contactsApi, contactDisplayName, type Contact } from "../api/contacts";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -21,6 +22,7 @@ import {
 import {
   UsersRound, Building2, AtSign, Mail, Pencil, Trash2,
   Plus, User, Phone, Briefcase, ArrowLeft, ShieldCheck, FolderOpen, ExternalLink,
+  RefreshCw, ChevronDown, ChevronRight, CheckCircle2, AlertCircle,
 } from "lucide-react";
 
 type ClientTab = "overview" | "contacts" | "storage";
@@ -315,19 +317,37 @@ function toClientForm(c: Client): ClientFormState {
 function StorageTab({ client }: { client: Client }) {
   const qc = useQueryClient();
   const { pushToast } = useToast();
+  const [showDetails, setShowDetails] = useState(false);
 
   const { data: storage, isLoading } = useQuery({
     queryKey: ["client-storage", client.id],
     queryFn: () => clientsApi.getStorage(client.id),
   });
 
+  // Find the documentSource linked to this client for sync status
+  const { data: sources = [] } = useQuery({
+    queryKey: ["document-sources", client.companyId],
+    queryFn: () => referenceDocumentsApi.listSources(client.companyId),
+    enabled: !!(storage?.localPath || storage?.driveFolderId),
+  });
+  const clientSource = sources.find((s) => s.clientId === client.id);
+
   const autoCreate = useMutation({
     mutationFn: () => clientsApi.setStorage(client.id, { autoCreate: true }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["client-storage", client.id] });
+      qc.invalidateQueries({ queryKey: ["document-sources", client.companyId] });
       pushToast({ title: "Folder created" });
     },
     onError: (err) => pushToast({ tone: "warn", title: "Failed", body: err instanceof Error ? err.message : "Unknown error" }),
+  });
+
+  const resync = useMutation({
+    mutationFn: () => referenceDocumentsApi.syncSource(client.companyId, clientSource!.id),
+    onSuccess: () => {
+      pushToast({ title: "Sync started" });
+      setTimeout(() => qc.invalidateQueries({ queryKey: ["document-sources", client.companyId] }), 3000);
+    },
   });
 
   const configured = !!(storage?.localPath || storage?.driveFolderId);
@@ -335,34 +355,85 @@ function StorageTab({ client }: { client: Client }) {
   return (
     <div className="max-w-xl space-y-4">
       <Card className="p-5 space-y-3">
-        <h3 className="font-semibold text-sm flex items-center gap-2">
-          <FolderOpen className="h-4 w-4 text-amber-400" />
-          Document Folder
-        </h3>
+        {/* Header row */}
+        <div className="flex items-center justify-between">
+          <h3 className="font-semibold text-sm flex items-center gap-2">
+            <FolderOpen className="h-4 w-4 text-amber-400" />
+            Document Folder
+          </h3>
+          {configured && clientSource && (
+            <div className="flex items-center gap-2">
+              {/* Sync indicator */}
+              {clientSource.lastSyncError ? (
+                <span className="flex items-center gap-1 text-[11px] text-red-400">
+                  <AlertCircle className="h-3.5 w-3.5" />Sync error
+                </span>
+              ) : clientSource.lastSyncedAt ? (
+                <span className="flex items-center gap-1 text-[11px] text-green-400">
+                  <CheckCircle2 className="h-3.5 w-3.5" />
+                  Synced {new Date(clientSource.lastSyncedAt).toLocaleString()}
+                </span>
+              ) : (
+                <span className="text-[11px] text-muted-foreground">Never synced</span>
+              )}
+              {/* Resync button */}
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                onClick={() => resync.mutate()}
+                disabled={resync.isPending}
+                title="Resync now"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${resync.isPending ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
+          )}
+        </div>
+
         {isLoading ? (
           <p className="text-xs text-muted-foreground">Loading...</p>
         ) : configured ? (
           <div className="space-y-2">
-            {storage?.localPath && (
-              <div className="rounded border border-border px-3 py-2 text-xs font-mono text-muted-foreground">
-                📁 {storage.localPath}
+            {/* Sync error detail */}
+            {clientSource?.lastSyncError && (
+              <div className="rounded border border-red-800/50 bg-red-950/30 px-3 py-2 text-xs text-red-400">
+                {clientSource.lastSyncError}
               </div>
             )}
-            {storage?.driveFolderId && (
-              <div className="rounded border border-border px-3 py-2 text-xs flex items-center justify-between gap-2">
-                <span className="font-mono text-muted-foreground truncate">☁️ {storage.driveFolderId}</span>
-                {storage.driveWebUrl && (
-                  <a href={storage.driveWebUrl} target="_blank" rel="noreferrer"
-                     className="shrink-0 text-primary hover:underline flex items-center gap-1 text-xs">
-                    Open <ExternalLink className="h-3 w-3" />
-                  </a>
+
+            {/* Toggle folder details */}
+            <button
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => setShowDetails((v) => !v)}
+            >
+              {showDetails ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+              {showDetails ? "Hide" : "Show"} folder details
+            </button>
+
+            {showDetails && (
+              <div className="space-y-1.5 pl-1">
+                {storage?.localPath && (
+                  <div className="rounded border border-border px-3 py-2 text-xs font-mono text-muted-foreground">
+                    📁 {storage.localPath}
+                  </div>
                 )}
+                {storage?.driveFolderId && (
+                  <div className="rounded border border-border px-3 py-2 text-xs flex items-center justify-between gap-2">
+                    <span className="font-mono text-muted-foreground truncate">☁️ {storage.driveFolderId}</span>
+                    {storage.driveWebUrl && (
+                      <a href={storage.driveWebUrl} target="_blank" rel="noreferrer"
+                         className="shrink-0 text-primary hover:underline flex items-center gap-1 text-xs">
+                        Open <ExternalLink className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Subfolders: <span className="font-mono">_shared/</span> (email attachments, shared docs),{" "}
+                  <span className="font-mono">Projects/</span> (per-project)
+                </p>
               </div>
             )}
-            <p className="text-[11px] text-muted-foreground">
-              Subfolders: <span className="font-mono">_shared/</span> (cross-project docs, email attachments),{" "}
-              <span className="font-mono">Projects/</span> (per-project docs)
-            </p>
           </div>
         ) : (
           <div className="space-y-3">

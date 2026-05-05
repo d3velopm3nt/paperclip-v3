@@ -117,8 +117,15 @@ export function referenceDocumentsRoutes(db: Db): Router {
     res.status(204).end();
   });
 
-  // Trigger sync (fire-and-forget)
+  // Trigger full company sync (fire-and-forget)
   router.post("/companies/:companyId/document-sources/sync", async (req, res) => {
+    assertCompanyAccess(req, req.params.companyId);
+    res.json({ ok: true });
+    syncCompanyDocuments(db, req.params.companyId).catch(() => {});
+  });
+
+  // Trigger sync for a single source (fire-and-forget, runs full company sync)
+  router.post("/companies/:companyId/document-sources/:sourceId/sync", async (req, res) => {
     assertCompanyAccess(req, req.params.companyId);
     res.json({ ok: true });
     syncCompanyDocuments(db, req.params.companyId).catch(() => {});

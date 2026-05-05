@@ -37,6 +37,8 @@ function toSource(row: typeof documentSources.$inferSelect): DocumentSource {
   return {
     id: row.id,
     companyId: row.companyId,
+    clientId: row.clientId ?? null,
+    projectId: row.projectId ?? null,
     type: row.type as DocumentSource["type"],
     name: row.name,
     localPath: row.localPath,
