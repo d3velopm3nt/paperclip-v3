@@ -1,12 +1,11 @@
 import type { Db } from "@paperclipai/db";
 import { companies, instanceSettings } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { sendTelegramMessage, sendTelegramChatAction } from "./telegram-adapter.js";
-import { chatService } from "./chat.js";
-import { chatDirectReply, pickAgentForDispatcher } from "./chat-direct.js";
 import { logActivity } from "./activity-log.js";
 import { readInstanceToken } from "./instance-token-store.js";
 import { logger } from "../middleware/logger.js";
+import { routeInboundMessage } from "./inbound-router.js";
 
 const BASE_URL = "https://api.telegram.org";
 
@@ -85,74 +84,45 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
 
     logger.info({ chatId, text: msg.text }, "telegram-polling: message received ✓");
 
+    // Persist operator chat ID so outbound tools can reply
+    db.insert(instanceSettings)
+      .values({ singletonKey: "default", general: { telegramOperatorChatId: chatId }, experimental: {} })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: {
+          general: sql`instance_settings.general || jsonb_build_object('telegramOperatorChatId', ${chatId}::text)`,
+          updatedAt: new Date(),
+        },
+      })
+      .catch(() => {});
+
     if (msg.text.trim().toLowerCase() === "paperclip") {
       await sendTelegramMessage(resolvedToken, chatId, "✅ Paperclip is connected and receiving messages!");
       return;
     }
 
-    const chatTitle = msg.chat.title ?? msg.chat.first_name ?? `Telegram ${chatId}`;
-    const thread = await chatService(db).getOrCreateTelegramThread(resolvedCompanyId, chatId, chatTitle);
-    const agentId = await pickAgentForDispatcher(db, resolvedCompanyId, msg.text);
-
-    // Log inbound Telegram message so it appears in LogsPanel Activity tab
     void logActivity(db, {
       companyId: resolvedCompanyId,
       actorType: "system",
       actorId: chatId,
       action: "telegram.message.inbound",
       entityType: "chat_thread",
-      entityId: thread.id,
-      agentId: agentId ?? undefined,
-      details: { chatId, chatTitle, text: msg.text.slice(0, 500) },
+      entityId: chatId,
+      details: { chatId, text: msg.text.slice(0, 500) },
     });
 
-    if (!agentId) {
-      logger.warn({ chatId, resolvedCompanyId }, "telegram-polling: no agent found for company");
-      await sendTelegramMessage(resolvedToken, chatId, "⚠ No agent available to respond.");
-      return;
-    }
-
-    logger.info({ chatId, agentId, threadId: thread.id }, "telegram-polling: dispatching to chatDirectReply");
-
-    // Show "typing…" in Telegram while agent processes (lasts 5s, refresh every 4s)
+    // Show typing while orchestrator runs
     void sendTelegramChatAction(resolvedToken, chatId);
-    let typingActive = true;
-    const typingInterval = setInterval(() => {
-      if (typingActive) void sendTelegramChatAction(resolvedToken, chatId);
-    }, 4_000);
+    const typingInterval = setInterval(() => void sendTelegramChatAction(resolvedToken, chatId), 4_000);
 
-    const startedAt = Date.now();
-    const handled = await chatDirectReply(db, resolvedCompanyId, agentId, thread.id, msg.text, {
-      platform: "telegram", telegramChatId: chatId,
-    });
-    typingActive = false;
-    clearInterval(typingInterval);
-
-    if (!handled) return;
-
-    // Poll DB for outbound reply and send to Telegram
-    const poll = async (attempt: number) => {
-      try {
-        const messages = await chatService(db).listMessages(resolvedCompanyId, thread.id, 3);
-        const outbound = messages.find(
-          (m) => m.direction === "outbound" && new Date(m.createdAt).getTime() > startedAt,
-        );
-        if (outbound?.body) {
-          logger.info({ chatId, elapsedMs: Date.now() - startedAt }, "telegram-polling: sending reply");
-          await sendTelegramMessage(resolvedToken, chatId, outbound.body);
-          return;
-        }
-        if (Date.now() - startedAt < 120_000 && attempt < 40) {
-          setTimeout(() => poll(attempt + 1), 3_000);
-        } else {
-          logger.warn({ chatId }, "telegram-polling: reply timeout — no outbound message found after 120s");
-          await sendTelegramMessage(resolvedToken, chatId, "⚠ Agent did not respond in time. Please try again.").catch(() => {});
-        }
-      } catch (err) {
-        logger.warn({ err }, "telegram-polling: reply poll error");
-      }
-    };
-    setTimeout(() => poll(1), 5_000);
+    routeInboundMessage(db, {
+      companyId: resolvedCompanyId,
+      platform: "telegram",
+      fromAddr: chatId,
+      body: msg.text,
+      threadKey: chatId,
+    }).catch((err) => logger.error({ err, chatId }, "telegram-polling: inbound-router failed"))
+      .finally(() => clearInterval(typingInterval));
   }
 
   const poll = async () => {
