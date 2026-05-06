@@ -70,6 +70,18 @@ export function telegramRoutes(db: Db): Router {
 
     logger.info({ chatId, fromId, text: msg.text }, "telegram webhook: message received ✓");
 
+    // Persist operator chat ID so outbound tools (notify_operator, set_issue_blocked) can reply
+    db.insert(instanceSettings)
+      .values({ singletonKey: "default", general: { telegramOperatorChatId: chatId }, experimental: {} })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: {
+          general: sql`instance_settings.general || jsonb_build_object('telegramOperatorChatId', ${chatId}::text)`,
+          updatedAt: new Date(),
+        },
+      })
+      .catch(() => {});
+
     // Validation keyword — lets user confirm the connection is live without creating issues
     if (msg.text.trim().toLowerCase() === "paperclip") {
       res.status(200).json({ ok: true });

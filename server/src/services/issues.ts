@@ -12,6 +12,7 @@ import {
   executionWorkspaces,
   issueAttachments,
   issueInboxArchives,
+  instanceSettings as instanceSettingsTable,
   issueLabels,
   issueComments,
   issueDocuments,
@@ -1071,7 +1072,9 @@ export function issueService(db: Db) {
         // Notify operator via Telegram when issue is blocked
         if (enriched && issueData.status === "blocked") {
           const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-          const chatId = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+          const [tgRow] = await db.select({ general: instanceSettingsTable.general }).from(instanceSettingsTable).where(eq(instanceSettingsTable.singletonKey, "default")).limit(1);
+          const tgGeneral = (tgRow?.general ?? {}) as Record<string, unknown>;
+          const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
           if (token && chatId) {
             sendTelegramMessage(
               token,

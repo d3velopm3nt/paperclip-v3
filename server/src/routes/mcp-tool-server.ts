@@ -652,7 +652,9 @@ async function handleTool(
   if (name === "notify_operator") {
     const { body: notifyBody, issueId: notifyIssueId } = args as { body: string; issueId?: string };
     const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-    const chatId = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+    const [tgSettings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
+    const tgGeneral = (tgSettings?.general ?? {}) as Record<string, unknown>;
+    const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
     if (token && chatId) {
       await sendTelegramMessage(token, chatId, notifyBody).catch((err) => {
         logger.warn({ err }, "notify_operator: telegram send failed");
@@ -718,7 +720,9 @@ async function handleTool(
       authorAgentId: null,
     });
     const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-    const chatId = process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+    const [tgSettingsBlocked] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
+    const tgGeneralBlocked = (tgSettingsBlocked?.general ?? {}) as Record<string, unknown>;
+    const chatId = (tgGeneralBlocked.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
     if (token && chatId) {
       await sendTelegramMessage(token, chatId, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
     }
