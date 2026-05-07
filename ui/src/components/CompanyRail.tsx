@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Paperclip, Plus } from "lucide-react";
+import { LayoutDashboard, Paperclip, Plus } from "lucide-react";
 import { useQueries } from "@tanstack/react-query";
 import {
   DndContext,
@@ -159,7 +159,8 @@ export function CompanyRail() {
   const navigate = useNavigate();
   const location = useLocation();
   const isInstanceRoute = location.pathname.startsWith("/instance/");
-  const highlightedCompanyId = isInstanceRoute ? null : selectedCompanyId;
+  const isFounderRoute = location.pathname.startsWith("/founder");
+  const highlightedCompanyId = (isInstanceRoute || isFounderRoute) ? null : selectedCompanyId;
   const sidebarCompanies = useMemo(
     () => companies.filter((company) => company.status !== "archived"),
     [companies],
@@ -275,6 +276,30 @@ export function CompanyRail() {
 
       {/* Company list */}
       <div className="flex-1 flex flex-col items-center gap-2 py-3 w-full overflow-y-auto overflow-x-hidden scrollbar-none">
+        {/* Founder overview icon */}
+        <Tooltip delayDuration={300}>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => navigate("/founder")}
+              className={cn(
+                "relative flex items-center justify-center w-11 h-11 transition-[border-radius,background-color,color] duration-150",
+                isFounderRoute
+                  ? "rounded-[14px] bg-foreground text-background"
+                  : "rounded-[22px] hover:rounded-[14px] text-muted-foreground hover:text-foreground hover:bg-muted",
+              )}
+              aria-label="Founder Overview"
+            >
+              <LayoutDashboard className="h-5 w-5" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="right" sideOffset={8}>
+            <p>Founder Overview</p>
+          </TooltipContent>
+        </Tooltip>
+
+        {/* Divider between founder icon and company list */}
+        <div className="w-8 h-px bg-border shrink-0" />
+
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
