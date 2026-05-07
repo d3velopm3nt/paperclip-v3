@@ -4,6 +4,7 @@ import type { Db } from "@paperclipai/db";
 import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
+import { eccTopicsService } from "../services/ecc-topics.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
@@ -293,6 +294,53 @@ const TOOLS = [
     name: "list_companies",
     description: "List all companies you have access to. Returns id, name, and slug for each. Use the id to query issues, clients, or projects for a specific company.",
     inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "list_topics",
+    description: "List all ECC topics (memory boxes). Use to see active workstreams across companies.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", description: "Filter by status: active|archived. Default: active" },
+      },
+    },
+  },
+  {
+    name: "create_topic",
+    description: "Create a new ECC topic (memory box) for tracking a workstream or life domain.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "Topic name (e.g. 'SafeX Proposal', 'Finance')" },
+        companyId: { type: "string", description: "UUID of the company this topic belongs to. Omit for cross-company topics." },
+      },
+    },
+  },
+  {
+    name: "update_topic_memory",
+    description: "Update a topic's markdown memory content and/or current state summary.",
+    inputSchema: {
+      type: "object",
+      required: ["topicId"],
+      properties: {
+        topicId: { type: "string", description: "UUID of the topic" },
+        summary: { type: "string", description: "Full markdown memory content for the topic" },
+        currentState: { type: "string", description: "Short single-line status (e.g. 'Awaiting contract sign-off')" },
+      },
+    },
+  },
+  {
+    name: "link_issue_to_topic",
+    description: "Link an existing issue to an ECC topic so it appears in the topic's context panel.",
+    inputSchema: {
+      type: "object",
+      required: ["topicId", "issueId"],
+      properties: {
+        topicId: { type: "string", description: "UUID of the topic" },
+        issueId: { type: "string", description: "UUID of the issue to link" },
+      },
+    },
   },
 ];
 
@@ -847,6 +895,39 @@ async function handleTool(
       .from(companies)
       .orderBy(companies.name);
     return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "list_topics") {
+    const svc = eccTopicsService(db);
+    const status = typeof args.status === "string" ? args.status : "active";
+    const topics = await svc.list(status);
+    if (!topics.length) return `No ${status} topics found.`;
+    return JSON.stringify(topics, null, 2);
+  }
+
+  if (name === "create_topic") {
+    const svc = eccTopicsService(db);
+    const topic = await svc.create({
+      name: String(args.name),
+      companyId: typeof args.companyId === "string" ? args.companyId : null,
+    });
+    return `Topic created: ${JSON.stringify(topic, null, 2)}`;
+  }
+
+  if (name === "update_topic_memory") {
+    const svc = eccTopicsService(db);
+    const updates: { summary?: string; currentState?: string | null } = {};
+    if (typeof args.summary === "string") updates.summary = args.summary;
+    if (typeof args.currentState === "string") updates.currentState = args.currentState;
+    const topic = await svc.update(String(args.topicId), updates);
+    if (!topic) return `Error: topic ${args.topicId} not found`;
+    return `Topic updated: ${topic.name} — state: ${topic.currentState ?? "none"}`;
+  }
+
+  if (name === "link_issue_to_topic") {
+    const svc = eccTopicsService(db);
+    await svc.linkIssue(String(args.topicId), String(args.issueId));
+    return `Issue ${args.issueId} linked to topic ${args.topicId}`;
   }
 
   return `Error: unknown tool "${name}"`;
