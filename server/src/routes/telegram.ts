@@ -2,8 +2,8 @@
 
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { chatThreads, companies, emailAccounts, instanceSettings, operatorMessages } from "@paperclipai/db";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { companies, emailAccounts, instanceSettings, operatorMessages } from "@paperclipai/db";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { logger } from "../middleware/logger.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 import {
@@ -128,6 +128,58 @@ export function telegramRoutes(db: Db): Router {
     res.json({ ok: true });
   });
 
+  // ── Telegram operator chat ID ────────────────────────────────────────────
+
+  // Detect chat ID from recent getUpdates — save to DB and return it
+  router.post("/channels/telegram/operator-chat-id/detect", async (req, res) => {
+    assertBoard(req);
+    const dbToken = await readInstanceToken(db, "telegramBotToken").catch(() => null);
+    const token = dbToken || BOT_TOKEN;
+    if (!token) { res.status(422).json({ error: "No bot token configured" }); return; }
+    try {
+      const qs = new URLSearchParams({ limit: "20", allowed_updates: "message" }).toString();
+      const result = await fetch(`https://api.telegram.org/bot${token}/getUpdates?${qs}`);
+      const json = (await result.json()) as { ok: boolean; result?: Array<{ message?: { chat: { id: number } } }> };
+      if (!json.ok) { res.status(422).json({ error: "Telegram getUpdates failed" }); return; }
+      const firstMsg = (json.result ?? []).find((u) => u.message?.chat?.id);
+      if (!firstMsg?.message) {
+        res.status(404).json({ error: "No recent messages. Send any message to your bot first, then try again." });
+        return;
+      }
+      const chatId = String(firstMsg.message.chat.id);
+      await db
+        .insert(instanceSettings)
+        .values({ singletonKey: "default", general: { telegramOperatorChatId: chatId }, experimental: {} })
+        .onConflictDoUpdate({
+          target: instanceSettings.singletonKey,
+          set: {
+            general: sql`instance_settings.general || jsonb_build_object('telegramOperatorChatId', ${chatId}::text)`,
+            updatedAt: new Date(),
+          },
+        });
+      res.json({ ok: true, chatId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(422).json({ error: msg });
+    }
+  });
+
+  router.put("/channels/telegram/operator-chat-id", async (req, res) => {
+    assertBoard(req);
+    const { chatId } = req.body as { chatId: string | null };
+    await db
+      .insert(instanceSettings)
+      .values({ singletonKey: "default", general: { telegramOperatorChatId: chatId ?? null }, experimental: {} })
+      .onConflictDoUpdate({
+        target: instanceSettings.singletonKey,
+        set: {
+          general: sql`instance_settings.general || jsonb_build_object('telegramOperatorChatId', ${chatId ?? null}::text)`,
+          updatedAt: new Date(),
+        },
+      });
+    res.json({ ok: true });
+  });
+
   // ── Telegram routing: which company receives messages ────────────────────
 
   router.put("/channels/telegram/routing", async (req, res) => {
@@ -231,45 +283,20 @@ export function telegramRoutes(db: Db): Router {
     const { platform } = req.query as { platform?: string };
     const companyId = req.params.companyId;
 
-    if (platform === "telegram") {
-      const tgThreads = await db
-        .select({ id: chatThreads.id })
-        .from(chatThreads)
-        .where(and(eq(chatThreads.companyId, companyId), eq(chatThreads.platform, "telegram")));
-
-      if (tgThreads.length === 0) { res.json([]); return; }
-
-      const threadIds = tgThreads.map((t) => t.id);
-      const rows = await db
-        .select({
-          id: operatorMessages.id,
-          direction: operatorMessages.direction,
-          platform: operatorMessages.platform,
-          body: operatorMessages.body,
-          chatThreadId: operatorMessages.chatThreadId,
-          createdAt: operatorMessages.createdAt,
-        })
-        .from(operatorMessages)
-        .where(and(eq(operatorMessages.companyId, companyId), inArray(operatorMessages.chatThreadId, threadIds)))
-        .orderBy(desc(operatorMessages.createdAt))
-        .limit(100);
-      res.json(rows);
-    } else {
-      const rows = await db
-        .select({
-          id: operatorMessages.id,
-          direction: operatorMessages.direction,
-          platform: operatorMessages.platform,
-          body: operatorMessages.body,
-          chatThreadId: operatorMessages.chatThreadId,
-          createdAt: operatorMessages.createdAt,
-        })
-        .from(operatorMessages)
-        .where(eq(operatorMessages.companyId, companyId))
-        .orderBy(desc(operatorMessages.createdAt))
-        .limit(100);
-      res.json(rows);
-    }
+    const rows = await db
+      .select({
+        id: operatorMessages.id,
+        direction: operatorMessages.direction,
+        platform: operatorMessages.platform,
+        body: operatorMessages.body,
+        chatThreadId: operatorMessages.chatThreadId,
+        createdAt: operatorMessages.createdAt,
+      })
+      .from(operatorMessages)
+      .where(eq(operatorMessages.companyId, companyId))
+      .orderBy(desc(operatorMessages.createdAt))
+      .limit(100);
+    res.json(rows);
   });
 
   router.post("/channels/telegram/test", async (req, res) => {
@@ -298,8 +325,13 @@ async function getTelegramStatus(db: Db) {
   const effectiveToken = dbToken || BOT_TOKEN;
   const tokenSource: "db" | "env" | null = dbToken ? "db" : BOT_TOKEN ? "env" : null;
 
+  // Read operator chat ID: DB takes priority over env var
+  const [settings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).where(eq(instanceSettings.singletonKey, "default")).limit(1);
+  const dbChatId = (settings?.general as Record<string, unknown> | null)?.telegramOperatorChatId as string | null | undefined;
+  const operatorChatId = dbChatId || OPERATOR_CHAT_ID || null;
+
   if (!effectiveToken) {
-    return { configured: false, tokenSource: null as null };
+    return { configured: false, tokenSource: null as null, operatorChatId };
   }
   try {
     const [botInfo, webhookInfo] = await Promise.all([
@@ -310,13 +342,13 @@ async function getTelegramStatus(db: Db) {
       configured: true,
       tokenSource,
       tokenSet: true,
-      operatorChatId: OPERATOR_CHAT_ID || null,
+      operatorChatId,
       bot: botInfo,
       webhook: webhookInfo,
     };
   } catch (err) {
     logger.warn({ err }, "telegram: status check failed");
-    return { configured: true, tokenSource, tokenSet: true, error: "Could not reach Telegram API" };
+    return { configured: true, tokenSource, tokenSet: true, operatorChatId, error: "Could not reach Telegram API" };
   }
 }
 

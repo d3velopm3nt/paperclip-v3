@@ -1,12 +1,12 @@
 // v3: unified LLM orchestrator — entry point for all inbound messages.
 // Spawns a claude CLI subprocess with the Paperclip MCP server attached.
 // Handles both client inbound (email/whatsapp) and operator inbound (telegram/email).
-// Uses the same subprocess pattern as chat-direct.ts.
 
 import fs from "node:fs/promises";
 import os from "node:os";
 import { spawn } from "node:child_process";
 import type { Db } from "@paperclipai/db";
+import { companies } from "@paperclipai/db";
 import { signMcpToken } from "./mcp-session-token.js";
 import { logger } from "../middleware/logger.js";
 
@@ -23,7 +23,7 @@ export interface OrchestratorInput {
   existingIssueId?: string;
 }
 
-const SYSTEM_PROMPT = `You are the Paperclip Orchestrator — the unified intelligence for all inbound communication.
+const CLIENT_SYSTEM_PROMPT = `You are the Paperclip Orchestrator — the unified intelligence for all inbound communication.
 
 Your job: understand every inbound message, take the right actions via your MCP tools, keep the operator informed.
 
@@ -47,11 +47,55 @@ Your job: understand every inbound message, take the right actions via your MCP 
 ## Attachment context
 If attachmentSummaries are listed, the files are already saved to the client's document folder. Reference them by filename in your plan/issue.
 
+## Issue references
+Always refer to issues by their identifier field (e.g. PC-42), never by UUID. The identifier is returned by create_issue and list_issues.
+
 ## Response style
 Keep your text responses very short — the tools do the work. Use them.`;
 
+const ECC_SYSTEM_PROMPT = `You are the Paperclip Executive Command Center (ECC) — JayJay Barnard's operational intelligence layer.
+
+JayJay is the founder of multiple companies. You have cross-company access to all of them via the list_companies tool.
+
+## Your role
+- Act as an executive assistant and operational intelligence layer
+- Understand context, retrieve relevant information, suggest intelligent actions
+- Maintain awareness across all companies and workstreams
+- Require JayJay's approval before high-risk actions (sending emails, committing funds, deploying code, making business commitments)
+- Keep JayJay informed: what happened, what is blocked, what needs attention
+
+## Operating model
+1. Understand the message — who, what, which company, urgency, risk
+2. Retrieve context — call list_companies, list_issues, get_issue_comments, get_issue_plans as needed
+3. Reason and suggest — propose next actions clearly
+4. Act or ask — execute low-risk actions directly, request approval for high-risk ones
+5. Report — notify_operator with a concise update of what was done or what needs attention
+
+## Tool usage rules
+- **list_companies**: Call first when unsure which company is relevant. Returns all company IDs.
+- **list_issues**: Pass the relevant companyId. Can filter by status. Use to find existing issues before creating new ones.
+- **get_issue_comments**: Read the full thread on an issue before making decisions about it.
+- **get_issue_plans**: Check existing plans before creating new ones.
+- **notify_operator**: Use for concise operational updates. Short, direct, no fluff.
+- **create_plan**: Use for multi-step work that needs JayJay's review and approval.
+- **add_issue_comment**: Log important decisions and context as comments on issues.
+
+## Cross-company queries
+When the question spans companies (e.g. "what's blocked across all companies?"):
+1. Call list_companies to get all company IDs
+2. Call list_issues for each company with relevant filters
+3. Synthesize and respond
+
+## Response style
+Short and operational. State what you found, what you're doing, what you need from JayJay.
+No verbosity. No pleasantries. Treat JayJay as a busy founder who wants signal, not noise.
+
+## Issue references
+Always refer to issues by their identifier field (e.g. PC-42), never by UUID.`;
+
 export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise<void> {
   const { companyId } = input;
+  const isOperator = input.fromType === "operator";
 
   const contextLines: string[] = [
     `## Inbound message`,
@@ -59,6 +103,21 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     `Sender type: ${input.fromType}`,
     `From: ${input.fromAddr}`,
   ];
+
+  if (isOperator) {
+    // Give ECC full company list in context so it doesn't need to discover them
+    try {
+      const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
+      if (allCompanies.length) {
+        contextLines.push(`Companies: ${allCompanies.map((c) => `${c.name} (${c.id})`).join(", ")}`);
+      }
+    } catch {
+      // non-fatal — Claude can call list_companies tool instead
+    }
+  } else {
+    contextLines.push(`Company ID: ${companyId}`);
+  }
+
   if (input.subject) contextLines.push(`Subject: ${input.subject}`);
   if (input.clientId) contextLines.push(`Matched client ID: ${input.clientId} (already resolved)`);
   if (input.existingIssueId) contextLines.push(`Existing issue ID: ${input.existingIssueId} — this is a thread continuation, not a new request`);
@@ -69,7 +128,12 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
 
   const userMessage = contextLines.join("\n");
 
-  const mcpToken = signMcpToken({ companyId, agentId: "orchestrator" });
+  const mcpToken = signMcpToken({
+    companyId,
+    agentId: "orchestrator",
+    isOperator,
+  });
+
   const apiBase = process.env.PAPERCLIP_API_URL ?? `http://localhost:${process.env.PORT ?? 3100}`;
 
   const mcpConfigPath = `${os.tmpdir()}/pc-orchestrator-mcp-${Date.now()}.json`;
@@ -85,13 +149,15 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     },
   }), "utf-8");
 
-  await fs.writeFile(promptPath, SYSTEM_PROMPT, "utf-8");
+  const systemPrompt = isOperator ? ECC_SYSTEM_PROMPT : CLIENT_SYSTEM_PROMPT;
+  await fs.writeFile(promptPath, systemPrompt, "utf-8");
 
   const args = [
-    "--print", "-",
+    "--print",
     "--output-format", "stream-json",
     "--verbose",
     "--dangerously-skip-permissions",
+    "--no-session-persistence",
     "--mcp-config", mcpConfigPath,
     "--append-system-prompt-file", promptPath,
   ];
@@ -99,7 +165,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   const stdin = `Human: ${userMessage}`;
 
   logger.info(
-    { companyId, platform: input.platform, fromType: input.fromType, fromAddr: input.fromAddr },
+    { companyId, platform: input.platform, fromType: input.fromType, fromAddr: input.fromAddr, isOperator },
     "orchestrator: starting",
   );
 

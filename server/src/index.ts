@@ -1,4 +1,6 @@
 /// <reference path="./types/express.d.ts" />
+import dns from "node:dns";
+dns.setDefaultResultOrder("ipv4first"); // prevent IPv6 ETIMEDOUT on systems without IPv6 routing
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { resolve } from "node:path";

@@ -9,12 +9,18 @@ const tsxCliPath = require.resolve("tsx/cli");
 const serverRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ignoreArgs = resolveServerDevWatchIgnorePaths(serverRoot).flatMap((ignorePath) => ["--exclude", ignorePath]);
 
+const existingNodeOptions = process.env.NODE_OPTIONS ?? "";
+const dnsFlag = "--dns-result-order=ipv4first";
+const nodeOptions = existingNodeOptions.includes(dnsFlag)
+  ? existingNodeOptions
+  : `${dnsFlag} ${existingNodeOptions}`.trim();
+
 const child = spawn(
   process.execPath,
   [tsxCliPath, "watch", ...ignoreArgs, "src/index.ts"],
   {
     cwd: serverRoot,
-    env: process.env,
+    env: { ...process.env, NODE_OPTIONS: nodeOptions },
     stdio: "inherit",
   },
 );

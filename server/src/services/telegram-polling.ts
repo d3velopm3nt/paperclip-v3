@@ -65,6 +65,21 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
     logger.warn({ err }, "telegram-polling: deleteWebhook failed (likely no token yet)");
   }
 
+  // Register bot commands (shows autocomplete UI in Telegram)
+  try {
+    await tgGet(initialToken, "setMyCommands", {
+      commands: JSON.stringify([
+        { command: "help", description: "Show available commands" },
+        { command: "issues", description: "List open issues" },
+        { command: "status", description: "System status overview" },
+        { command: "agents", description: "List active agents" },
+      ]),
+    });
+    logger.info("telegram-polling: bot commands registered ✓");
+  } catch (err) {
+    logger.warn({ err }, "telegram-polling: setMyCommands failed");
+  }
+
   let offset = 0;
 
   async function resolveCompanyId(): Promise<string> {
@@ -101,6 +116,38 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
       return;
     }
 
+    // Slash command handling — may override body sent to orchestrator
+    let body = msg.text;
+
+    if (body.startsWith("/")) {
+      const [rawCmd] = body.slice(1).split(/[\s@]/);
+      const cmd = rawCmd?.toLowerCase() ?? "";
+
+      if (cmd === "help") {
+        await sendTelegramMessage(
+          resolvedToken,
+          chatId,
+          "📋 *Paperclip commands*\n\n" +
+          "/issues — List open issues\n" +
+          "/status — System status overview\n" +
+          "/agents — List active agents\n" +
+          "/help — Show this message\n\n" +
+          "You can also send any natural language command.",
+        );
+        return;
+      }
+
+      const COMMAND_HINTS: Record<string, string> = {
+        issues: "The operator ran /issues. List all open issues grouped by status. Be concise.",
+        status: "The operator ran /status. Summarise: count of open issues by status, any blocked issues, any active agents. Be concise.",
+        agents: "The operator ran /agents. List all agents with their current status. Be concise.",
+      };
+
+      const hint = COMMAND_HINTS[cmd];
+      if (hint) body = hint;
+      // Unknown slash commands fall through to orchestrator as-is
+    }
+
     void logActivity(db, {
       companyId: resolvedCompanyId,
       actorType: "system",
@@ -108,7 +155,7 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
       action: "telegram.message.inbound",
       entityType: "chat_thread",
       entityId: chatId,
-      details: { chatId, text: msg.text.slice(0, 500) },
+      details: { chatId, text: body.slice(0, 500) },
     });
 
     // Show typing while orchestrator runs
@@ -119,7 +166,7 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
       companyId: resolvedCompanyId,
       platform: "telegram",
       fromAddr: chatId,
-      body: msg.text,
+      body,
       threadKey: chatId,
     }).catch((err) => logger.error({ err, chatId }, "telegram-polling: inbound-router failed"))
       .finally(() => clearInterval(typingInterval));
@@ -131,7 +178,7 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
       const token = await resolveToken();
       const updates = (await tgGet(token, "getUpdates", {
         offset,
-        timeout: 25,
+        timeout: 8,
         allowed_updates: "message",
       })) as Update[];
 
@@ -155,11 +202,16 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
       const is409 = msg.includes("409") || msg.includes("Conflict") || msg.includes("terminated by other");
       if (is409) {
         // Another getUpdates is still in flight (e.g. previous server process hot-reload).
-        // Telegram's long-poll timeout is 25s, so wait 30s to guarantee the other request is dead.
-        logger.warn("telegram-polling: 409 conflict — another poller still running, waiting 30s");
-        setTimeout(poll, 30_000);
+        // Timeout is 8s, so wait 12s to guarantee the other request is dead.
+        logger.warn("telegram-polling: 409 conflict — another poller still running, waiting 12s");
+        setTimeout(poll, 12_000);
       } else {
-        logger.warn({ err }, "telegram-polling: getUpdates error, retrying in 5s");
+        const isTimeout = msg.includes("ETIMEDOUT") || msg.includes("fetch failed");
+        if (isTimeout) {
+          logger.debug({ err }, "telegram-polling: network timeout, retrying in 5s");
+        } else {
+          logger.warn({ err }, "telegram-polling: getUpdates error, retrying in 5s");
+        }
         setTimeout(poll, 5_000);
       }
       return;

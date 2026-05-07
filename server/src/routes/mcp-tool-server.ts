@@ -1,7 +1,7 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings } from "@paperclipai/db";
+import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { logActivity } from "../services/activity-log.js";
@@ -27,10 +27,11 @@ function textContent(text: string) {
 const TOOLS = [
   {
     name: "list_issues",
-    description: "List issues for this company. Filter by status, priority, or assignee agent.",
+    description: "List issues for a company. Filter by status, priority, or assignee agent. As operator you have cross-company access — pass companyId to query a specific company.",
     inputSchema: {
       type: "object",
       properties: {
+        companyId: { type: "string", description: "UUID of the company to query. Required when querying a company other than the default." },
         status: { type: "string", description: "Filter by status: backlog|todo|in_progress|in_review|done|cancelled" },
         priority: { type: "string", description: "Filter by priority: critical|high|medium|low" },
         limit: { type: "number", description: "Max results (default 20, max 50)" },
@@ -39,11 +40,12 @@ const TOOLS = [
   },
   {
     name: "create_issue",
-    description: "Create a new issue. Returns the created issue with its identifier (e.g. PAP-042).",
+    description: "Create a new issue. Returns the created issue with its identifier (e.g. PAP-042). Pass companyId to create in a specific company.",
     inputSchema: {
       type: "object",
       required: ["title"],
       properties: {
+        companyId: { type: "string", description: "UUID of the company. Required when creating in a company other than the default." },
         title: { type: "string", description: "Issue title" },
         description: { type: "string", description: "Issue description" },
         priority: { type: "string", description: "critical|high|medium|low (default: medium)" },
@@ -71,18 +73,24 @@ const TOOLS = [
   },
   {
     name: "list_agents",
-    description: "List all agents in this company with their current status and role.",
+    description: "List all agents in a company with their current status and role. Pass companyId to query a specific company.",
     inputSchema: {
       type: "object",
       properties: {
+        companyId: { type: "string", description: "UUID of the company to query." },
         status: { type: "string", description: "Filter by status: active|idle|paused|error|terminated" },
       },
     },
   },
   {
     name: "list_projects",
-    description: "List all projects in this company.",
-    inputSchema: { type: "object", properties: {} },
+    description: "List all projects in a company. Pass companyId to query a specific company.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        companyId: { type: "string", description: "UUID of the company to query." },
+      },
+    },
   },
   {
     name: "get_activity",
@@ -133,20 +141,22 @@ const TOOLS = [
   },
   {
     name: "list_clients",
-    description: "List clients for this company. Returns names, email domains, and extra contact addresses. Use this to resolve a contact name to an email address before calling search_emails.",
+    description: "List clients for a company. Returns names, email domains, and extra contact addresses. Pass companyId to query a specific company.",
     inputSchema: {
       type: "object",
       properties: {
+        companyId: { type: "string", description: "UUID of the company to query." },
         name: { type: "string", description: "Filter by client name (partial match)" },
       },
     },
   },
   {
     name: "search_contacts",
-    description: "Search contacts (individual people) for this company by name or email. Call this FIRST when the operator mentions a person by name (e.g. 'emails from Kevin') to get their email address, then pass that email to search_emails. If a contact has null firstName/lastName they are unnamed — ask the operator who they are and call update_contact.",
+    description: "Search contacts (individual people) by name or email. Call this FIRST when the operator mentions a person by name to get their email address. Pass companyId to query a specific company.",
     inputSchema: {
       type: "object",
       properties: {
+        companyId: { type: "string", description: "UUID of the company to query." },
         query: { type: "string", description: "First name, last name, or email address (partial match). Omit to list all contacts." },
       },
     },
@@ -257,20 +267,57 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "get_issue_plans",
+    description: "Get all plans/approvals for an issue, including their proposal text and current status (pending/approved/declined).",
+    inputSchema: {
+      type: "object",
+      required: ["issueId"],
+      properties: {
+        issueId: { type: "string", description: "UUID of the issue" },
+      },
+    },
+  },
+  {
+    name: "get_issue_comments",
+    description: "Get all comments for an issue in chronological order. Useful for reading the full activity thread on an issue.",
+    inputSchema: {
+      type: "object",
+      required: ["issueId"],
+      properties: {
+        issueId: { type: "string", description: "UUID of the issue" },
+      },
+    },
+  },
+  {
+    name: "list_companies",
+    description: "List all companies you have access to. Returns id, name, and slug for each. Use the id to query issues, clients, or projects for a specific company.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function handleTool(
   db: Db,
   companyId: string,
-  callerAgentId: string | null,
+  callerAgentIdRaw: string | null,
   name: string,
   args: Record<string, unknown>,
+  isOperator = false,
 ): Promise<string> {
+  // Only pass callerAgentId to DB columns that are UUID FKs if it's a real UUID
+  const callerAgentId = callerAgentIdRaw && UUID_RE.test(callerAgentIdRaw) ? callerAgentIdRaw : null;
+  // Operator can override companyId per tool call (cross-company ECC access)
+  const effectiveCompanyId =
+    isOperator && typeof args.companyId === "string" && UUID_RE.test(args.companyId)
+      ? args.companyId
+      : companyId;
   if (name === "list_issues") {
     const limit = Math.min(Number(args.limit ?? 20), 50);
-    const filters = [eq(issues.companyId, companyId)];
+    const filters = [eq(issues.companyId, effectiveCompanyId)];
     if (args.status) filters.push(eq(issues.status, String(args.status)));
     if (args.priority) filters.push(eq(issues.priority, String(args.priority)));
 
@@ -295,7 +342,7 @@ async function handleTool(
     const [created] = await db
       .insert(issues)
       .values({
-        companyId,
+        companyId: effectiveCompanyId,
         title,
         description: args.description ? String(args.description) : null,
         priority: (args.priority as string) ?? "medium",
@@ -346,7 +393,7 @@ async function handleTool(
   }
 
   if (name === "list_agents") {
-    const filters = [eq(agents.companyId, companyId)];
+    const filters = [eq(agents.companyId, effectiveCompanyId)];
     if (args.status) filters.push(eq(agents.status, String(args.status)));
 
     const rows = await db
@@ -362,7 +409,7 @@ async function handleTool(
     const rows = await db
       .select({ id: projects.id, name: projects.name, status: projects.status, description: projects.description })
       .from(projects)
-      .where(eq(projects.companyId, companyId))
+      .where(eq(projects.companyId, effectiveCompanyId))
       .orderBy(projects.name);
 
     return JSON.stringify(rows, null, 2);
@@ -370,7 +417,7 @@ async function handleTool(
 
   if (name === "get_activity") {
     const limit = Math.min(Number(args.limit ?? 20), 50);
-    const filters = [eq(activityLog.companyId, companyId)];
+    const filters = [eq(activityLog.companyId, effectiveCompanyId)];
     if (args.agentId) filters.push(eq(activityLog.agentId, String(args.agentId)));
 
     const rows = await db
@@ -517,7 +564,7 @@ async function handleTool(
   }
 
   if (name === "list_clients") {
-    const filters = [eq(clients.companyId, companyId)];
+    const filters = [eq(clients.companyId, effectiveCompanyId)];
     if (args.name) filters.push(ilike(clients.name, `%${String(args.name)}%`));
 
     const rows = await db
@@ -538,7 +585,7 @@ async function handleTool(
 
   if (name === "search_contacts") {
     const query = String(args.query ?? "").trim();
-    const baseWhere = eq(contacts.companyId, companyId);
+    const baseWhere = eq(contacts.companyId, effectiveCompanyId);
     const rows = query
       ? await db
           .select({
@@ -659,17 +706,16 @@ async function handleTool(
       await sendTelegramMessage(token, chatId, notifyBody).catch((err) => {
         logger.warn({ err }, "notify_operator: telegram send failed");
       });
-    } else {
-      await db.insert(operatorMessages).values({
-        companyId,
-        issueId: notifyIssueId ?? null,
-        direction: "outbound",
-        platform: "chat",
-        source: "orchestrator",
-        body: notifyBody,
-        rawPayload: null,
-      });
     }
+    await db.insert(operatorMessages).values({
+      companyId,
+      issueId: notifyIssueId ?? null,
+      direction: "outbound",
+      platform: "telegram",
+      source: "orchestrator",
+      body: notifyBody,
+      rawPayload: null,
+    });
     return `Operator notified.`;
   }
 
@@ -734,15 +780,73 @@ async function handleTool(
     const [client] = await db
       .select({ id: clients.id, name: clients.name, emailDomain: clients.emailDomain, extraEmails: clients.extraEmails, notes: clients.notes, localPath: clients.localPath, driveFolderId: clients.driveFolderId })
       .from(clients)
-      .where(and(eq(clients.id, gcId), eq(clients.companyId, companyId)))
+      .where(and(eq(clients.id, gcId), eq(clients.companyId, effectiveCompanyId)))
       .limit(1);
     if (!client) return `Client ${gcId} not found`;
     const openIssues = await db
       .select({ id: issues.id, title: issues.title, status: issues.status })
       .from(issues)
-      .where(and(eq(issues.companyId, companyId), eq(issues.clientId, gcId)))
+      .where(and(eq(issues.companyId, effectiveCompanyId), eq(issues.clientId, gcId)))
       .limit(10);
     return JSON.stringify({ ...client, openIssues }, null, 2);
+  }
+
+  if (name === "get_issue_plans") {
+    const { issueId: planIssueId } = args as { issueId: string };
+    const rows = await db
+      .select({
+        id: approvals.id,
+        status: approvals.status,
+        payload: approvals.payload,
+        decisionNote: approvals.decisionNote,
+        createdAt: approvals.createdAt,
+        decidedAt: approvals.decidedAt,
+      })
+      .from(approvals)
+      .where(and(eq(approvals.companyId, effectiveCompanyId), eq(approvals.type, "plan")))
+      .orderBy(desc(approvals.createdAt))
+      .limit(10);
+    const forIssue = rows.filter((r) => (r.payload as Record<string, unknown>)?.issueId === planIssueId);
+    if (!forIssue.length) return `No plans found for issue ${planIssueId}`;
+    return JSON.stringify(
+      forIssue.map((r) => ({
+        approvalId: r.id,
+        status: r.status,
+        proposalText: (r.payload as Record<string, unknown>)?.proposalText ?? "",
+        steps: (r.payload as Record<string, unknown>)?.steps ?? [],
+        decisionNote: r.decisionNote,
+        createdAt: r.createdAt,
+        decidedAt: r.decidedAt,
+      })),
+      null,
+      2,
+    );
+  }
+
+  if (name === "get_issue_comments") {
+    const { issueId: commentIssueId } = args as { issueId: string };
+    const rows = await db
+      .select({
+        id: issueComments.id,
+        body: issueComments.body,
+        authorAgentId: issueComments.authorAgentId,
+        authorUserId: issueComments.authorUserId,
+        createdAt: issueComments.createdAt,
+      })
+      .from(issueComments)
+      .where(eq(issueComments.issueId, commentIssueId))
+      .orderBy(issueComments.createdAt)
+      .limit(50);
+    if (!rows.length) return `No comments on issue ${commentIssueId}`;
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "list_companies") {
+    const rows = await db
+      .select({ id: companies.id, name: companies.name })
+      .from(companies)
+      .orderBy(companies.name);
+    return JSON.stringify(rows, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;
@@ -804,7 +908,7 @@ export function mcpToolServerRoutes(db: Db): Router {
       const toolArgs = params?.arguments ?? {};
 
       try {
-        const result = await handleTool(db, companyId, agentId, toolName, toolArgs);
+        const result = await handleTool(db, companyId, agentId, toolName, toolArgs, payload.isOperator ?? false);
         res.json(ok(id, textContent(result)));
       } catch (toolErr) {
         const msg = toolErr instanceof Error ? toolErr.message : String(toolErr);

@@ -70,6 +70,10 @@ export const channelsApi = {
     api.delete<{ ok: boolean }>("/channels/telegram/token"),
   setTelegramRouting: (companyId: string | null) =>
     api.put<{ ok: boolean }>("/channels/telegram/routing", { companyId }),
+  setTelegramOperatorChatId: (chatId: string) =>
+    api.put<{ ok: boolean }>("/channels/telegram/operator-chat-id", { chatId }),
+  detectTelegramOperatorChatId: () =>
+    api.post<{ ok: boolean; chatId: string }>("/channels/telegram/operator-chat-id/detect", {}),
 
   // WhatsApp
   setWhatsAppToken: (token: string) =>

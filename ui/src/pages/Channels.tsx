@@ -49,6 +49,7 @@ function TelegramSheet({
   const queryClient = useQueryClient();
   const [webhookUrl, setWebhookUrl] = useState("");
   const [tokenInput, setTokenInput] = useState("");
+  const [chatIdInput, setChatIdInput] = useState("");
 
   const tgWebhookActive = !!(tg.webhook?.url && tg.webhook.url.length > 0);
   const tgActiveHere = !!tg.configured && tg.activeCompanyId === selectedCompanyId;
@@ -81,6 +82,19 @@ function TelegramSheet({
 
   const removeToken = useMutation({
     mutationFn: channelsApi.deleteTelegramToken,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels-status"] }),
+  });
+
+  const saveOperatorChatId = useMutation({
+    mutationFn: () => channelsApi.setTelegramOperatorChatId(chatIdInput.trim()),
+    onSuccess: () => {
+      setChatIdInput("");
+      queryClient.invalidateQueries({ queryKey: ["channels-status"] });
+    },
+  });
+
+  const detectOperatorChatId = useMutation({
+    mutationFn: channelsApi.detectTelegramOperatorChatId,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["channels-status"] }),
   });
 
@@ -181,6 +195,50 @@ function TelegramSheet({
             </div>
             {saveToken.isSuccess && <p className="text-xs text-green-600">✓ Saved. Active within 25 seconds.</p>}
             {saveToken.isError && <p className="text-xs text-destructive">{String(saveToken.error)}</p>}
+          </div>
+
+          {/* Operator Chat ID */}
+          <Separator />
+          <div className="space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Operator chat ID</p>
+            {tg.operatorChatId ? (
+              <p className="text-xs text-green-600">✓ Set: <code className="bg-muted px-1 rounded">{tg.operatorChatId}</code></p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Needed so Paperclip can notify you via Telegram. Send any message to your bot, then click Detect.
+              </p>
+            )}
+            <Button
+              size="sm" variant="outline" className="w-full"
+              disabled={detectOperatorChatId.isPending}
+              onClick={() => detectOperatorChatId.mutate()}
+            >
+              {detectOperatorChatId.isPending ? "Detecting…" : tg.operatorChatId ? "Re-detect from recent messages" : "Detect from recent messages"}
+            </Button>
+            {detectOperatorChatId.isSuccess && (
+              <p className="text-xs text-green-600">✓ Detected and saved: <code className="bg-muted px-1 rounded">{detectOperatorChatId.data?.chatId}</code></p>
+            )}
+            {detectOperatorChatId.isError && (
+              <p className="text-xs text-destructive">{String(detectOperatorChatId.error)}</p>
+            )}
+            <p className="text-xs text-muted-foreground">Or enter manually:</p>
+            <div className="flex gap-2">
+              <Input
+                className="text-sm flex-1"
+                placeholder="123456789"
+                value={chatIdInput}
+                onChange={(e) => setChatIdInput(e.target.value)}
+              />
+              <Button
+                size="sm"
+                disabled={!chatIdInput.trim() || saveOperatorChatId.isPending}
+                onClick={() => saveOperatorChatId.mutate()}
+              >
+                {saveOperatorChatId.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+            {saveOperatorChatId.isSuccess && <p className="text-xs text-green-600">✓ Saved</p>}
+            {saveOperatorChatId.isError && <p className="text-xs text-destructive">{String(saveOperatorChatId.error)}</p>}
           </div>
 
           {/* Routing */}

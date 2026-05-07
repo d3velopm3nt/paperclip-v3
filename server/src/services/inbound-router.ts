@@ -9,6 +9,7 @@ import { clients, issues, messageThreads, operatorMessages } from "@paperclipai/
 import { logger } from "../middleware/logger.js";
 import { runOrchestrator } from "./orchestrator.js";
 
+
 export interface InboundChannelMessage {
   companyId: string;
   platform: "email" | "telegram" | "whatsapp";
@@ -59,6 +60,16 @@ export async function routeInboundMessage(db: Db, msg: InboundChannelMessage): P
     { companyId, platform, fromType, clientId: clientId ?? null, existingIssueId },
     "inbound-router: dispatching",
   );
+
+  // Persist inbound message so Channels tab can show it
+  void db.insert(operatorMessages).values({
+    companyId,
+    direction: "inbound",
+    platform,
+    source: fromType === "operator" ? "telegram" : platform,
+    body: msg.body,
+    rawPayload: null,
+  }).catch(() => {});
 
   await runOrchestrator(db, {
     companyId,
