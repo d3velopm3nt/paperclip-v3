@@ -512,6 +512,13 @@
       "when": 1777990228836,
       "tag": "0072_moaning_malice",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1778181535113,
+      "tag": "0073_stale_human_fly",
+      "breakpoints": true
     }
   ]
 }

@@ -96,3 +96,6 @@ export { messageThreads } from "./message_threads.js";
 
 // v3: chat
 export { chatThreads } from "./chat_threads.js";
+
+// v3: founder topics (ECC memory boxes)
+export { eccTopics, eccTopicIssues } from "./ecc_topics.js";
