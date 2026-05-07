@@ -60,6 +60,11 @@ import { NotFoundPage } from "./pages/NotFound";
 import { Chat } from "./pages/Chat"; // v3: chat
 import { DocumentLibrary } from "./pages/DocumentLibrary"; // v3: document storage
 import { InstanceStorageSettings } from "./pages/InstanceStorageSettings"; // v3: document storage
+import { FounderView } from "./pages/FounderView"; // v3: founder overview
+import { FounderOverview } from "./pages/founder/FounderOverview"; // v3: founder overview
+import { TopicsList } from "./pages/founder/TopicsList"; // v3: founder topics
+import { TopicDetail } from "./pages/founder/TopicDetail"; // v3: founder topic detail
+import { FounderSettings } from "./pages/founder/FounderSettings"; // v3: founder settings
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -355,6 +360,15 @@ export function App() {
             <Route path="storage" element={<InstanceStorageSettings />} /> {/* v3: document storage */}
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
+          </Route>
+          {/* v3: founder overview — cross-company dashboard */}
+          <Route path="founder" element={<Layout />}>
+            <Route element={<FounderView />}>
+              <Route index element={<FounderOverview />} />
+              <Route path="topics" element={<TopicsList />} />
+              <Route path="settings" element={<FounderSettings />} />
+            </Route>
+            <Route path="topics/:topicId" element={<TopicDetail />} />
           </Route>
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
