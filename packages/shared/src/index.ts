@@ -327,6 +327,8 @@ export type {
 } from "./types/document-storage.js";
 
 export {
+  founderProfileSchema,
+  type FounderProfile,
   instanceGeneralSettingsSchema,
   patchInstanceGeneralSettingsSchema,
   type PatchInstanceGeneralSettings,

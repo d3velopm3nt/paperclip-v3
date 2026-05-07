@@ -1,4 +1,6 @@
 export {
+  founderProfileSchema,
+  type FounderProfile,
   instanceGeneralSettingsSchema,
   patchInstanceGeneralSettingsSchema,
   type InstanceGeneralSettings,

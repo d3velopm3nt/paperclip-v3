@@ -1,7 +1,15 @@
 import { z } from "zod";
 
+export const founderProfileSchema = z.object({
+  name: z.string().default(""),
+  personalCompanyId: z.string().uuid().nullable().default(null),
+});
+
+export type FounderProfile = z.infer<typeof founderProfileSchema>;
+
 export const instanceGeneralSettingsSchema = z.object({
   censorUsernameInLogs: z.boolean().default(false),
+  founderProfile: founderProfileSchema.optional(),
 }).strict();
 
 export const patchInstanceGeneralSettingsSchema = instanceGeneralSettingsSchema.partial();
