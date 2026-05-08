@@ -1,10 +1,11 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies } from "@paperclipai/db";
+import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { eccTopicsService } from "../services/ecc-topics.js";
+import { eccConversationsService } from "../services/ecc-conversations.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
@@ -339,6 +340,44 @@ const TOOLS = [
       properties: {
         topicId: { type: "string", description: "UUID of the topic" },
         issueId: { type: "string", description: "UUID of the issue to link" },
+      },
+    },
+  },
+  {
+    name: "resolve_conversation",
+    description:
+      "REQUIRED on every ECC message. After matching a topic, call this to resolve or create the active conversation for that topic. Returns conversationId, runId, topic memory, and expiry info. Pass the returned runId to complete_conversation_turn at the end.",
+    inputSchema: {
+      type: "object",
+      required: ["topicId"],
+      properties: {
+        topicId: { type: "string", description: "UUID of the matched topic" },
+      },
+    },
+  },
+  {
+    name: "extend_conversation",
+    description:
+      "Extend an active conversation by 14 more days. Use when warningDays < 3 and JayJay confirms he wants to continue.",
+    inputSchema: {
+      type: "object",
+      required: ["conversationId"],
+      properties: {
+        conversationId: { type: "string", description: "UUID of the conversation to extend" },
+      },
+    },
+  },
+  {
+    name: "complete_conversation_turn",
+    description:
+      "REQUIRED at the end of every ECC message. Records final workflow stages and marks the run as passed.",
+    inputSchema: {
+      type: "object",
+      required: ["runId"],
+      properties: {
+        runId: { type: "string", description: "runId returned by resolve_conversation" },
+        memoryUpdated: { type: "boolean", description: "true if update_topic_memory was called this turn" },
+        issuesLinked: { type: "boolean", description: "true if link_issue_to_topic was called this turn" },
       },
     },
   },
@@ -928,6 +967,137 @@ async function handleTool(
     const svc = eccTopicsService(db);
     await svc.linkIssue(String(args.topicId), String(args.issueId));
     return `Issue ${args.issueId} linked to topic ${args.topicId}`;
+  }
+
+  if (name === "resolve_conversation") {
+    const topicId = String(args.topicId);
+    const topicSvc = eccTopicsService(db);
+    const topic = await topicSvc.getById(topicId);
+    if (!topic) return `Error: topic ${topicId} not found`;
+
+    const convSvc = eccConversationsService(db);
+    const conversation = await convSvc.resolveActive(topicId);
+
+    const runCompanyId = topic.companyId ?? effectiveCompanyId;
+    const now = new Date();
+    const [run] = await db
+      .insert(workflowRuns)
+      .values({
+        companyId: runCompanyId,
+        workflowType: "ecc_conversation",
+        sourceTable: "ecc_conversations",
+        sourceId: conversation.id,
+        overallStatus: "running",
+        startedAt: now,
+      })
+      .returning();
+
+    await db.insert(workflowStageResults).values([
+      {
+        runId: run!.id,
+        stageId: "message_received",
+        label: "Message received",
+        status: "passed",
+        expectations: ["Inbound message arrived"],
+        actuals: {},
+        errorText: null,
+        ord: 0,
+        computedAt: now,
+      },
+      {
+        runId: run!.id,
+        stageId: "topic_matched",
+        label: "Topic matched",
+        status: "passed",
+        expectations: ["ECC identified topic from message context"],
+        actuals: { topicId, topicName: topic.name },
+        errorText: null,
+        ord: 1,
+        computedAt: now,
+      },
+      {
+        runId: run!.id,
+        stageId: "conversation_resolved",
+        label: "Conversation resolved",
+        status: "passed",
+        expectations: ["Active conversation found or created"],
+        actuals: {
+          conversationId: conversation.id,
+          messageCount: conversation.messageCount,
+          isNew: conversation.messageCount === 1,
+        },
+        errorText: null,
+        ord: 2,
+        computedAt: now,
+      },
+    ]);
+
+    const msUntilExpiry = conversation.expiresAt.getTime() - Date.now();
+    const warningDays = Math.ceil(msUntilExpiry / 86_400_000);
+
+    return JSON.stringify({
+      conversationId: conversation.id,
+      runId: run!.id,
+      topicName: topic.name,
+      summary: topic.summary,
+      currentState: topic.currentState,
+      expiresAt: conversation.expiresAt.toISOString(),
+      messageCount: conversation.messageCount,
+      warningDays,
+    });
+  }
+
+  if (name === "extend_conversation") {
+    const convSvc = eccConversationsService(db);
+    const result = await convSvc.extend(String(args.conversationId));
+    return `Conversation extended until ${result.expiresAt.toISOString()}.`;
+  }
+
+  if (name === "complete_conversation_turn") {
+    const runId = String(args.runId);
+    const memoryUpdated = Boolean(args.memoryUpdated);
+    const issuesLinked = Boolean(args.issuesLinked);
+
+    const existing = await db
+      .select({ ord: workflowStageResults.ord })
+      .from(workflowStageResults)
+      .where(eq(workflowStageResults.runId, runId))
+      .orderBy(desc(workflowStageResults.ord))
+      .limit(1);
+    const nextOrd = (existing[0]?.ord ?? 2) + 1;
+
+    const now = new Date();
+    await db.insert(workflowStageResults).values([
+      {
+        runId,
+        stageId: "memory_updated",
+        label: "Memory updated",
+        status: memoryUpdated ? "passed" : "skipped",
+        expectations: ["Topic memory updated with new context"],
+        actuals: {},
+        errorText: null,
+        ord: nextOrd,
+        computedAt: now,
+      },
+      {
+        runId,
+        stageId: "action_taken",
+        label: "Action taken",
+        status: "passed",
+        expectations: ["ECC completed turn with response"],
+        actuals: { issuesLinked: Boolean(issuesLinked) },
+        errorText: null,
+        ord: nextOrd + 1,
+        computedAt: now,
+      },
+    ]);
+
+    await db
+      .update(workflowRuns)
+      .set({ overallStatus: "passed", finishedAt: now })
+      .where(eq(workflowRuns.id, runId));
+
+    return "Turn complete.";
   }
 
   return `Error: unknown tool "${name}"`;
