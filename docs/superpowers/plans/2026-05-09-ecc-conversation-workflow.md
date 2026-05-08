@@ -761,16 +761,18 @@ function parseAssistantText(streamJson: string): string {
 
 - [ ] **Step 4: Update `runOrchestrator` — pre-spawn context injection**
 
-In `runOrchestrator`, find the `isOperator` block that pushes company names (around line 107). After that block ends, add the active conversations context injection:
+In `runOrchestrator`, find this existing block (around line 107–117):
 
 ```typescript
-  if (isOperator) {
-    // Give ECC full company list in context so it doesn't need to discover them
-    try {
-      const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
-      if (allCompanies.length) {
-        contextLines.push(`Companies: ${allCompanies.map((c) => `${c.name} (${c.id})`).join(", ")}`);
-      }
+    } catch {
+      // non-fatal — Claude can call list_companies tool instead
+    }
+  } else {
+```
+
+Insert the two new lines **between** the `} catch { ... }` close and the `} else {`:
+
+```typescript
     } catch {
       // non-fatal — Claude can call list_companies tool instead
     }
@@ -779,6 +781,9 @@ In `runOrchestrator`, find the `isOperator` block that pushes company names (aro
     const convContext = await buildActiveConversationsContext(db);
     if (convContext) contextLines.push(convContext);
   } else {
+```
+
+Do NOT replace the surrounding code — only insert the two new lines shown.
 ```
 
 - [ ] **Step 5: Capture stdout + record spawnStart**
@@ -993,12 +998,15 @@ Expected: ECC responds with context from the previous message (via recentMessage
 
 - [ ] **Step 6: Verify workflow runs exist**
 
+Check server logs for `"orchestrator: complete"` after each Telegram message — no errors.
+
+Then open the Paperclip board UI → navigate to any company's Workflow Runs page (if visible) or confirm via server log output that `workflowType: "ecc_conversation"` runs were inserted by checking the server logs with:
+
 ```bash
-curl -s "http://localhost:3100/api/workflow-runs/by-source/ecc_conversation/CONVERSATION_ID" \
-  -H "Authorization: Bearer $(pnpm --silent exec ts-node -e 'console.log(require("./server/src/services/mcp-session-token").signMcpToken({companyId:"ANY_COMPANY_ID",agentId:"test",isOperator:true}))')"
+pnpm dev 2>&1 | grep -E "orchestrator:|ecc_conversation"
 ```
 
-Expected: two workflow runs (one per message), each with 5 stages all `passed`.
+Expected per message: one `orchestrator: starting` → one `orchestrator: complete`, no stack traces.
 
 - [ ] **Step 7: Final commit**
 
