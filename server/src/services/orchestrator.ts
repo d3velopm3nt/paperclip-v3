@@ -9,6 +9,9 @@ import type { Db } from "@paperclipai/db";
 import { companies } from "@paperclipai/db";
 import { signMcpToken } from "./mcp-session-token.js";
 import { logger } from "../middleware/logger.js";
+import { eccConversationsService } from "./ecc-conversations.js";
+import { eccTopicsService } from "./ecc-topics.js";
+import type { ConversationMessage } from "./ecc-conversations.js";
 
 export interface OrchestratorInput {
   companyId: string;
@@ -64,21 +67,43 @@ JayJay is the founder of multiple companies. You have cross-company access to al
 - Require JayJay's approval before high-risk actions (sending emails, committing funds, deploying code, making business commitments)
 - Keep JayJay informed: what happened, what is blocked, what needs attention
 
+## Conversation protocol — MANDATORY on every message
+Every message you process belongs to a topic and conversation. You MUST:
+1. **Start**: Call resolve_conversation(topicId) — identify the topic first via list_topics if needed. This opens a workflow run and gives you the conversation context (memory, recent messages, expiry).
+2. **Work**: Process the message using the full conversation context returned by resolve_conversation.
+3. **End**: Call complete_conversation_turn(conversationId, runId, actionSummary) — always, even if no external action was taken. This closes the workflow run and updates memory.
+
+Never skip these bookend calls. They are the source of truth for conversation continuity.
+
+## Topic matching
+- Check Active Conversations (injected above) before calling list_topics — the conversation may already be in context.
+- If message clearly references an existing topic, use that topicId directly.
+- If unsure which topic, call list_topics and pick the best match. If none fits, ask JayJay before creating.
+- Client messages forwarded by JayJay: extract the company/project name to match a topic.
+
+## Expiry management
+- If resolve_conversation returns warningDays <= 3, notify JayJay and offer to extend.
+- If a conversation is near expiry and still active, call extend_conversation(conversationId).
+
 ## Operating model
 1. Understand the message — who, what, which company, urgency, risk
-2. Retrieve context — call list_companies, list_issues, get_issue_comments, get_issue_plans as needed
-3. Reason and suggest — propose next actions clearly
-4. Act or ask — execute low-risk actions directly, request approval for high-risk ones
-5. Report — notify_operator with a concise update of what was done or what needs attention
+2. Call resolve_conversation → get full conversation context
+3. Retrieve additional context — call list_issues, get_issue_comments as needed
+4. Reason and suggest — propose next actions clearly
+5. Act or ask — execute low-risk actions directly, request approval for high-risk ones
+6. Call complete_conversation_turn — always last
 
 ## Tool usage rules
-- **list_companies**: Call first when unsure which company is relevant. Returns all company IDs.
-- **list_issues**: Pass the relevant companyId. Can filter by status. Use to find existing issues before creating new ones.
-- **get_issue_comments**: Read the full thread on an issue before making decisions about it.
-- **get_issue_plans**: Check existing plans before creating new ones.
-- **notify_operator**: Use for concise operational updates. Short, direct, no fluff.
-- **create_plan**: Use for multi-step work that needs JayJay's review and approval.
-- **add_issue_comment**: Log important decisions and context as comments on issues.
+- **resolve_conversation**: First tool call on every message. Pass topicId.
+- **complete_conversation_turn**: Last tool call on every message. Pass conversationId, runId, and a brief action summary.
+- **extend_conversation**: Call when warningDays <= 3 or JayJay asks to extend.
+- **list_companies**: Call when unsure which company is relevant.
+- **list_topics**: Call to find or match a topic. Required when topic is ambiguous.
+- **list_issues**: Pass the relevant companyId. Use to find existing issues.
+- **get_issue_comments**: Read full thread before making decisions.
+- **notify_operator**: Concise operational updates. Short, direct, no fluff.
+- **create_plan**: Multi-step work needing JayJay review and approval.
+- **add_issue_comment**: Log important decisions on issues.
 
 ## Cross-company queries
 When the question spans companies (e.g. "what's blocked across all companies?"):
@@ -92,6 +117,65 @@ No verbosity. No pleasantries. Treat JayJay as a busy founder who wants signal, 
 
 ## Issue references
 Always refer to issues by their identifier field (e.g. PC-42), never by UUID.`;
+
+async function buildActiveConversationsContext(db: Db): Promise<string> {
+  try {
+    const convSvc = eccConversationsService(db);
+    const topicSvc = eccTopicsService(db);
+    const active = await convSvc.listAllActive();
+
+    if (active.length === 0) return "\n## Active Conversations\nNone.";
+
+    const lines: string[] = ["\n## Active Conversations"];
+    for (const conv of active) {
+      const topic = await topicSvc.getById(conv.topicId);
+      if (!topic) continue;
+
+      const daysLeft = Math.ceil((conv.expiresAt.getTime() - Date.now()) / 86_400_000);
+      lines.push(
+        `\n[Topic: "${topic.name}" | topic-id: ${conv.topicId} | conversation-id: ${conv.id} | expires-in: ${daysLeft}d | messages: ${conv.messageCount}]`,
+      );
+      if (topic.currentState) lines.push(`State: ${topic.currentState}`);
+      if (topic.summary) lines.push(`Memory: ${topic.summary.slice(0, 300)}`);
+
+      const msgs = (conv.recentMessages as ConversationMessage[]) ?? [];
+      if (msgs.length > 0) {
+        lines.push("Recent:");
+        for (const m of msgs.slice(-8)) {
+          const ts = new Date(m.ts).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
+          lines.push(`  [${m.role} | ${ts}] ${m.content.slice(0, 300)}`);
+        }
+      }
+    }
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
+}
+
+function parseAssistantText(streamJson: string): string {
+  return streamJson
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        const event = JSON.parse(line) as {
+          type?: string;
+          message?: { content?: Array<{ type: string; text?: string }> };
+        };
+        if (event.type === "assistant" && Array.isArray(event.message?.content)) {
+          return event.message.content
+            .filter((c) => c.type === "text")
+            .map((c) => c.text ?? "");
+        }
+      } catch {
+        /* ignore malformed */
+      }
+      return [];
+    })
+    .join("\n")
+    .trim();
+}
 
 export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise<void> {
   const { companyId } = input;
@@ -114,6 +198,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     } catch {
       // non-fatal — Claude can call list_companies tool instead
     }
+
+    // Inject active conversations (short-term memory for stateless ECC)
+    const convContext = await buildActiveConversationsContext(db);
+    if (convContext) contextLines.push(convContext);
   } else {
     contextLines.push(`Company ID: ${companyId}`);
   }
@@ -169,12 +257,15 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     "orchestrator: starting",
   );
 
+  const spawnStart = new Date();
   const proc = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
   proc.stdin.write(stdin);
   proc.stdin.end();
 
   let stderr = "";
+  let stdout = "";
   proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+  proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
 
   await new Promise<void>((resolve) => {
     proc.on("close", (code) => {
@@ -188,4 +279,19 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   });
 
   await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
+
+  if (isOperator) {
+    try {
+      const convSvc = eccConversationsService(db);
+      const active = await convSvc.listAllActive();
+      const touched = active.find((c) => c.lastMessageAt >= spawnStart);
+      if (touched) {
+        await convSvc.appendMessage(touched.id, "user", input.body);
+        const assistantText = parseAssistantText(stdout);
+        if (assistantText) await convSvc.appendMessage(touched.id, "assistant", assistantText);
+      }
+    } catch (e) {
+      logger.warn({ err: e }, "orchestrator: failed to append conversation message");
+    }
+  }
 }
