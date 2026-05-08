@@ -352,6 +352,7 @@ const TOOLS = [
       required: ["topicId"],
       properties: {
         topicId: { type: "string", description: "UUID of the matched topic" },
+        messagePreview: { type: "string", description: "First 300 chars of the inbound message (for workflow log)" },
       },
     },
   },
@@ -376,7 +377,7 @@ const TOOLS = [
       required: ["runId"],
       properties: {
         runId: { type: "string", description: "runId returned by resolve_conversation" },
-        memoryUpdated: { type: "boolean", description: "true if update_topic_memory was called this turn" },
+        actionSummary: { type: "string", description: "One-line summary of what you did this turn (e.g. 'Notified operator, linked issue PC-12')" },
         issuesLinked: { type: "boolean", description: "true if link_issue_to_topic was called this turn" },
       },
     },
@@ -971,6 +972,7 @@ async function handleTool(
 
   if (name === "resolve_conversation") {
     const topicId = String(args.topicId);
+    const messagePreview = typeof args.messagePreview === "string" ? args.messagePreview.slice(0, 300) : undefined;
     const topicSvc = eccTopicsService(db);
     const topic = await topicSvc.getById(topicId);
     if (!topic) return `Error: topic ${topicId} not found`;
@@ -999,7 +1001,7 @@ async function handleTool(
         label: "Message received",
         status: "passed",
         expectations: ["Inbound message arrived"],
-        actuals: {},
+        actuals: messagePreview ? { messagePreview } : {},
         errorText: null,
         ord: 0,
         computedAt: now,
@@ -1055,7 +1057,7 @@ async function handleTool(
 
   if (name === "complete_conversation_turn") {
     const runId = String(args.runId);
-    const memoryUpdated = Boolean(args.memoryUpdated);
+    const actionSummary = typeof args.actionSummary === "string" ? args.actionSummary.slice(0, 500) : undefined;
     const issuesLinked = Boolean(args.issuesLinked);
 
     const existing = await db
@@ -1072,8 +1074,8 @@ async function handleTool(
         runId,
         stageId: "memory_updated",
         label: "Memory updated",
-        status: memoryUpdated ? "passed" : "skipped",
-        expectations: ["Topic memory updated with new context"],
+        status: "passed",
+        expectations: ["Conversation messages saved"],
         actuals: {},
         errorText: null,
         ord: nextOrd,
@@ -1085,7 +1087,7 @@ async function handleTool(
         label: "Action taken",
         status: "passed",
         expectations: ["ECC completed turn with response"],
-        actuals: { issuesLinked: Boolean(issuesLinked) },
+        actuals: { ...(actionSummary ? { actionSummary } : {}), issuesLinked },
         errorText: null,
         ord: nextOrd + 1,
         computedAt: now,
