@@ -45,7 +45,7 @@ Indexes: `(topicId, status)`, `(expiresAt)` (for expiry scans), `(topicId, lastM
 Each conversation turn produces one `workflow_run`:
 - `workflowType = "ecc_conversation"`
 - `sourceId = conversationId`
-- `companyId` = topic's companyId (or null if cross-company)
+- `companyId` = topic's companyId. If topic is cross-company (companyId null), use the first company from `list_companies` as a placeholder. `workflow_runs.companyId` is NOT NULL in the schema so a value is required.
 
 Stages per run (in order):
 
@@ -168,7 +168,7 @@ After Claude subprocess exits:
 1. Append user message to conversation: `appendMessage(conversationId, "user", inputText)`
 2. Capture Claude's text output (stdout) and append: `appendMessage(conversationId, "assistant", claudeOutput)`
 
-The `conversationId` is known because Claude called `resolve_conversation` via MCP — the service stores it in a request-scoped variable accessible to the orchestrator.
+The `conversationId` is known via a server-side spawn map: before spawning, orchestrator generates a unique `spawnId` (UUID) and injects it into the ECC context. The `resolve_conversation` MCP tool stores `spawnId → conversationId` in a module-level `Map`. After the subprocess exits, orchestrator looks up the conversationId by spawnId, then calls `appendMessage`. Stale entries are deleted after lookup.
 
 ---
 
