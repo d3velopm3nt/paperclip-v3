@@ -91,9 +91,10 @@ The Active Conversations context above shows what is currently open. Use it for 
 - Unknown subject → do NOT guess; ask JayJay via notify_operator
 
 **When no topic matches:**
-1. Call notify_operator: "Message received about [X]. No matching topic found. Should I create a new topic '[suggested name]' under [company]?"
-2. Skip resolve_conversation for this turn (no runId available yet)
-3. Still call complete_conversation_turn with runId=null — actually, since you have no runId, just end after notify_operator. The next message from JayJay will give you the answer.
+1. Use the ECC Inbox topic-id (provided in context under "Inbox fallback") for resolve_conversation — this ensures the message is logged.
+2. Call notify_operator: "Message received about [X]. Logged to Inbox. Should I create a new topic '[suggested name]' under [company]? Or assign to an existing topic?"
+3. Call complete_conversation_turn as normal.
+4. On JayJay's confirmation in the next message, create the topic (with approval) and the next conversation will use the correct topic.
 
 ## Expiry management
 - If resolve_conversation returns warningDays <= 3, notify JayJay and offer to extend.
@@ -145,39 +146,63 @@ No verbosity. No pleasantries. Treat JayJay as a busy founder who wants signal, 
 ## Issue references
 Always refer to issues by their identifier field (e.g. PC-42), never by UUID.`;
 
-async function buildActiveConversationsContext(db: Db): Promise<string> {
+async function buildActiveConversationsContext(db: Db): Promise<{ context: string; inboxTopicId: string }> {
+  const topicSvc = eccTopicsService(db);
+
+  // Ensure ECC Inbox topic exists for unmatched messages
+  const allTopics = await topicSvc.list("active");
+  let inboxTopic = allTopics.find((t) => t.name === "ECC Inbox");
+  if (!inboxTopic) {
+    inboxTopic = await topicSvc.create({ name: "ECC Inbox", companyId: null });
+  }
+
+  const lines: string[] = [];
+
+  // All available topics (for matching)
+  const topicsExceptInbox = allTopics.filter((t) => t.name !== "ECC Inbox");
+  if (topicsExceptInbox.length > 0) {
+    lines.push("\n## Available Topics");
+    for (const t of topicsExceptInbox) {
+      lines.push(`- "${t.name}" | topic-id: ${t.id}${t.currentState ? ` | state: ${t.currentState}` : ""}${t.companyId ? ` | company: ${t.companyId}` : ""}`);
+    }
+  }
+
+  // Active conversations with memory
   try {
     const convSvc = eccConversationsService(db);
-    const topicSvc = eccTopicsService(db);
     const active = await convSvc.listAllActive();
+    const activeNonInbox = active.filter((c) => c.topicId !== inboxTopic!.id);
 
-    if (active.length === 0) return "\n## Active Conversations\nNone.";
+    if (activeNonInbox.length > 0) {
+      lines.push("\n## Active Conversations");
+      for (const conv of activeNonInbox) {
+        const topic = await topicSvc.getById(conv.topicId);
+        if (!topic) continue;
 
-    const lines: string[] = ["\n## Active Conversations"];
-    for (const conv of active) {
-      const topic = await topicSvc.getById(conv.topicId);
-      if (!topic) continue;
+        const daysLeft = Math.ceil((conv.expiresAt.getTime() - Date.now()) / 86_400_000);
+        lines.push(
+          `\n[Topic: "${topic.name}" | topic-id: ${conv.topicId} | conversation-id: ${conv.id} | expires-in: ${daysLeft}d | messages: ${conv.messageCount}]`,
+        );
+        if (topic.currentState) lines.push(`State: ${topic.currentState}`);
+        if (topic.summary) lines.push(`Memory: ${topic.summary.slice(0, 300)}`);
 
-      const daysLeft = Math.ceil((conv.expiresAt.getTime() - Date.now()) / 86_400_000);
-      lines.push(
-        `\n[Topic: "${topic.name}" | topic-id: ${conv.topicId} | conversation-id: ${conv.id} | expires-in: ${daysLeft}d | messages: ${conv.messageCount}]`,
-      );
-      if (topic.currentState) lines.push(`State: ${topic.currentState}`);
-      if (topic.summary) lines.push(`Memory: ${topic.summary.slice(0, 300)}`);
-
-      const msgs = (conv.recentMessages as ConversationMessage[]) ?? [];
-      if (msgs.length > 0) {
-        lines.push("Recent:");
-        for (const m of msgs.slice(-8)) {
-          const ts = new Date(m.ts).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
-          lines.push(`  [${m.role} | ${ts}] ${m.content.slice(0, 300)}`);
+        const msgs = (conv.recentMessages as ConversationMessage[]) ?? [];
+        if (msgs.length > 0) {
+          lines.push("Recent:");
+          for (const m of msgs.slice(-8)) {
+            const ts = new Date(m.ts).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
+            lines.push(`  [${m.role} | ${ts}] ${m.content.slice(0, 300)}`);
+          }
         }
       }
     }
-    return lines.join("\n");
   } catch {
-    return "";
+    // non-fatal
   }
+
+  lines.push(`\n## Inbox fallback\nIf no topic matches, use topic-id: ${inboxTopic.id} (ECC Inbox) for resolve_conversation, then notify_operator asking JayJay which topic to assign.`);
+
+  return { context: lines.join("\n"), inboxTopicId: inboxTopic.id };
 }
 
 function parseAssistantText(streamJson: string): string {
@@ -226,8 +251,8 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
       // non-fatal — Claude can call list_companies tool instead
     }
 
-    // Inject active conversations (short-term memory for stateless ECC)
-    const convContext = await buildActiveConversationsContext(db);
+    // Inject topics + active conversations + inbox fallback
+    const { context: convContext } = await buildActiveConversationsContext(db);
     if (convContext) contextLines.push(convContext);
   } else {
     contextLines.push(`Company ID: ${companyId}`);
