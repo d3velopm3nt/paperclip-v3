@@ -91,7 +91,6 @@ export function eccTopicRoutes(db: Db) {
     assertBoard(req);
     const convSvc = eccConversationsService(db);
     const conversations = await convSvc.listAllActive();
-    // Enrich with topic name + company
     const enriched = await Promise.all(
       conversations.map(async (conv) => {
         const topic = await svc.getById(conv.topicId);
@@ -105,6 +104,25 @@ export function eccTopicRoutes(db: Db) {
       }),
     );
     res.json(enriched);
+  });
+
+  // GET /ecc/conversations/:id — single conversation with topic info
+  router.get("/ecc/conversations/:id", async (req, res) => {
+    assertBoard(req);
+    const convSvc = eccConversationsService(db);
+    const conv = await convSvc.getById(String(req.params.id));
+    if (!conv) {
+      res.status(404).json({ error: "Conversation not found" });
+      return;
+    }
+    const topic = await svc.getById(conv.topicId);
+    res.json({
+      ...conv,
+      topicName: topic?.name ?? null,
+      companyId: topic?.companyId ?? null,
+      topicState: topic?.currentState ?? null,
+      topicSummary: topic?.summary ?? null,
+    });
   });
 
   return router;

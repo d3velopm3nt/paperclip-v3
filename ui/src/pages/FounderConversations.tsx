@@ -90,7 +90,7 @@ export function FounderConversations() {
           <Card
             key={conv.id}
             className="p-4 cursor-pointer hover:bg-accent/30 transition-colors"
-            onClick={() => navigate(`/workflows?source=${conv.id}`)}
+            onClick={() => navigate(`/founder/conversations/${conv.id}`)}
           >
             <div className="flex items-start gap-3">
               <div className="mt-0.5">

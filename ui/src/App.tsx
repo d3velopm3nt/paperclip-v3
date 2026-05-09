@@ -67,6 +67,7 @@ import { TopicsList } from "./pages/founder/TopicsList"; // v3: founder topics
 import { TopicDetail } from "./pages/founder/TopicDetail"; // v3: founder topic detail
 import { FounderSettings } from "./pages/founder/FounderSettings"; // v3: founder settings
 import { FounderConversations } from "./pages/FounderConversations"; // v3: cross-company conversations
+import { FounderConversationDetail } from "./pages/FounderConversationDetail"; // v3: conversation message list
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -373,6 +374,7 @@ export function App() {
               <Route path="settings" element={<FounderSettings />} />
             </Route>
             <Route path="topics/:topicId" element={<TopicDetail />} />
+            <Route path="conversations/:convId" element={<FounderConversationDetail />} />
           </Route>
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />

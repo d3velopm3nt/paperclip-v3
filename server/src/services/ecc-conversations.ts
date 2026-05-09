@@ -126,6 +126,15 @@ export function eccConversationsService(db: Db) {
       .orderBy(desc(eccConversations.lastMessageAt)) as Promise<EccConversation[]>;
   }
 
+  async function getById(id: string): Promise<EccConversation | null> {
+    const rows = await db
+      .select()
+      .from(eccConversations)
+      .where(eq(eccConversations.id, id))
+      .limit(1);
+    return (rows[0] as EccConversation) ?? null;
+  }
+
   async function listAllActive(): Promise<EccConversation[]> {
     const now = new Date();
     return db
@@ -140,5 +149,5 @@ export function eccConversationsService(db: Db) {
       .orderBy(desc(eccConversations.lastMessageAt)) as Promise<EccConversation[]>;
   }
 
-  return { resolveActive, appendMessage, extend, expire, list, listAllActive };
+  return { resolveActive, appendMessage, extend, expire, list, getById, listAllActive };
 }
