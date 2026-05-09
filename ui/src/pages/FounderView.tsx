@@ -30,6 +30,9 @@ export function FounderView() {
           <NavLink to="/founder/topics" className={({ isActive }) => tabClass(isActive)}>
             Topics
           </NavLink>
+          <NavLink to="/founder/conversations" className={({ isActive }) => tabClass(isActive)}>
+            Conversations
+          </NavLink>
           <NavLink to="/founder/settings" className={({ isActive }) => tabClass(isActive)}>
             Settings
           </NavLink>

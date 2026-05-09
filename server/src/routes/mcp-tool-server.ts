@@ -308,7 +308,7 @@ const TOOLS = [
   },
   {
     name: "create_topic",
-    description: "Create a new ECC topic (memory box) for tracking a workstream or life domain.",
+    description: "Create a new ECC topic. REQUIRES prior operator approval — always call notify_operator first, wait for JayJay's confirmation in a subsequent message before calling this.",
     inputSchema: {
       type: "object",
       required: ["name"],

@@ -66,6 +66,7 @@ import { FounderOverview } from "./pages/founder/FounderOverview"; // v3: founde
 import { TopicsList } from "./pages/founder/TopicsList"; // v3: founder topics
 import { TopicDetail } from "./pages/founder/TopicDetail"; // v3: founder topic detail
 import { FounderSettings } from "./pages/founder/FounderSettings"; // v3: founder settings
+import { FounderConversations } from "./pages/FounderConversations"; // v3: cross-company conversations
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -368,6 +369,7 @@ export function App() {
             <Route element={<FounderView />}>
               <Route index element={<FounderOverview />} />
               <Route path="topics" element={<TopicsList />} />
+              <Route path="conversations" element={<FounderConversations />} />
               <Route path="settings" element={<FounderSettings />} />
             </Route>
             <Route path="topics/:topicId" element={<TopicDetail />} />

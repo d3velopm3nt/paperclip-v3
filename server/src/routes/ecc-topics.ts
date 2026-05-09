@@ -2,6 +2,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { eccTopicsService } from "../services/ecc-topics.js";
+import { eccConversationsService } from "../services/ecc-conversations.js";
 import { validate } from "../middleware/validate.js";
 import { forbidden } from "../errors.js";
 
@@ -83,6 +84,27 @@ export function eccTopicRoutes(db: Db) {
     assertBoard(req);
     await svc.unlinkIssue(String(req.params.id), String(req.params.issueId));
     res.status(204).send();
+  });
+
+  // GET /ecc/conversations — all active conversations cross-company with topic info
+  router.get("/ecc/conversations", async (req, res) => {
+    assertBoard(req);
+    const convSvc = eccConversationsService(db);
+    const conversations = await convSvc.listAllActive();
+    // Enrich with topic name + company
+    const enriched = await Promise.all(
+      conversations.map(async (conv) => {
+        const topic = await svc.getById(conv.topicId);
+        return {
+          ...conv,
+          topicName: topic?.name ?? null,
+          companyId: topic?.companyId ?? null,
+          topicState: topic?.currentState ?? null,
+          topicSummary: topic?.summary ?? null,
+        };
+      }),
+    );
+    res.json(enriched);
   });
 
   return router;
