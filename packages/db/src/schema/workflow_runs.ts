@@ -3,12 +3,14 @@
 // should have happened vs what did" diagnostic page.
 import { pgTable, uuid, text, timestamp, index } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
+import { agents } from "./agents.js";
 
 export const workflowRuns = pgTable(
   "workflow_runs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
     workflowType: text("workflow_type").notNull(),
     sourceTable: text("source_table").notNull(),
     sourceId: uuid("source_id").notNull(),
