@@ -96,6 +96,9 @@ The Active Conversations context above shows what is currently open. Use it for 
 3. Call complete_conversation_turn as normal.
 4. On JayJay's confirmation in the next message, create the topic (with approval) and the next conversation will use the correct topic.
 
+**After a topic is created:**
+Available Topics is updated immediately. On the VERY NEXT message, check Available Topics FIRST — if a topic there clearly matches the current message, call resolve_conversation with that topic's id, NOT any active conversation's topicId. A newly created topic always takes precedence over active conversation history. Even if Active Conversations shows a conversation with related prior messages, if the topic there does NOT match the current message, start a new conversation under the correct topic.
+
 ## Expiry management
 - If resolve_conversation returns warningDays <= 3, notify JayJay and offer to extend.
 - If a conversation is near expiry and still active, call extend_conversation(conversationId).
@@ -193,6 +196,20 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
             const ts = new Date(m.ts).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
             lines.push(`  [${m.role} | ${ts}] ${m.content.slice(0, 300)}`);
           }
+        }
+      }
+    }
+
+    // Inbox recent messages — critical for multi-turn context when no topic matched yet.
+    // Without this, replies like "yes create it" lose all memory of what was suggested.
+    const inboxConv = active.find((c) => c.topicId === inboxTopic!.id);
+    if (inboxConv) {
+      const inboxMsgs = (inboxConv.recentMessages as ConversationMessage[]) ?? [];
+      if (inboxMsgs.length > 0) {
+        lines.push(`\n## Recent Inbox Messages (unassigned — use for context when JayJay replies to a previous suggestion)`);
+        for (const m of inboxMsgs.slice(-5)) {
+          const ts = new Date(m.ts).toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg" });
+          lines.push(`  [${m.role} | ${ts}] ${m.content.slice(0, 300)}`);
         }
       }
     }
