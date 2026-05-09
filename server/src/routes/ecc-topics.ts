@@ -119,7 +119,8 @@ export function eccTopicRoutes(db: Db) {
     assertBoard(req);
     const convSvc = eccConversationsService(db);
     const showAll = req.query.all === "true";
-    const conversations = showAll ? await convSvc.listAll(200) : await convSvc.listAllActive();
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 50));
+    const conversations = showAll ? await convSvc.listAll(limit) : await convSvc.listAllActive(limit);
     const enriched = (await Promise.all(conversations.map(enrichConv))).filter(Boolean);
     res.json(enriched);
   });

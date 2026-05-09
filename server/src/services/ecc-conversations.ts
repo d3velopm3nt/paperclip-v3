@@ -135,7 +135,7 @@ export function eccConversationsService(db: Db) {
     return (rows[0] as EccConversation) ?? null;
   }
 
-  async function listAllActive(): Promise<EccConversation[]> {
+  async function listAllActive(limit = 100): Promise<EccConversation[]> {
     const now = new Date();
     return db
       .select()
@@ -146,7 +146,8 @@ export function eccConversationsService(db: Db) {
           gt(eccConversations.expiresAt, now),
         ),
       )
-      .orderBy(desc(eccConversations.lastMessageAt)) as Promise<EccConversation[]>;
+      .orderBy(desc(eccConversations.lastMessageAt))
+      .limit(limit) as Promise<EccConversation[]>;
   }
 
   async function listAll(limit = 100): Promise<EccConversation[]> {
