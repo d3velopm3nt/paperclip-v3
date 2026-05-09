@@ -14,6 +14,18 @@ import type { Issue } from "@paperclipai/shared";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+interface EccAgent {
+  id: string;
+  name: string;
+  status: string;
+  lastHeartbeatAt: string | null;
+  metadata: {
+    currentTopicId?: string;
+    currentTopicName?: string;
+    lastMessagePreview?: string;
+  } | null;
+}
+
 interface EccTopic {
   id: string;
   name: string;
@@ -134,6 +146,62 @@ function ConvCard({ conv, onClick }: { conv: EccConversation; onClick: () => voi
   );
 }
 
+// ── EccAgentCard (left panel — ECC Agents section) ───────────────────────────
+
+function EccAgentCard({ agent, onClick }: { agent: EccAgent; onClick: () => void }) {
+  const isProcessing = agent.status === "processing";
+  const isPaused = agent.status === "paused" || agent.status === "error";
+  const topicName = agent.metadata?.currentTopicName;
+  const messagePreview = agent.metadata?.lastMessagePreview;
+
+  const borderColor = isProcessing
+    ? "border-blue-500/40"
+    : isPaused
+    ? "border-red-500/40"
+    : "border-border";
+  const bgColor = isProcessing ? "bg-blue-500/5" : isPaused ? "bg-red-500/5" : "bg-card";
+  const dotColor = isProcessing ? "bg-blue-400" : isPaused ? "bg-red-400" : "bg-muted-foreground/30";
+
+  return (
+    <button
+      onClick={onClick}
+      className={`text-left rounded-lg border ${borderColor} ${bgColor} p-3 hover:border-foreground/20 transition-colors w-full`}
+    >
+      <div className="flex items-center gap-2 mb-1.5">
+        <span
+          className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor} ${isProcessing ? "animate-pulse" : ""}`}
+        />
+        <span className="text-xs font-medium truncate">{agent.name}</span>
+      </div>
+      <div className="mb-1">
+        <span
+          className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+            isProcessing
+              ? "bg-blue-500/10 text-blue-400"
+              : isPaused
+              ? "bg-red-500/10 text-red-400"
+              : "bg-muted text-muted-foreground"
+          }`}
+        >
+          {agent.status}
+        </span>
+      </div>
+      {isProcessing && topicName ? (
+        <div className="space-y-0.5">
+          <p className="text-[11px] text-violet-400 font-medium truncate">{topicName}</p>
+          {messagePreview && (
+            <p className="text-[11px] text-muted-foreground line-clamp-1">{messagePreview}</p>
+          )}
+        </div>
+      ) : (
+        <p className="text-[11px] text-muted-foreground">
+          {agent.lastHeartbeatAt ? `last active ${relativeTime(agent.lastHeartbeatAt)}` : "never active"}
+        </p>
+      )}
+    </button>
+  );
+}
+
 // ── CompanyCard (left panel) ──────────────────────────────────────────────────
 
 function CompanyCard({
@@ -248,6 +316,13 @@ export function FounderOverview() {
     refetchInterval: 15_000,
   });
 
+  const eccAgentsQuery = useQuery({
+    queryKey: ["ecc-agents"],
+    queryFn: () => api.get<EccAgent[]>("/ecc/agents"),
+    refetchInterval: (query) =>
+      query.state.data?.some((a) => a.status === "processing") ? 5_000 : 15_000,
+  });
+
   const allIssues = activeCompanies.flatMap((_, i) => issueQueries[i]?.data ?? []);
   const blockedIssues = allIssues.filter((i) => i.status === "blocked");
   const needsAttention = [...blockedIssues]
@@ -256,11 +331,29 @@ export function FounderOverview() {
   const companyById = new Map(activeCompanies.map((c) => [c.id, c]));
   const topics = topicsQuery.data ?? [];
   const conversations = convsQuery.data ?? [];
+  const eccAgents = eccAgentsQuery.data ?? [];
 
   return (
     <div className="flex flex-col lg:flex-row gap-0 h-full min-h-0">
-      {/* LEFT: Companies + Needs Attention */}
+      {/* LEFT: ECC Agents + Companies + Needs Attention */}
       <div className="flex-[3] pr-0 lg:pr-6 space-y-8 overflow-auto pb-6">
+        {eccAgents.length > 0 && (
+          <section>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+              ECC Agents
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              {eccAgents.map((agent) => (
+                <EccAgentCard
+                  key={agent.id}
+                  agent={agent}
+                  onClick={() => navigate(`/agents/${agent.id}/instructions`)}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
         <section>
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
             Companies
