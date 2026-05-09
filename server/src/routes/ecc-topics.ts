@@ -1,6 +1,8 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
+import { companies } from "@paperclipai/db";
+import { eq } from "drizzle-orm";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { eccConversationsService } from "../services/ecc-conversations.js";
 import { validate } from "../middleware/validate.js";
@@ -86,6 +88,31 @@ export function eccTopicRoutes(db: Db) {
     res.status(204).send();
   });
 
+  async function enrichConv(conv: Awaited<ReturnType<ReturnType<typeof eccConversationsService>["getById"]>>) {
+    if (!conv) return null;
+    const topic = await svc.getById(conv.topicId);
+    const companyId = topic?.companyId ?? null;
+    let companyName: string | null = null;
+    if (companyId) {
+      const [co] = await db.select({ name: companies.name }).from(companies).where(eq(companies.id, companyId)).limit(1);
+      companyName = co?.name ?? null;
+    }
+    const msgs = (conv.recentMessages ?? []) as Array<{ role: string; content: string; ts: string }>;
+    const lastUserMsg = [...msgs].reverse().find((m) => m.role === "user");
+    const lastAssistantMsg = [...msgs].reverse().find((m) => m.role === "assistant");
+    return {
+      ...conv,
+      topicName: topic?.name ?? null,
+      companyId,
+      companyName,
+      topicState: topic?.currentState ?? null,
+      topicSummary: topic?.summary ?? null,
+      linkedIssues: (topic?.issues ?? []).map((i) => ({ id: i.id, identifier: i.identifier, title: i.title, status: i.status })),
+      lastUserMessage: lastUserMsg ? lastUserMsg.content.slice(0, 200) : null,
+      lastAssistantMessage: lastAssistantMsg ? lastAssistantMsg.content.slice(0, 200) : null,
+    };
+  }
+
   // GET /ecc/conversations?all=true — cross-company conversations with topic info
   // Default: active only. ?all=true: all statuses (including expired).
   router.get("/ecc/conversations", async (req, res) => {
@@ -93,18 +120,7 @@ export function eccTopicRoutes(db: Db) {
     const convSvc = eccConversationsService(db);
     const showAll = req.query.all === "true";
     const conversations = showAll ? await convSvc.listAll(200) : await convSvc.listAllActive();
-    const enriched = await Promise.all(
-      conversations.map(async (conv) => {
-        const topic = await svc.getById(conv.topicId);
-        return {
-          ...conv,
-          topicName: topic?.name ?? null,
-          companyId: topic?.companyId ?? null,
-          topicState: topic?.currentState ?? null,
-          topicSummary: topic?.summary ?? null,
-        };
-      }),
-    );
+    const enriched = (await Promise.all(conversations.map(enrichConv))).filter(Boolean);
     res.json(enriched);
   });
 
@@ -117,14 +133,8 @@ export function eccTopicRoutes(db: Db) {
       res.status(404).json({ error: "Conversation not found" });
       return;
     }
-    const topic = await svc.getById(conv.topicId);
-    res.json({
-      ...conv,
-      topicName: topic?.name ?? null,
-      companyId: topic?.companyId ?? null,
-      topicState: topic?.currentState ?? null,
-      topicSummary: topic?.summary ?? null,
-    });
+    const enriched = await enrichConv(conv);
+    res.json(enriched);
   });
 
   return router;

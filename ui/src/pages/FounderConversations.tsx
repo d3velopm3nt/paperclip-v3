@@ -1,23 +1,33 @@
-// v3: cross-company ECC conversation view on founder profile.
+// v3: cross-company ECC conversation list on founder profile.
 import { useState } from "react";
 import { useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import { workflowRunsApi, type WorkflowRun } from "../api/workflowRuns";
 import { Card } from "@/components/ui/card";
-import { MessageSquare, Clock, CheckCircle2 } from "lucide-react";
+import { MessageSquare, Clock } from "lucide-react";
+
+interface LinkedIssue {
+  id: string;
+  identifier: string;
+  title: string;
+  status: string;
+}
 
 interface EccConversation {
   id: string;
   topicId: string;
   topicName: string | null;
   companyId: string | null;
+  companyName: string | null;
   topicState: string | null;
   topicSummary: string | null;
   status: string;
   messageCount: number;
   lastMessageAt: string;
   expiresAt: string;
+  linkedIssues: LinkedIssue[];
+  lastUserMessage: string | null;
+  lastAssistantMessage: string | null;
 }
 
 function relativeTime(iso: string): string {
@@ -37,31 +47,18 @@ function daysUntil(iso: string): number {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  active: "bg-emerald-500",
-  expired: "bg-slate-400",
-  extended: "bg-blue-500",
-};
-
-function RunStatusDot({ conversationId }: { conversationId: string }) {
-  const runsQuery = useQuery({
-    queryKey: ["workflow-runs", "by-source", "ecc_conversation", conversationId],
-    queryFn: () => workflowRunsApi.listBySource("ecc_conversation", conversationId, 1),
-    staleTime: 30_000,
-  });
-  const latest: WorkflowRun | undefined = runsQuery.data?.[0];
-  if (!latest) return null;
+function Badge({ label, tone = "default" }: { label: string; tone?: "default" | "blue" | "green" | "amber" | "violet" }) {
   const colors: Record<string, string> = {
-    passed: "bg-emerald-500",
-    failed: "bg-rose-500",
-    running: "bg-blue-500 animate-pulse",
-    partial: "bg-amber-500",
+    default: "bg-muted text-muted-foreground",
+    blue: "bg-blue-500/10 text-blue-700",
+    green: "bg-emerald-500/10 text-emerald-700",
+    amber: "bg-amber-500/10 text-amber-700",
+    violet: "bg-violet-500/10 text-violet-700",
   };
   return (
-    <span
-      className={`inline-block w-2 h-2 rounded-full ${colors[latest.overallStatus] ?? "bg-slate-400"}`}
-      title={`Last run: ${latest.overallStatus}`}
-    />
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${colors[tone]}`}>
+      {label}
+    </span>
   );
 }
 
@@ -82,14 +79,14 @@ export function FounderConversations() {
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">
           {conversations.length} conversation{conversations.length !== 1 ? "s" : ""}
-          {!showAll && " (active)"}
+          {!showAll && " · active"}
         </span>
         <button
           type="button"
           onClick={() => setShowAll((v) => !v)}
           className="text-xs text-muted-foreground underline-offset-2 hover:underline"
         >
-          {showAll ? "Show active only" : "Show all"}
+          {showAll ? "Active only" : "Show all"}
         </button>
       </div>
 
@@ -105,67 +102,59 @@ export function FounderConversations() {
       )}
 
       {conversations.map((conv) => {
-        const expiring = conv.status === "active" && daysUntil(conv.expiresAt) <= 3;
-        const isExpired = conv.status === "expired" || (conv.status === "active" && daysUntil(conv.expiresAt) <= 0);
+        const isExpired = conv.status === "expired" || daysUntil(conv.expiresAt) <= 0;
+        const expiring = !isExpired && conv.status === "active" && daysUntil(conv.expiresAt) <= 3;
+
         return (
           <Card
             key={conv.id}
-            className={`p-4 cursor-pointer hover:bg-accent/30 transition-colors ${isExpired ? "opacity-60" : ""}`}
+            className={`p-4 cursor-pointer hover:bg-accent/30 transition-colors ${isExpired ? "opacity-55" : ""}`}
             onClick={() => navigate(`/founder/conversations/${conv.id}`)}
           >
-            <div className="flex items-start gap-3">
-              <div className="mt-1 shrink-0">
-                <span
-                  className={`inline-block w-2 h-2 rounded-full ${STATUS_COLORS[conv.status] ?? "bg-slate-400"}`}
-                  title={conv.status}
-                />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-medium text-sm">
-                    {conv.topicName ?? "(no topic)"}
-                  </span>
-                  {conv.topicState && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">
-                      {conv.topicState}
-                    </span>
-                  )}
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                    conv.status === "active" ? "bg-emerald-500/10 text-emerald-700" :
-                    conv.status === "expired" ? "bg-slate-500/10 text-slate-500" :
-                    "bg-blue-500/10 text-blue-700"
-                  }`}>
-                    {conv.status}
-                  </span>
-                  {expiring && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 font-medium">
-                      expires {daysUntil(conv.expiresAt)}d
-                    </span>
-                  )}
-                  <RunStatusDot conversationId={conv.id} />
-                </div>
-                {conv.topicSummary && (
-                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                    {conv.topicSummary}
-                  </p>
-                )}
-              </div>
-              <div className="text-right shrink-0 text-xs text-muted-foreground space-y-0.5">
-                <div className="flex items-center gap-1 justify-end">
-                  <MessageSquare className="h-3 w-3" />
-                  {conv.messageCount}
-                </div>
-                <div className="flex items-center gap-1 justify-end">
-                  <Clock className="h-3 w-3" />
-                  {relativeTime(conv.lastMessageAt)}
-                </div>
-                {conv.status === "active" && (
-                  <div className="flex items-center gap-1 justify-end text-muted-foreground/60">
-                    <CheckCircle2 className="h-3 w-3" />
-                    {daysUntil(conv.expiresAt)}d left
-                  </div>
-                )}
-              </div>
+            {/* Last user message as primary content */}
+            {conv.lastUserMessage ? (
+              <p className="text-sm font-medium line-clamp-2 mb-2">{conv.lastUserMessage}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic mb-2">No messages yet</p>
+            )}
+
+            {/* Assistant reply preview */}
+            {conv.lastAssistantMessage && (
+              <p className="text-xs text-muted-foreground line-clamp-1 mb-2">
+                ↳ {conv.lastAssistantMessage}
+              </p>
+            )}
+
+            {/* Badges row */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {conv.topicName && (
+                <Badge label={conv.topicName} tone="violet" />
+              )}
+              {conv.companyName && (
+                <Badge label={conv.companyName} tone="blue" />
+              )}
+              {conv.topicState && (
+                <Badge label={conv.topicState} />
+              )}
+              {conv.linkedIssues.map((issue) => (
+                <Badge key={issue.id} label={issue.identifier} tone="green" />
+              ))}
+              {expiring && (
+                <Badge label={`expires ${daysUntil(conv.expiresAt)}d`} tone="amber" />
+              )}
+              {isExpired && <Badge label="expired" />}
+            </div>
+
+            {/* Meta row */}
+            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <MessageSquare className="h-3 w-3" />
+                {conv.messageCount}
+              </span>
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" />
+                {relativeTime(conv.lastMessageAt)}
+              </span>
             </div>
           </Card>
         );
