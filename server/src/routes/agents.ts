@@ -180,7 +180,8 @@ export function agentRoutes(db: Db) {
     );
   }
 
-  async function assertCanCreateAgentsForCompany(req: Request, companyId: string) {
+  async function assertCanCreateAgentsForCompany(req: Request, companyId: string | null) {
+    if (!companyId) { assertBoard(req); return null; }
     assertCompanyAccess(req, companyId);
     if (req.actor.type === "board") {
       if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return null;
@@ -202,11 +203,12 @@ export function agentRoutes(db: Db) {
     return actorAgent;
   }
 
-  async function assertCanReadConfigurations(req: Request, companyId: string) {
+  async function assertCanReadConfigurations(req: Request, companyId: string | null) {
     return assertCanCreateAgentsForCompany(req, companyId);
   }
 
-  async function actorCanReadConfigurationsForCompany(req: Request, companyId: string) {
+  async function actorCanReadConfigurationsForCompany(req: Request, companyId: string | null) {
+    if (!companyId) { return req.actor.type === "board"; }
     assertCompanyAccess(req, companyId);
     if (req.actor.type === "board") {
       if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) return true;
@@ -219,7 +221,8 @@ export function agentRoutes(db: Db) {
     return allowedByGrant || canCreateAgents(actorAgent);
   }
 
-  async function assertCanUpdateAgent(req: Request, targetAgent: { id: string; companyId: string }) {
+  async function assertCanUpdateAgent(req: Request, targetAgent: { id: string; companyId: string | null }) {
+    if (!targetAgent.companyId) { assertBoard(req); return; }
     assertCompanyAccess(req, targetAgent.companyId);
     if (req.actor.type === "board") return;
     if (!req.actor.agentId) throw forbidden("Agent authentication required");
@@ -241,7 +244,8 @@ export function agentRoutes(db: Db) {
     throw forbidden("Only CEO or agent creators can modify other agents");
   }
 
-  async function assertCanReadAgent(req: Request, targetAgent: { companyId: string }) {
+  async function assertCanReadAgent(req: Request, targetAgent: { companyId: string | null }) {
+    if (!targetAgent.companyId) { assertBoard(req); return; }
     assertCompanyAccess(req, targetAgent.companyId);
     if (req.actor.type === "board") return;
     if (!req.actor.agentId) throw forbidden("Agent authentication required");
@@ -483,7 +487,8 @@ export function agentRoutes(db: Db) {
     return (updated as T | null) ?? { ...agent, adapterConfig: nextAdapterConfig };
   }
 
-  async function assertCanManageInstructionsPath(req: Request, targetAgent: { id: string; companyId: string }) {
+  async function assertCanManageInstructionsPath(req: Request, targetAgent: { id: string; companyId: string | null }) {
+    if (!targetAgent.companyId) { assertBoard(req); return; }
     assertCompanyAccess(req, targetAgent.companyId);
     if (req.actor.type === "board") return;
     if (!req.actor.agentId) throw forbidden("Agent authentication required");
