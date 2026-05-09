@@ -5,6 +5,7 @@ import { companies } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { eccConversationsService } from "../services/ecc-conversations.js";
+import { eccAgentsService } from "../services/ecc-agents.js";
 import { validate } from "../middleware/validate.js";
 import { forbidden } from "../errors.js";
 
@@ -136,6 +137,13 @@ export function eccTopicRoutes(db: Db) {
     }
     const enriched = await enrichConv(conv);
     res.json(enriched);
+  });
+
+  router.get("/ecc/agents", async (req, res) => {
+    assertBoard(req);
+    const agentSvc = eccAgentsService(db);
+    const eccAgents = await agentSvc.listEccAgents();
+    res.json(eccAgents);
   });
 
   return router;

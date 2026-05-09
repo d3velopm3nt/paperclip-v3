@@ -37,6 +37,7 @@ import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { startEmailPollWorker } from "./workers/email-poll.js"; // v3:
 import { syncAllCompaniesDocuments } from "./services/document-sync.js"; // v3:
+import { eccAgentsService } from "./services/ecc-agents.js";
 
 type BetterAuthSessionUser = {
   id: string;
@@ -463,6 +464,7 @@ export async function startServer(): Promise<StartedServer> {
   if (config.deploymentMode === "local_trusted") {
     await ensureLocalTrustedBoardPrincipal(db as any);
   }
+  await eccAgentsService(db as any).seedEccAgents();
   if (config.deploymentMode === "authenticated") {
     const {
       createBetterAuthHandler,
