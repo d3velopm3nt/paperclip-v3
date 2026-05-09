@@ -4,6 +4,7 @@ import { useParams, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import {
   workflowRunsApi,
+  type WorkflowRun,
   type WorkflowStageResult,
 } from "../api/workflowRuns";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -43,26 +44,74 @@ const TYPE_LABELS: Record<string, string> = {
   ecc_conversation: "ECC Conversation",
 };
 
+function RunPicker({
+  runs,
+  value,
+  onChange,
+}: {
+  runs: WorkflowRun[];
+  value: string | null;
+  onChange: (id: string) => void;
+}) {
+  if (runs.length <= 1) return null;
+  return (
+    <select
+      className="border border-input bg-background rounded-md h-9 px-2 text-sm"
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {runs.map((r, i) => (
+        <option key={r.id} value={r.id}>
+          {i === 0 ? "Latest · " : `Turn ${runs.length - i} · `}
+          {r.overallStatus} · {relativeTime(r.startedAt)}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 export function WorkflowRunDetail() {
   const params = useParams();
   const navigate = useNavigate();
   const runId = params.runId!;
   const { setBreadcrumbs } = useBreadcrumbs();
   const [selectedStageId, setSelectedStageId] = useState<string | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  const runQuery = useQuery({
+  // Load the anchor run first to get workflowType + sourceId
+  const anchorQuery = useQuery({
     queryKey: ["workflow-runs", "detail", runId],
     queryFn: () => workflowRunsApi.get(runId),
     enabled: !!runId,
+  });
+
+  const anchorRun = anchorQuery.data?.run;
+
+  // Load all runs for this source (conversation) once we know the type + sourceId
+  const allRunsQuery = useQuery({
+    queryKey: ["workflow-runs", "by-source", anchorRun?.workflowType, anchorRun?.sourceId],
+    queryFn: () => workflowRunsApi.listBySource(anchorRun!.workflowType, anchorRun!.sourceId, 50),
+    enabled: !!anchorRun,
     refetchInterval: 5_000,
   });
 
-  const run = runQuery.data?.run;
+  const allRuns = allRunsQuery.data ?? [];
+  const activeRunId = selectedRunId ?? allRuns[0]?.id ?? runId;
+
+  // Load detail for whichever run is selected
+  const runQuery = useQuery({
+    queryKey: ["workflow-runs", "detail", activeRunId],
+    queryFn: () => workflowRunsApi.get(activeRunId),
+    enabled: !!activeRunId,
+    refetchInterval: 5_000,
+  });
+
+  const run = runQuery.data?.run ?? anchorRun;
   const stages = runQuery.data?.stages ?? [];
 
   useEffect(() => {
     setBreadcrumbs([
-      { label: "Message Workflows", href: "/email/workflows" },
+      { label: "Message Workflows", href: "/workflows" },
       { label: run ? (TYPE_LABELS[run.workflowType] ?? run.workflowType) : "…" },
     ]);
   }, [setBreadcrumbs, run]);
@@ -76,18 +125,28 @@ export function WorkflowRunDetail() {
     return stages.find((s) => s.status === "failed") ?? stages.find((s) => s.status === "pending") ?? stages[0]!;
   }, [stages, selectedStageId]);
 
-  if (runQuery.isLoading) return <PageSkeleton />;
+  if (anchorQuery.isLoading) return <PageSkeleton />;
   if (!run) return <div className="p-6 text-sm text-muted-foreground">Run not found.</div>;
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/email/workflows")}>
-          <ArrowLeft className="h-4 w-4 mr-1" /> Message Workflows
-        </Button>
-        <h1 className="text-xl font-semibold">
-          {TYPE_LABELS[run.workflowType] ?? run.workflowType}
-        </h1>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={() => navigate("/workflows")}>
+            <ArrowLeft className="h-4 w-4 mr-1" /> Message Workflows
+          </Button>
+          <h1 className="text-xl font-semibold">
+            {TYPE_LABELS[run.workflowType] ?? run.workflowType}
+          </h1>
+        </div>
+        <RunPicker
+          runs={allRuns}
+          value={activeRunId}
+          onChange={(id) => {
+            setSelectedRunId(id);
+            setSelectedStageId(null);
+          }}
+        />
       </div>
 
       <Card className="p-3 text-xs text-muted-foreground space-y-0.5">
@@ -96,6 +155,9 @@ export function WorkflowRunDetail() {
         <div><strong>Status:</strong> {run.overallStatus}</div>
         <div><strong>Started:</strong> {relativeTime(run.startedAt)}</div>
         {run.finishedAt && <div><strong>Finished:</strong> {relativeTime(run.finishedAt)}</div>}
+        {allRuns.length > 1 && (
+          <div><strong>Total turns:</strong> {allRuns.length}</div>
+        )}
       </Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)] gap-4">

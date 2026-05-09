@@ -155,7 +155,7 @@ function boardRoutes() {
       <Route path="email/accounts/:id" element={<EmailAccountDetail />} /> {/* v3: */}
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
       <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
-      <Route path="email/workflows" element={<EmailWorkflows />} /> {/* v3: */}
+      <Route path="workflows" element={<EmailWorkflows />} /> {/* v3: */}
       <Route path="workflows/run/:runId" element={<WorkflowRunDetail />} /> {/* v3: generic run detail */}
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
@@ -400,7 +400,7 @@ export function App() {
           <Route path="email/accounts/:id" element={<UnprefixedBoardRedirect />} />
           <Route path="email/inbox" element={<UnprefixedBoardRedirect />} />
           <Route path="email/inbox/:id/workflow" element={<UnprefixedBoardRedirect />} />
-          <Route path="email/workflows" element={<UnprefixedBoardRedirect />} />
+          <Route path="workflows" element={<UnprefixedBoardRedirect />} />
           <Route path="workflows/run/:runId" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/action-policies" element={<UnprefixedBoardRedirect />} />
           <Route path="clients" element={<UnprefixedBoardRedirect />} />
