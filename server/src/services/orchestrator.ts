@@ -11,6 +11,7 @@ import { signMcpToken } from "./mcp-session-token.js";
 import { logger } from "../middleware/logger.js";
 import { eccConversationsService } from "./ecc-conversations.js";
 import { eccTopicsService } from "./ecc-topics.js";
+import { eccAgentsService } from "./ecc-agents.js";
 import type { ConversationMessage } from "./ecc-conversations.js";
 
 export interface OrchestratorInput {
@@ -250,6 +251,11 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   const { companyId } = input;
   const isOperator = input.fromType === "operator";
 
+  const eccSvc = eccAgentsService(db);
+  const execAgent = await eccSvc.getEccAgent("operator");
+  const clientAgent = await eccSvc.getEccAgent("client");
+  const activeEccAgent = isOperator ? execAgent : clientAgent;
+
   const contextLines: string[] = [
     `## Inbound message`,
     `Platform: ${input.platform}`,
@@ -287,7 +293,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
 
   const mcpToken = signMcpToken({
     companyId,
-    agentId: "orchestrator",
+    agentId: activeEccAgent?.id ?? "orchestrator",
     isOperator,
   });
 
@@ -306,7 +312,13 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     },
   }), "utf-8");
 
-  const systemPrompt = isOperator ? ECC_SYSTEM_PROMPT : CLIENT_SYSTEM_PROMPT;
+  const dbPrompt = (activeEccAgent?.adapterConfig as Record<string, unknown> | null)?.systemPrompt;
+  const systemPrompt =
+    typeof dbPrompt === "string" && dbPrompt.length > 0
+      ? dbPrompt
+      : isOperator
+      ? ECC_SYSTEM_PROMPT
+      : CLIENT_SYSTEM_PROMPT;
   await fs.writeFile(promptPath, systemPrompt, "utf-8");
 
   const args = [
@@ -325,6 +337,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     { companyId, platform: input.platform, fromType: input.fromType, fromAddr: input.fromAddr, isOperator },
     "orchestrator: starting",
   );
+
+  const messagePreview = input.body.slice(0, 120);
+  if (execAgent) await eccSvc.setProcessing(execAgent.id, "", "", messagePreview).catch(() => {});
+  if (clientAgent) await eccSvc.setProcessing(clientAgent.id, "", "", messagePreview).catch(() => {});
 
   const spawnStart = new Date();
   const proc = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
@@ -348,6 +364,9 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   });
 
   await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
+
+  if (execAgent) await eccSvc.setIdle(execAgent.id).catch(() => {});
+  if (clientAgent) await eccSvc.setIdle(clientAgent.id).catch(() => {});
 
   if (isOperator) {
     try {
