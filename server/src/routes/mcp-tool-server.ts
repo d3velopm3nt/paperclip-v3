@@ -6,6 +6,7 @@ import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { eccConversationsService } from "../services/ecc-conversations.js";
+import { eccAgentsService } from "../services/ecc-agents.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
@@ -951,7 +952,7 @@ async function handleTool(
       name: String(args.name),
       companyId: typeof args.companyId === "string" ? args.companyId : null,
     });
-    return `Topic created: ${JSON.stringify(topic, null, 2)}`;
+    return `Topic "${topic.name}" created. topic-id: ${topic.id}. IMPORTANT: The NEXT message about this topic MUST call resolve_conversation with topicId="${topic.id}" to start a fresh conversation — do NOT continue the current Inbox or any other active conversation.`;
   }
 
   if (name === "update_topic_memory") {
@@ -986,6 +987,7 @@ async function handleTool(
       .insert(workflowRuns)
       .values({
         companyId: runCompanyId,
+        agentId: callerAgentId ?? undefined,
         workflowType: "ecc_conversation",
         sourceTable: "ecc_conversations",
         sourceId: conversation.id,
@@ -993,6 +995,10 @@ async function handleTool(
         startedAt: now,
       })
       .returning();
+
+    if (callerAgentId) {
+      eccAgentsService(db).setProcessing(callerAgentId, topic.id, topic.name, messagePreview ?? "").catch(() => {});
+    }
 
     await db.insert(workflowStageResults).values([
       {
