@@ -86,11 +86,13 @@ export function eccTopicRoutes(db: Db) {
     res.status(204).send();
   });
 
-  // GET /ecc/conversations — all active conversations cross-company with topic info
+  // GET /ecc/conversations?all=true — cross-company conversations with topic info
+  // Default: active only. ?all=true: all statuses (including expired).
   router.get("/ecc/conversations", async (req, res) => {
     assertBoard(req);
     const convSvc = eccConversationsService(db);
-    const conversations = await convSvc.listAllActive();
+    const showAll = req.query.all === "true";
+    const conversations = showAll ? await convSvc.listAll(200) : await convSvc.listAllActive();
     const enriched = await Promise.all(
       conversations.map(async (conv) => {
         const topic = await svc.getById(conv.topicId);

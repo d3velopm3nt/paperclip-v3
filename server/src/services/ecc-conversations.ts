@@ -149,5 +149,13 @@ export function eccConversationsService(db: Db) {
       .orderBy(desc(eccConversations.lastMessageAt)) as Promise<EccConversation[]>;
   }
 
-  return { resolveActive, appendMessage, extend, expire, list, getById, listAllActive };
+  async function listAll(limit = 100): Promise<EccConversation[]> {
+    return db
+      .select()
+      .from(eccConversations)
+      .orderBy(desc(eccConversations.lastMessageAt))
+      .limit(limit) as Promise<EccConversation[]>;
+  }
+
+  return { resolveActive, appendMessage, extend, expire, list, getById, listAllActive, listAll };
 }

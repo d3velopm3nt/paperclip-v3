@@ -1,4 +1,5 @@
 // v3: cross-company ECC conversation view on founder profile.
+import { useState } from "react";
 import { useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -36,6 +37,12 @@ function daysUntil(iso: string): number {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
 }
 
+const STATUS_COLORS: Record<string, string> = {
+  active: "bg-emerald-500",
+  expired: "bg-slate-400",
+  extended: "bg-blue-500",
+};
+
 function RunStatusDot({ conversationId }: { conversationId: string }) {
   const runsQuery = useQuery({
     queryKey: ["workflow-runs", "by-source", "ecc_conversation", conversationId],
@@ -60,41 +67,58 @@ function RunStatusDot({ conversationId }: { conversationId: string }) {
 
 export function FounderConversations() {
   const navigate = useNavigate();
+  const [showAll, setShowAll] = useState(false);
 
   const convsQuery = useQuery({
-    queryKey: ["ecc-conversations"],
-    queryFn: () => api.get<EccConversation[]>("/ecc/conversations"),
+    queryKey: ["ecc-conversations", showAll],
+    queryFn: () => api.get<EccConversation[]>(`/ecc/conversations${showAll ? "?all=true" : ""}`),
     refetchInterval: 15_000,
   });
 
   const conversations = convsQuery.data ?? [];
 
-  if (convsQuery.isLoading) {
-    return <div className="text-sm text-muted-foreground">Loading conversations…</div>;
-  }
-
-  if (conversations.length === 0) {
-    return (
-      <div className="text-center py-12 text-sm text-muted-foreground">
-        <MessageSquare className="h-8 w-8 mx-auto mb-3 opacity-30" />
-        No active conversations yet. Send a Telegram message to start one.
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-muted-foreground">
+          {conversations.length} conversation{conversations.length !== 1 ? "s" : ""}
+          {!showAll && " (active)"}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowAll((v) => !v)}
+          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+        >
+          {showAll ? "Show active only" : "Show all"}
+        </button>
+      </div>
+
+      {convsQuery.isLoading && (
+        <div className="text-sm text-muted-foreground">Loading…</div>
+      )}
+
+      {!convsQuery.isLoading && conversations.length === 0 && (
+        <div className="text-center py-12 text-sm text-muted-foreground">
+          <MessageSquare className="h-8 w-8 mx-auto mb-3 opacity-30" />
+          {showAll ? "No conversations found." : "No active conversations. Send a Telegram message to start one."}
+        </div>
+      )}
+
       {conversations.map((conv) => {
-        const expiring = daysUntil(conv.expiresAt) <= 3;
+        const expiring = conv.status === "active" && daysUntil(conv.expiresAt) <= 3;
+        const isExpired = conv.status === "expired" || (conv.status === "active" && daysUntil(conv.expiresAt) <= 0);
         return (
           <Card
             key={conv.id}
-            className="p-4 cursor-pointer hover:bg-accent/30 transition-colors"
+            className={`p-4 cursor-pointer hover:bg-accent/30 transition-colors ${isExpired ? "opacity-60" : ""}`}
             onClick={() => navigate(`/founder/conversations/${conv.id}`)}
           >
             <div className="flex items-start gap-3">
-              <div className="mt-0.5">
-                <RunStatusDot conversationId={conv.id} />
+              <div className="mt-1 shrink-0">
+                <span
+                  className={`inline-block w-2 h-2 rounded-full ${STATUS_COLORS[conv.status] ?? "bg-slate-400"}`}
+                  title={conv.status}
+                />
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
@@ -106,11 +130,19 @@ export function FounderConversations() {
                       {conv.topicState}
                     </span>
                   )}
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    conv.status === "active" ? "bg-emerald-500/10 text-emerald-700" :
+                    conv.status === "expired" ? "bg-slate-500/10 text-slate-500" :
+                    "bg-blue-500/10 text-blue-700"
+                  }`}>
+                    {conv.status}
+                  </span>
                   {expiring && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-700 font-medium">
-                      expires in {daysUntil(conv.expiresAt)}d
+                      expires {daysUntil(conv.expiresAt)}d
                     </span>
                   )}
+                  <RunStatusDot conversationId={conv.id} />
                 </div>
                 {conv.topicSummary && (
                   <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
@@ -127,10 +159,12 @@ export function FounderConversations() {
                   <Clock className="h-3 w-3" />
                   {relativeTime(conv.lastMessageAt)}
                 </div>
-                <div className="flex items-center gap-1 justify-end text-muted-foreground/60">
-                  <CheckCircle2 className="h-3 w-3" />
-                  {daysUntil(conv.expiresAt)}d left
-                </div>
+                {conv.status === "active" && (
+                  <div className="flex items-center gap-1 justify-end text-muted-foreground/60">
+                    <CheckCircle2 className="h-3 w-3" />
+                    {daysUntil(conv.expiresAt)}d left
+                  </div>
+                )}
               </div>
             </div>
           </Card>
