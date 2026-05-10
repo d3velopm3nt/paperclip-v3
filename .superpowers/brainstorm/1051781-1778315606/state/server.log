@@ -1,0 +1,4 @@
+{"type":"server-started","port":57026,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:57026","screen_dir":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/1051781-1778315606/content","state_dir":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/1051781-1778315606/state"}
+{"type":"screen-added","file":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/1051781-1778315606/content/overview-layout.html"}
+{"type":"screen-added","file":"/home/jayjay/Work/Develtech/paperclip-v3-phase-2/.superpowers/brainstorm/1051781-1778315606/content/overview-agents.html"}
+{"type":"server-stopped","reason":"idle timeout"}

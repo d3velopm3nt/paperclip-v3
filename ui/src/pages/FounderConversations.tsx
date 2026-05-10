@@ -1,10 +1,10 @@
 // v3: cross-company ECC conversation list on founder profile.
 import { useState } from "react";
 import { useNavigate } from "@/lib/router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api/client";
 import { Card } from "@/components/ui/card";
-import { MessageSquare, Clock } from "lucide-react";
+import { MessageSquare, CheckCircle2, Clock, XCircle, Activity, Loader2, ArrowRight, Inbox, X } from "lucide-react";
 
 interface LinkedIssue {
   id: string;
@@ -30,6 +30,20 @@ interface EccConversation {
   lastAssistantMessage: string | null;
 }
 
+export interface InboundMessage {
+  id: string;
+  platform: string;
+  body: string;
+  rawPayload: {
+    identifyStatus?: "identifying" | "identified" | "inbox";
+    topicId?: string;
+    topicName?: string | null;
+    workflowRunId?: string | null;
+    eccAgentId?: string | null;
+  } | null;
+  createdAt: string;
+}
+
 function relativeTime(iso: string): string {
   const d = new Date(iso);
   const diff = Date.now() - d.getTime();
@@ -47,6 +61,19 @@ function daysUntil(iso: string): number {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
 }
 
+const STATUS_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  active: CheckCircle2,
+  extended: CheckCircle2,
+  expired: XCircle,
+  running: Activity,
+};
+const STATUS_COLOR: Record<string, string> = {
+  active: "text-emerald-600",
+  extended: "text-emerald-600",
+  expired: "text-muted-foreground",
+  running: "text-blue-600",
+};
+
 function Badge({ label, tone = "default" }: { label: string; tone?: "default" | "blue" | "green" | "amber" | "violet" }) {
   const colors: Record<string, string> = {
     default: "bg-muted text-muted-foreground",
@@ -59,6 +86,88 @@ function Badge({ label, tone = "default" }: { label: string; tone?: "default" | 
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${colors[tone]}`}>
       {label}
     </span>
+  );
+}
+
+function InboundStatusBadge({ msg }: { msg: InboundMessage }) {
+  const status = msg.rawPayload?.identifyStatus;
+  if (!status || status === "identifying") {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 font-medium">
+        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+        Identifying…
+      </span>
+    );
+  }
+  if (status === "identified" && msg.rawPayload?.topicName) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 font-medium">
+        <ArrowRight className="h-2.5 w-2.5" />
+        {msg.rawPayload.topicName}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground font-medium">
+      <Inbox className="h-2.5 w-2.5" />
+      Inbox
+    </span>
+  );
+}
+
+export function IncomingMessages({ onMessageClick }: { onMessageClick?: (msg: InboundMessage) => void } = {}) {
+  const qc = useQueryClient();
+  const inboundQuery = useQuery({
+    queryKey: ["ecc-inbound-messages"],
+    queryFn: () => api.get<InboundMessage[]>("/ecc/inbound-messages?limit=10"),
+    refetchInterval: 3_000,
+  });
+
+  const messages = inboundQuery.data ?? [];
+  const recent = messages.filter((m) => {
+    const age = Date.now() - new Date(m.createdAt).getTime();
+    return age < 24 * 60 * 60 * 1000;
+  });
+
+  if (recent.length === 0) return null;
+
+  async function dismiss(e: React.MouseEvent, id: string) {
+    e.stopPropagation();
+    await api.patch(`/ecc/inbound-messages/${id}/dismiss`, {});
+    qc.invalidateQueries({ queryKey: ["ecc-inbound-messages"] });
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Incoming</span>
+        <span className="text-[10px] text-muted-foreground">({recent.length})</span>
+      </div>
+      {recent.map((msg) => (
+        <div
+          key={msg.id}
+          className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md bg-muted/50 border border-border/40 ${onMessageClick ? "cursor-pointer hover:bg-muted/80 transition-colors" : ""}`}
+          onClick={() => onMessageClick?.(msg)}
+        >
+          <div className="flex-1 min-w-0">
+            <p className="text-xs line-clamp-1 text-foreground/80">{msg.body}</p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <InboundStatusBadge msg={msg} />
+            <span className="text-[10px] text-muted-foreground">{relativeTime(msg.createdAt)}</span>
+            <button
+              type="button"
+              onClick={(e) => dismiss(e, msg.id)}
+              className="text-muted-foreground/50 hover:text-muted-foreground transition-colors"
+              title="Dismiss"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      ))}
+      <div className="border-b border-border/30 my-1" />
+    </div>
   );
 }
 
@@ -76,6 +185,17 @@ export function FounderConversations() {
 
   return (
     <div className="space-y-3">
+      <IncomingMessages
+        onMessageClick={(msg) => {
+          const { eccAgentId, workflowRunId } = msg.rawPayload ?? {};
+          if (eccAgentId && workflowRunId) {
+            navigate(`/agents/${eccAgentId}/runs/${workflowRunId}`);
+          } else if (eccAgentId) {
+            navigate(`/agents/${eccAgentId}`);
+          }
+        }}
+      />
+
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">
           {conversations.length} conversation{conversations.length !== 1 ? "s" : ""}
@@ -104,57 +224,49 @@ export function FounderConversations() {
       {conversations.map((conv) => {
         const isExpired = conv.status === "expired" || daysUntil(conv.expiresAt) <= 0;
         const expiring = !isExpired && conv.status === "active" && daysUntil(conv.expiresAt) <= 3;
+        const statusKey = isExpired ? "expired" : conv.status;
+        const Icon = STATUS_ICON[statusKey] ?? Clock;
+        const iconColor = STATUS_COLOR[statusKey] ?? "text-muted-foreground";
 
         return (
           <Card
             key={conv.id}
-            className={`p-4 cursor-pointer hover:bg-accent/30 transition-colors ${isExpired ? "opacity-55" : ""}`}
+            className={`p-3 cursor-pointer hover:bg-accent/30 transition-colors ${isExpired ? "opacity-55" : ""}`}
             onClick={() => navigate(`/founder/conversations/${conv.id}`)}
           >
-            {/* Last user message as primary content */}
-            {conv.lastUserMessage ? (
-              <p className="text-sm font-medium line-clamp-2 mb-2">{conv.lastUserMessage}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground italic mb-2">No messages yet</p>
-            )}
-
-            {/* Assistant reply preview */}
-            {conv.lastAssistantMessage && (
-              <p className="text-xs text-muted-foreground line-clamp-1 mb-2">
-                ↳ {conv.lastAssistantMessage}
-              </p>
-            )}
-
-            {/* Badges row */}
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {conv.topicName && (
-                <Badge label={conv.topicName} tone="violet" />
-              )}
-              {conv.companyName && (
-                <Badge label={conv.companyName} tone="blue" />
-              )}
-              {conv.topicState && (
-                <Badge label={conv.topicState} />
-              )}
-              {conv.linkedIssues.map((issue) => (
-                <Badge key={issue.id} label={issue.identifier} tone="green" />
-              ))}
-              {expiring && (
-                <Badge label={`expires ${daysUntil(conv.expiresAt)}d`} tone="amber" />
-              )}
-              {isExpired && <Badge label="expired" />}
-            </div>
-
-            {/* Meta row */}
-            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <MessageSquare className="h-3 w-3" />
-                {conv.messageCount}
-              </span>
-              <span className="flex items-center gap-1">
-                <Clock className="h-3 w-3" />
+            <div className="flex items-start gap-3">
+              <div className={`mt-0.5 shrink-0 ${iconColor}`}>
+                <Icon className="h-4 w-4" />
+              </div>
+              <div className="flex-1 min-w-0">
+                {/* Meta row */}
+                <div className="flex items-center gap-2">
+                  {conv.topicName && <Badge label={conv.topicName} tone="violet" />}
+                  {conv.companyName && <Badge label={conv.companyName} tone="blue" />}
+                  {conv.topicState && <Badge label={conv.topicState} />}
+                  {conv.linkedIssues.map((issue) => (
+                    <Badge key={issue.id} label={issue.identifier} tone="green" />
+                  ))}
+                  {expiring && <Badge label={`exp ${daysUntil(conv.expiresAt)}d`} tone="amber" />}
+                  {isExpired && <Badge label="expired" />}
+                  <span className="text-[10px] text-muted-foreground flex items-center gap-0.5 ml-auto">
+                    <MessageSquare className="h-2.5 w-2.5" />{conv.messageCount}
+                  </span>
+                </div>
+                {/* Last message */}
+                {conv.lastUserMessage ? (
+                  <p className="text-sm mt-0.5 line-clamp-1 text-foreground">{conv.lastUserMessage}</p>
+                ) : (
+                  <p className="text-sm mt-0.5 text-muted-foreground italic">No messages yet</p>
+                )}
+                {/* Assistant reply */}
+                {conv.lastAssistantMessage && (
+                  <p className="text-xs mt-0.5 text-muted-foreground line-clamp-1">↳ {conv.lastAssistantMessage}</p>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground shrink-0 text-right">
                 {relativeTime(conv.lastMessageAt)}
-              </span>
+              </div>
             </div>
           </Card>
         );

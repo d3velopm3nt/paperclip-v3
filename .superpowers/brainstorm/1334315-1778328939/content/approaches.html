@@ -1,0 +1,41 @@
+<h2>ECC Agents — 3 Approaches</h2>
+<p class="subtitle">How to model founder-level agents in the schema and surface them in the UI</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Nullable companyId in <code>agents</code> table</h3>
+      <p>Allow <code>agents.companyId</code> to be nullable. ECC agents have no company. Auto-seeded on first ECC spawn if missing. Status driven by polling <code>workflow_runs</code> for <code>ecc_conversation</code> type.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Reuses existing agents infrastructure (budget, heartbeat, status)</li><li>No new table or migration beyond one column change</li><li>Agents page can list ECC agents naturally</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>Schema change affects all code that assumes companyId not null</li><li>Needs care to exclude from company-scoped agent queries</li></ul></div>
+      </div>
+      <p class="label">✅ Recommended — minimal schema impact, maximum reuse</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>New <code>ecc_agents</code> table (lightweight)</h3>
+      <p>Dedicated table: <code>id, name, role (operator|client), status, lastActiveAt, currentTopicId</code>. Fully decoupled from company agent model. Seeded once, status updated by orchestrator.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Zero impact on existing agents infrastructure</li><li>Schema exactly matches ECC needs — no nulls, no unused columns</li><li>Orchestrator updates status directly (no inference from workflow_runs)</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>New table + migration + new service + new API route</li><li>ECC agents isolated — can't reuse agent budget/heartbeat machinery</li></ul></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Virtual agents — no DB, derived from ECC state</h3>
+      <p>No new rows. Agent status is computed: if <code>workflow_runs</code> has an active <code>ecc_conversation</code> run → processing. Otherwise idle. A new API endpoint <code>GET /ecc/agents</code> returns the two virtual agents derived from live data.</p>
+      <div class="pros-cons">
+        <div class="pros"><h4>Pros</h4><ul><li>Zero schema changes</li><li>Always accurate — no sync issues between agent record and actual state</li></ul></div>
+        <div class="cons"><h4>Cons</h4><ul><li>No persistent "last active" or "current topic" — only live state</li><li>Can't store agent config/metadata (e.g. description, icon)</li><li>Feels hacky — agents aren't real entities</li></ul></div>
+      </div>
+    </div>
+  </div>
+</div>

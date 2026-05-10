@@ -1,8 +1,8 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
-import { companies } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
+import { companies, operatorMessages, workflowRuns, workflowStageResults } from "@paperclipai/db";
+import { and, desc, eq } from "drizzle-orm";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { eccConversationsService } from "../services/ecc-conversations.js";
 import { eccAgentsService } from "../services/ecc-agents.js";
@@ -144,6 +144,80 @@ export function eccTopicRoutes(db: Db) {
     const agentSvc = eccAgentsService(db);
     const eccAgents = await agentSvc.listEccAgents();
     res.json(eccAgents);
+  });
+
+  // POST /ecc/agents/:id/reset — force agent back to idle and clear stale session (board-only)
+  router.post("/ecc/agents/:id/reset", async (req, res) => {
+    assertBoard(req);
+    const agentSvc = eccAgentsService(db);
+    await agentSvc.setIdle(req.params.id, { clearSession: true });
+    res.json({ ok: true });
+  });
+
+  // GET /ecc/workflow-runs?agentId=xxx&limit=50
+  // Board-only: list workflow runs for a null-companyId ECC agent across all companies.
+  router.get("/ecc/workflow-runs", async (req, res) => {
+    assertBoard(req);
+    const agentId = typeof req.query.agentId === "string" ? req.query.agentId : null;
+    const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
+    const conditions = agentId ? [eq(workflowRuns.agentId, agentId)] : [];
+    const runs = await db
+      .select()
+      .from(workflowRuns)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(workflowRuns.startedAt))
+      .limit(limit);
+    res.json(runs);
+  });
+
+  // GET /ecc/workflow-runs/:id — full run with stages (board-only)
+  router.get("/ecc/workflow-runs/:id", async (req, res) => {
+    assertBoard(req);
+    const { id } = req.params;
+    const [run] = await db.select().from(workflowRuns).where(eq(workflowRuns.id, id)).limit(1);
+    if (!run) { res.status(404).json({ error: "Run not found" }); return; }
+    const stages = await db
+      .select()
+      .from(workflowStageResults)
+      .where(eq(workflowStageResults.runId, id))
+      .orderBy(workflowStageResults.ord);
+    res.json({ run, stages });
+  });
+
+  // GET /ecc/inbound-messages?limit=30 — recent inbound messages with identify status (board-only)
+  router.get("/ecc/inbound-messages", async (req, res) => {
+    assertBoard(req);
+    const limit = Math.min(Number(req.query.limit) || 30, 100);
+    const rows = await db
+      .select({
+        id: operatorMessages.id,
+        platform: operatorMessages.platform,
+        body: operatorMessages.body,
+        rawPayload: operatorMessages.rawPayload,
+        createdAt: operatorMessages.createdAt,
+      })
+      .from(operatorMessages)
+      .where(eq(operatorMessages.direction, "inbound"))
+      .orderBy(desc(operatorMessages.createdAt))
+      .limit(limit);
+    // Filter dismissed client-side (jsonb path filtering is db-vendor specific)
+    const visible = rows.filter((r) => !(r.rawPayload as Record<string, unknown> | null)?.dismissed);
+    res.json(visible);
+  });
+
+  // PATCH /ecc/inbound-messages/:id/dismiss — soft-dismiss a message (board-only)
+  router.patch("/ecc/inbound-messages/:id/dismiss", async (req, res) => {
+    assertBoard(req);
+    const { id } = req.params;
+    const [existing] = await db
+      .select({ rawPayload: operatorMessages.rawPayload })
+      .from(operatorMessages)
+      .where(eq(operatorMessages.id, id))
+      .limit(1);
+    if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+    const merged = { ...(existing.rawPayload as Record<string, unknown> | null ?? {}), dismissed: true };
+    await db.update(operatorMessages).set({ rawPayload: merged }).where(eq(operatorMessages.id, id));
+    res.json({ ok: true });
   });
 
   return router;

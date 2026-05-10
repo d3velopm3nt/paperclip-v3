@@ -61,15 +61,19 @@ export async function routeInboundMessage(db: Db, msg: InboundChannelMessage): P
     "inbound-router: dispatching",
   );
 
-  // Persist inbound message so Channels tab can show it
-  void db.insert(operatorMessages).values({
-    companyId,
-    direction: "inbound",
-    platform,
-    source: fromType === "operator" ? "telegram" : platform,
-    body: msg.body,
-    rawPayload: null,
-  }).catch(() => {});
+  // Persist inbound message immediately so UI can show "identifying..." state
+  let inboundMessageId: string | undefined;
+  try {
+    const [inserted] = await db.insert(operatorMessages).values({
+      companyId,
+      direction: "inbound",
+      platform,
+      source: fromType === "operator" ? "telegram" : platform,
+      body: msg.body,
+      rawPayload: { identifyStatus: "identifying" },
+    }).returning({ id: operatorMessages.id });
+    inboundMessageId = inserted?.id;
+  } catch { /* non-fatal — channels tab still works */ }
 
   await runOrchestrator(db, {
     companyId,
@@ -82,6 +86,7 @@ export async function routeInboundMessage(db: Db, msg: InboundChannelMessage): P
     attachmentSummaries: msg.attachmentSummaries,
     clientId,
     existingIssueId: existingIssueId ?? undefined,
+    inboundMessageId,
   });
 }
 

@@ -1,9 +1,10 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults } from "@paperclipai/db";
+import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
+import { heartbeatService } from "../services/index.js";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { eccConversationsService } from "../services/ecc-conversations.js";
 import { eccAgentsService } from "../services/ecc-agents.js";
@@ -207,11 +208,12 @@ const TOOLS = [
   },
   {
     name: "create_project",
-    description: "Create a new project for this company.",
+    description: "Create a new project. Pass companyId to create in a specific company.",
     inputSchema: {
       type: "object",
       required: ["name"],
       properties: {
+        companyId: { type: "string", description: "UUID of the company. Required when creating in a company other than the default." },
         name: { type: "string" },
         description: { type: "string" },
         clientId: { type: "string", description: "UUID of client to associate" },
@@ -383,11 +385,71 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "approve_plan",
+    description: "Approve or decline a pending plan approval on JayJay's behalf. Approved plans move the issue to in_progress and wake the assignee agent. Use when JayJay says 'approve', 'go ahead', 'decline', etc.",
+    inputSchema: {
+      type: "object",
+      required: ["approvalId"],
+      properties: {
+        approvalId: { type: "string", description: "UUID of the plan approval to resolve" },
+        approved: { type: "boolean", description: "true to approve, false to decline (default: true)" },
+        decisionNote: { type: "string", description: "Optional note explaining the decision" },
+      },
+    },
+  },
+  {
+    name: "update_memory",
+    description:
+      "Store a persistent memory fact for future conversations. Call when you learn something worth remembering: client preferences, project states, JayJay's patterns, key decisions. Call BEFORE complete_conversation_turn.",
+    inputSchema: {
+      type: "object",
+      required: ["title", "content", "category"],
+      properties: {
+        title: { type: "string", description: "Short memory title (e.g. 'Kevin O Neill is main InnoTrack contact')" },
+        content: { type: "string", description: "Full memory content — specific and actionable" },
+        category: { type: "string", description: "pattern | preference | decision | learning | feedback" },
+        companyId: { type: "string", description: "Company UUID this memory belongs to. Defaults to current company context." },
+      },
+    },
+  },
 ];
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+async function appendStageToActiveRun(
+  db: Db,
+  callerAgentId: string | null,
+  stage: { stageId: string; label: string; status: string; actuals: Record<string, unknown> },
+) {
+  if (!callerAgentId) return;
+  const [activeRun] = await db
+    .select({ id: workflowRuns.id })
+    .from(workflowRuns)
+    .where(and(eq(workflowRuns.agentId, callerAgentId), eq(workflowRuns.overallStatus, "running")))
+    .orderBy(desc(workflowRuns.startedAt))
+    .limit(1);
+  if (!activeRun) return;
+  const [lastStage] = await db
+    .select({ ord: workflowStageResults.ord })
+    .from(workflowStageResults)
+    .where(eq(workflowStageResults.runId, activeRun.id))
+    .orderBy(desc(workflowStageResults.ord))
+    .limit(1);
+  await db.insert(workflowStageResults).values({
+    runId: activeRun.id,
+    stageId: stage.stageId,
+    label: stage.label,
+    status: stage.status,
+    expectations: [],
+    actuals: stage.actuals,
+    errorText: null,
+    ord: (lastStage?.ord ?? 2) + 1,
+    computedAt: new Date(),
+  });
+}
 
 async function handleTool(
   db: Db,
@@ -746,15 +808,30 @@ async function handleTool(
 
   if (name === "create_plan") {
     const { issueId, proposalText, steps } = args as { issueId: string; proposalText: string; steps?: string[] };
+    const [issueRow] = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1);
+    if (!issueRow) return `Error: issue ${issueId} not found`;
     const stepsText = steps?.length ? "\n\nSteps:\n" + steps.map((s, i) => `  ${i + 1}. ${s}`).join("\n") : "";
     const fullProposal = `${proposalText}${stepsText}`;
     const [approval] = await db.insert(approvals).values({
-      companyId,
+      companyId: issueRow.companyId,
       type: "plan",
       requestedByAgentId: null,
       status: "pending",
       payload: { issueId, proposalText: fullProposal, steps: steps ?? [] },
     }).returning({ id: approvals.id });
+
+    // Auto-notify operator so JayJay sees the plan without waiting for notify_operator
+    try {
+      const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
+      const [tgSettings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
+      const tgGeneral = (tgSettings?.general ?? {}) as Record<string, unknown>;
+      const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
+      if (token && chatId) {
+        const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — ECC will call approve_plan.`;
+        await sendTelegramMessage(token, chatId, planNotice).catch(() => {});
+      }
+    } catch { /* non-fatal */ }
+
     return `Plan created. Approval ID: ${approval!.id}. Awaiting operator approval.`;
   }
 
@@ -776,7 +853,7 @@ async function handleTool(
       name: string; description?: string; clientId?: string; status?: string;
     };
     const [project] = await db.insert(projects).values({
-      companyId,
+      companyId: effectiveCompanyId,
       name: projectName,
       description: description ?? null,
       clientId: clientId ?? null,
@@ -805,6 +882,12 @@ async function handleTool(
       body: notifyBody,
       rawPayload: null,
     });
+    await appendStageToActiveRun(db, callerAgentId, {
+      stageId: "operator_notified",
+      label: "Operator notified",
+      status: "passed",
+      actuals: { message: notifyBody.slice(0, 300) },
+    });
     return `Operator notified.`;
   }
 
@@ -822,6 +905,12 @@ async function handleTool(
       if (waToken && waPhone) {
         const phone = replyThreadKey.replace(/\D/g, "");
         await sendWhatsAppMessage(waToken, waPhone, phone, replyBody);
+        await appendStageToActiveRun(db, callerAgentId, {
+          stageId: "client_reply_sent",
+          label: "Client reply sent",
+          status: "passed",
+          actuals: { channel, message: replyBody.slice(0, 300) },
+        });
         return `Reply sent directly to client via WhatsApp (approval bypassed per company settings).`;
       }
     }
@@ -840,6 +929,12 @@ async function handleTool(
         subject: replySubject ?? null,
       },
     }).returning({ id: approvals.id });
+    await appendStageToActiveRun(db, callerAgentId, {
+      stageId: "client_reply_queued",
+      label: "Client reply queued for approval",
+      status: "passed",
+      actuals: { channel, approvalId: approval!.id, message: replyBody.slice(0, 300) },
+    });
     return `Client reply queued for approval. Approval ID: ${approval!.id}. Operator must approve before message is sent.`;
   }
 
@@ -983,18 +1078,38 @@ async function handleTool(
 
     const runCompanyId = topic.companyId ?? effectiveCompanyId;
     const now = new Date();
-    const [run] = await db
-      .insert(workflowRuns)
-      .values({
-        companyId: runCompanyId,
-        agentId: callerAgentId ?? undefined,
-        workflowType: "ecc_conversation",
-        sourceTable: "ecc_conversations",
-        sourceId: conversation.id,
-        overallStatus: "running",
-        startedAt: now,
-      })
-      .returning();
+
+    // Adopt existing running stub run (created by orchestrator) — avoids duplicate runs per message.
+    // Fall back to creating a new run if no stub exists (e.g. direct tool call).
+    let run: { id: string } | undefined;
+    if (callerAgentId) {
+      const [existing] = await db
+        .select({ id: workflowRuns.id })
+        .from(workflowRuns)
+        .where(and(eq(workflowRuns.agentId, callerAgentId), eq(workflowRuns.overallStatus, "running")))
+        .orderBy(desc(workflowRuns.startedAt))
+        .limit(1);
+      if (existing) {
+        run = existing;
+        // Update sourceId to point at the conversation now that we know it
+        await db.update(workflowRuns).set({ sourceTable: "ecc_conversations", sourceId: conversation.id }).where(eq(workflowRuns.id, existing.id));
+      }
+    }
+    if (!run) {
+      const [inserted] = await db
+        .insert(workflowRuns)
+        .values({
+          companyId: runCompanyId,
+          agentId: callerAgentId ?? undefined,
+          workflowType: "ecc_conversation",
+          sourceTable: "ecc_conversations",
+          sourceId: conversation.id,
+          overallStatus: "running",
+          startedAt: now,
+        })
+        .returning();
+      run = inserted;
+    }
 
     if (callerAgentId) {
       eccAgentsService(db).setProcessing(callerAgentId, topic.id, topic.name, messagePreview ?? "").catch(() => {});
@@ -1052,6 +1167,7 @@ async function handleTool(
       expiresAt: conversation.expiresAt.toISOString(),
       messageCount: conversation.messageCount,
       warningDays,
+      _REMINDER: "call notify_operator BEFORE complete_conversation_turn — JayJay sees nothing without it",
     });
   }
 
@@ -1105,7 +1221,116 @@ async function handleTool(
       .set({ overallStatus: "passed", finishedAt: now })
       .where(eq(workflowRuns.id, runId));
 
+    // Auto-notify operator if agent forgot to call notify_operator.
+    // Check by looking for an operator_notified or client_reply stage in this run.
+    const notifyStages = await db
+      .select({ stageId: workflowStageResults.stageId })
+      .from(workflowStageResults)
+      .where(and(
+        eq(workflowStageResults.runId, runId),
+        or(
+          eq(workflowStageResults.stageId, "operator_notified"),
+          eq(workflowStageResults.stageId, "client_reply_sent"),
+          eq(workflowStageResults.stageId, "client_reply_queued"),
+        ),
+      ));
+    if (notifyStages.length === 0 && actionSummary) {
+      const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
+      const [tgSettings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
+      const tgGeneral = (tgSettings?.general ?? {}) as Record<string, unknown>;
+      const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
+      if (token && chatId) {
+        await sendTelegramMessage(token, chatId, actionSummary).catch((err) => {
+          logger.warn({ err }, "complete_conversation_turn: auto-notify fallback failed");
+        });
+      }
+      await db.insert(workflowStageResults).values({
+        runId,
+        stageId: "operator_notified",
+        label: "Operator notified (auto-fallback)",
+        status: "passed",
+        expectations: [],
+        actuals: { message: actionSummary, autoFallback: true },
+        errorText: null,
+        ord: nextOrd + 2,
+        computedAt: now,
+      });
+    }
+
     return "Turn complete.";
+  }
+
+  if (name === "update_memory") {
+    const { title, content, category, companyId: memCompanyId } = args as {
+      title: string;
+      content: string;
+      category: string;
+      companyId?: string;
+    };
+    if (!callerAgentId) return "Error: no agent identity";
+    const targetCompanyId = memCompanyId ?? effectiveCompanyId;
+    if (!targetCompanyId) return "Error: companyId required for memory storage";
+    const validCategories = ["pattern", "preference", "decision", "learning", "feedback"];
+    const safeCategory = validCategories.includes(category) ? category : "learning";
+    await db.insert(agentMemories).values({
+      agentId: callerAgentId,
+      companyId: targetCompanyId,
+      scope: "global",
+      category: safeCategory as "pattern" | "preference" | "decision" | "learning" | "feedback",
+      title,
+      content,
+      source: "self",
+      confidence: 0.8,
+    });
+    return `Memory stored: "${title}"`;
+  }
+
+  if (name === "approve_plan") {
+    const { approvalId, approved = true, decisionNote } = args as {
+      approvalId: string;
+      approved?: boolean;
+      decisionNote?: string;
+    };
+    if (!UUID_RE.test(approvalId)) return "Error: invalid approvalId";
+    const [approval] = await db.select().from(approvals).where(eq(approvals.id, approvalId)).limit(1);
+    if (!approval) return `Error: approval ${approvalId} not found`;
+    if (approval.type !== "plan") return "Error: not a plan approval";
+    if (approval.status !== "pending") return `Error: already ${approval.status}`;
+
+    const newStatus = approved ? "approved" : "declined";
+    await db
+      .update(approvals)
+      .set({ status: newStatus, decisionNote: decisionNote ?? null, decidedAt: new Date(), updatedAt: new Date() })
+      .where(eq(approvals.id, approvalId));
+
+    if (approved) {
+      const payload = approval.payload as Record<string, unknown>;
+      const issueId = payload.issueId as string | undefined;
+      if (issueId) {
+        const [issue] = await db
+          .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+          .from(issues)
+          .where(eq(issues.id, issueId))
+          .limit(1);
+        if (issue && ["backlog", "todo"].includes(issue.status)) {
+          await db.update(issues).set({ status: "in_progress", updatedAt: new Date() }).where(eq(issues.id, issueId));
+        }
+        if (issue?.assigneeAgentId) {
+          const hb = heartbeatService(db);
+          await hb.wakeup(issue.assigneeAgentId, {
+            source: "automation",
+            triggerDetail: "system",
+            reason: "plan_approved",
+            payload: { approvalId, issueId },
+            requestedByActorType: "system",
+            requestedByActorId: "ecc",
+            contextSnapshot: { source: "plan.approved", approvalId, issueId },
+          }).catch(() => {});
+        }
+      }
+    }
+
+    return `Plan ${newStatus}. Approval ID: ${approvalId}.`;
   }
 
   return `Error: unknown tool "${name}"`;

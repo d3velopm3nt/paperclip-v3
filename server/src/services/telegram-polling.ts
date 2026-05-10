@@ -228,3 +228,20 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
 export function stopTelegramPolling() {
   global.__tgPollingActive = false;
 }
+
+// Shared helper — resolves bot token + operator chat ID from DB/env and sends a message.
+// Use this everywhere instead of duplicating the lookup pattern.
+export async function notifyOperatorTelegram(db: Db, message: string): Promise<void> {
+  const token = await readInstanceToken(db, "telegramBotToken").catch(() => null)
+    ?? process.env.TELEGRAM_BOT_TOKEN ?? "";
+  if (!token) return;
+  const [settings] = await db
+    .select({ general: instanceSettings.general })
+    .from(instanceSettings)
+    .where(eq(instanceSettings.singletonKey, "default"))
+    .limit(1);
+  const chatId = ((settings?.general as Record<string, unknown> | null)?.telegramOperatorChatId as string | undefined)
+    ?? process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+  if (!chatId) return;
+  await sendTelegramMessage(token, chatId, message);
+}

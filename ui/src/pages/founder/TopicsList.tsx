@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Archive, RotateCcw } from "lucide-react";
+import { Plus, Archive, RotateCcw, Trash2 } from "lucide-react";
 import { topicsApi, type Topic } from "../../api/topics";
 import { useCompany } from "../../context/CompanyContext";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,13 @@ export function TopicsList() {
   const archiveMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: "active" | "archived" }) =>
       topicsApi.update(id, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ecc-topics"] });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => topicsApi.remove(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ecc-topics"] });
     },
@@ -181,6 +188,18 @@ export function TopicsList() {
                   ) : (
                     <RotateCcw className="h-4 w-4" />
                   )}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!window.confirm(`Delete topic "${topic.name}"? This cannot be undone.`)) return;
+                    deleteMutation.mutate(topic.id);
+                  }}
+                  disabled={deleteMutation.isPending}
+                  className="p-1.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive shrink-0"
+                  title="Delete topic"
+                >
+                  <Trash2 className="h-4 w-4" />
                 </button>
               </div>
             );

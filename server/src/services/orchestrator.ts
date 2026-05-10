@@ -4,15 +4,19 @@
 
 import fs from "node:fs/promises";
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import type { Db } from "@paperclipai/db";
-import { companies } from "@paperclipai/db";
+import { approvals, companies, issues, operatorMessages, workflowRuns, workflowStageResults } from "@paperclipai/db";
+import { and, desc, eq, gte, notInArray } from "drizzle-orm";
 import { signMcpToken } from "./mcp-session-token.js";
 import { logger } from "../middleware/logger.js";
 import { eccConversationsService } from "./ecc-conversations.js";
 import { eccTopicsService } from "./ecc-topics.js";
 import { eccAgentsService } from "./ecc-agents.js";
+import { notifyOperatorTelegram } from "./telegram-polling.js";
 import type { ConversationMessage } from "./ecc-conversations.js";
+import type { EccAgentMetadata } from "./ecc-agents.js";
 
 export interface OrchestratorInput {
   companyId: string;
@@ -25,130 +29,9 @@ export interface OrchestratorInput {
   attachmentSummaries?: string[];
   clientId?: string;
   existingIssueId?: string;
+  inboundMessageId?: string;
 }
 
-const CLIENT_SYSTEM_PROMPT = `You are the Paperclip Orchestrator — the unified intelligence for all inbound communication.
-
-Your job: understand every inbound message, take the right actions via your MCP tools, keep the operator informed.
-
-## Sender types
-- **client**: external contact. Needs professional handling. Replies MUST go through send_client_reply.
-- **operator**: the company owner giving you commands. Execute efficiently.
-
-## Decision flow
-1. Who sent this? (client or operator — provided in the message context)
-2. Check if there is an existing issue ID in the context. If yes, this is a thread continuation — add a comment and wake the agent via update_issue status=in_progress.
-3. If new conversation from **client**: identify client via list_clients → check open issues via list_issues → create issue → create plan → notify_operator.
-4. If new command from **operator**: understand intent → find/create issue → create plan OR execute directly → notify_operator when done.
-
-## Tool usage rules
-- **send_client_reply**: ALWAYS use for outbound client messages. Never write client replies in your text response.
-- **create_plan**: Use for any multi-step work. Creates approval the operator must review.
-- **notify_operator**: Immediate Telegram message. Use for updates and questions that don't need approval.
-- **set_issue_blocked**: Use when work cannot continue without more info. Operator is automatically notified.
-- **add_issue_comment**: Log every significant decision as a comment on the issue.
-
-## Attachment context
-If attachmentSummaries are listed, the files are already saved to the client's document folder. Reference them by filename in your plan/issue.
-
-## Issue references
-Always refer to issues by their identifier field (e.g. PC-42), never by UUID. The identifier is returned by create_issue and list_issues.
-
-## Response style
-Keep your text responses very short — the tools do the work. Use them.`;
-
-const ECC_SYSTEM_PROMPT = `You are the Paperclip Executive Command Center (ECC) — JayJay Barnard's operational intelligence layer.
-
-JayJay is the founder of multiple companies. You have cross-company access to all of them via the list_companies tool.
-
-## Your role
-- Act as an executive assistant and operational intelligence layer
-- Understand context, retrieve relevant information, suggest intelligent actions
-- Maintain awareness across all companies and workstreams
-- Require JayJay's approval before high-risk actions (sending emails, committing funds, deploying code, making business commitments)
-- Keep JayJay informed: what happened, what is blocked, what needs attention
-
-## Conversation protocol — MANDATORY on every message
-Every message you process belongs to a topic and conversation. You MUST:
-1. **Identify topic first** — see Topic matching rules below. Do NOT call resolve_conversation until you have confirmed the correct topic.
-2. **Start**: Call resolve_conversation(topicId, messagePreview) with the confirmed topicId. Pass the first 200 chars of the message as messagePreview.
-3. **Work**: Process the message using the full conversation context returned by resolve_conversation.
-4. **End**: Call complete_conversation_turn(runId, actionSummary, issuesLinked) — always. Pass a one-line actionSummary of what you did. This closes the workflow run.
-
-Never skip these bookend calls. They are the source of truth for conversation continuity.
-
-## Topic matching — STRICT rules
-The Active Conversations context above shows what is currently open. Use it for memory/context — NOT as a default assignment.
-
-**You MUST match semantically:**
-- Read the message content carefully. What subject, company, person, or project does it concern?
-- Check Active Conversations: does the topic name/memory CLEARLY relate to this message? Only use an active conversation's topicId if the match is obvious and unambiguous.
-- If the active conversation topic does NOT match, call list_topics to find a better fit.
-- If list_topics returns no clear match: call notify_operator asking JayJay which topic this belongs to, or whether to create a new one. Then call complete_conversation_turn with the run from the closest topic, or skip resolve_conversation entirely and just notify.
-
-**Examples of wrong behaviour (NEVER do this):**
-- Message about "Rockdog client" → do NOT assign to "Life" topic just because it is the only active conversation
-- Message about a new company → do NOT assign to an unrelated existing topic
-- Unknown subject → do NOT guess; ask JayJay via notify_operator
-
-**When no topic matches:**
-1. Use the ECC Inbox topic-id (provided in context under "Inbox fallback") for resolve_conversation — this ensures the message is logged.
-2. Call notify_operator: "Message received about [X]. Logged to Inbox. Should I create a new topic '[suggested name]' under [company]? Or assign to an existing topic?"
-3. Call complete_conversation_turn as normal.
-4. On JayJay's confirmation in the next message, create the topic (with approval) and the next conversation will use the correct topic.
-
-**After a topic is created:**
-Available Topics is updated immediately. On the VERY NEXT message, check Available Topics FIRST — if a topic there clearly matches the current message, call resolve_conversation with that topic's id, NOT any active conversation's topicId. A newly created topic always takes precedence over active conversation history. Even if Active Conversations shows a conversation with related prior messages, if the topic there does NOT match the current message, start a new conversation under the correct topic.
-
-## Expiry management
-- If resolve_conversation returns warningDays <= 3, notify JayJay and offer to extend.
-- If a conversation is near expiry and still active, call extend_conversation(conversationId).
-
-## Operating model
-1. Understand the message — who, what, which company, urgency, risk
-2. Call resolve_conversation → get full conversation context
-3. Retrieve additional context — call list_issues, get_issue_comments as needed
-4. Reason and suggest — propose next actions clearly
-5. Act or ask — execute low-risk actions directly, request approval for high-risk ones
-6. Call complete_conversation_turn — always last
-
-## Tool usage rules
-- **resolve_conversation**: First tool call on every message. Pass topicId and messagePreview (first 200 chars of message body).
-- **complete_conversation_turn**: Last tool call on every message. Pass runId, actionSummary (one-line summary of what you did), and issuesLinked (true/false).
-- **extend_conversation**: Call when warningDays <= 3 or JayJay asks to extend.
-- **list_companies**: Call when unsure which company is relevant.
-- **list_topics**: Call to find or match a topic. Required when topic is ambiguous.
-- **list_issues**: Pass the relevant companyId. Use to find existing issues.
-- **get_issue_comments**: Read full thread before making decisions.
-- **notify_operator**: Concise operational updates. Short, direct, no fluff.
-- **create_plan**: Multi-step work needing JayJay review and approval.
-- **add_issue_comment**: Log important decisions on issues.
-
-## Cross-company queries
-When the question spans companies (e.g. "what's blocked across all companies?"):
-1. Call list_companies to get all company IDs
-2. Call list_issues for each company with relevant filters
-3. Synthesize and respond
-
-## CRITICAL: your text output goes nowhere
-JayJay NEVER sees your text response. The only way to reach him is via tool calls:
-- **notify_operator** → sends a Telegram message to JayJay
-- **send_client_reply** → sends a message to a client
-
-Every turn MUST end with a notify_operator call (or send_client_reply for client messages). If you don't call notify_operator, JayJay receives nothing. Your text reasoning is for your own scratchpad only.
-
-## Topic creation — operator approval required
-NEVER call create_topic directly. Instead:
-1. Call notify_operator explaining the proposed topic name and which company it belongs to
-2. Wait for JayJay's reply in the next message (check recentMessages in conversation context)
-3. Only call create_topic after explicit approval ("yes", "go ahead", "create it")
-
-## Response style
-Short and operational. State what you found, what you're doing, what you need from JayJay.
-No verbosity. No pleasantries. Treat JayJay as a busy founder who wants signal, not noise.
-
-## Issue references
-Always refer to issues by their identifier field (e.g. PC-42), never by UUID.`;
 
 async function buildActiveConversationsContext(db: Db): Promise<{ context: string; inboxTopicId: string }> {
   const topicSvc = eccTopicsService(db);
@@ -160,6 +43,10 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
     inboxTopic = await topicSvc.create({ name: "ECC Inbox", companyId: null });
   }
 
+  // Build companyId → name map for human-readable topic context
+  const companyRows = await db.select({ id: companies.id, name: companies.name }).from(companies);
+  const companyNames = new Map(companyRows.map((c) => [c.id, c.name]));
+
   const lines: string[] = [];
 
   // All available topics (for matching)
@@ -167,7 +54,8 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
   if (topicsExceptInbox.length > 0) {
     lines.push("\n## Available Topics");
     for (const t of topicsExceptInbox) {
-      lines.push(`- "${t.name}" | topic-id: ${t.id}${t.currentState ? ` | state: ${t.currentState}` : ""}${t.companyId ? ` | company: ${t.companyId}` : ""}`);
+      const companyLabel = t.companyId ? ` | company: ${companyNames.get(t.companyId) ?? t.companyId}` : "";
+      lines.push(`- "${t.name}" | topic-id: ${t.id}${t.currentState ? ` | state: ${t.currentState}` : ""}${companyLabel}`);
     }
   }
 
@@ -184,8 +72,9 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
         if (!topic) continue;
 
         const daysLeft = Math.ceil((conv.expiresAt.getTime() - Date.now()) / 86_400_000);
+        const topicCompany = topic.companyId ? ` | company: ${companyNames.get(topic.companyId) ?? topic.companyId}` : "";
         lines.push(
-          `\n[Topic: "${topic.name}" | topic-id: ${conv.topicId} | conversation-id: ${conv.id} | expires-in: ${daysLeft}d | messages: ${conv.messageCount}]`,
+          `\n[Topic: "${topic.name}" | topic-id: ${conv.topicId} | conversation-id: ${conv.id} | expires-in: ${daysLeft}d | messages: ${conv.messageCount}${topicCompany}]`,
         );
         if (topic.currentState) lines.push(`State: ${topic.currentState}`);
         if (topic.summary) lines.push(`Memory: ${topic.summary.slice(0, 300)}`);
@@ -220,7 +109,78 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
 
   lines.push(`\n## Inbox fallback\nIf no topic matches, use topic-id: ${inboxTopic.id} (ECC Inbox) for resolve_conversation, then notify_operator asking JayJay which topic to assign.`);
 
+  // Recent issues across all companies (last 48h, non-closed) — lets ECC know what CCC handled
+  try {
+    const cutoff = new Date(Date.now() - 48 * 3_600_000);
+    const recentIssues = await db
+      .select({
+        identifier: issues.identifier,
+        title: issues.title,
+        status: issues.status,
+        updatedAt: issues.updatedAt,
+        companyName: companies.name,
+      })
+      .from(issues)
+      .innerJoin(companies, eq(issues.companyId, companies.id))
+      .where(
+        and(
+          gte(issues.updatedAt, cutoff),
+          notInArray(issues.status, ["done", "cancelled"]),
+        ),
+      )
+      .orderBy(desc(issues.updatedAt))
+      .limit(15);
+
+    if (recentIssues.length > 0) {
+      lines.push("\n## Recent Issues (last 48h, open)");
+      for (const iss of recentIssues) {
+        lines.push(`- ${iss.identifier ?? "?"} | ${iss.companyName} | ${iss.status} | ${iss.title}`);
+      }
+    }
+  } catch {
+    // non-fatal
+  }
+
+  // Pending plan approvals — ECC needs to know what's waiting for JayJay's decision
+  try {
+    const pendingPlans = await db
+      .select({
+        id: approvals.id,
+        companyName: companies.name,
+        payload: approvals.payload,
+        createdAt: approvals.createdAt,
+      })
+      .from(approvals)
+      .innerJoin(companies, eq(approvals.companyId, companies.id))
+      .where(and(eq(approvals.type, "plan"), eq(approvals.status, "pending")))
+      .orderBy(desc(approvals.createdAt))
+      .limit(10);
+
+    if (pendingPlans.length > 0) {
+      lines.push("\n## Pending Plan Approvals");
+      for (const p of pendingPlans) {
+        const pl = p.payload as Record<string, unknown>;
+        const preview = typeof pl.proposalText === "string" ? pl.proposalText.slice(0, 200) : "";
+        lines.push(`- approval-id: ${p.id} | company: ${p.companyName} | ${preview}${preview.length === 200 ? "…" : ""}`);
+      }
+      lines.push("\nUse approve_plan(approvalId, approved) to action these on JayJay's behalf.");
+    }
+  } catch {
+    // non-fatal
+  }
+
   return { context: lines.join("\n"), inboxTopicId: inboxTopic.id };
+}
+
+function parseSessionId(streamJson: string): string | null {
+  for (const line of streamJson.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (typeof event.session_id === "string" && event.session_id) return event.session_id;
+    } catch { /* skip */ }
+  }
+  return null;
 }
 
 function parseAssistantText(streamJson: string): string {
@@ -287,6 +247,31 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   if (input.attachmentSummaries?.length) {
     contextLines.push(`Attachments (already saved to client folder): ${input.attachmentSummaries.join(", ")}`);
   }
+
+  // Create stub workflow run so the run always exists (even if agent fails before calling resolve_conversation).
+  // resolve_conversation will adopt this run rather than creating a new one.
+  let stubRunId: string | null = null;
+  if (activeEccAgent) {
+    try {
+      const sourceId = input.inboundMessageId ?? randomUUID();
+      const [stubRun] = await db.insert(workflowRuns).values({
+        companyId,
+        agentId: activeEccAgent.id,
+        workflowType: "ecc_message",
+        sourceTable: input.inboundMessageId ? "operator_messages" : "ecc_conversations",
+        sourceId,
+        overallStatus: "running",
+        startedAt: new Date(),
+      }).returning({ id: workflowRuns.id });
+      stubRunId = stubRun?.id ?? null;
+    } catch { /* non-fatal */ }
+  }
+
+  // Inject runId into context so the agent can pass it to complete_conversation_turn
+  if (stubRunId) {
+    contextLines.push(`\n## Workflow Run\nrun-id: ${stubRunId}\nPass this run-id to complete_conversation_turn as the runId argument.`);
+  }
+
   contextLines.push(``, `## Message body`, input.body);
 
   const userMessage = contextLines.join("\n");
@@ -313,23 +298,28 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   }), "utf-8");
 
   const dbPrompt = (activeEccAgent?.adapterConfig as Record<string, unknown> | null)?.systemPrompt;
-  const systemPrompt =
-    typeof dbPrompt === "string" && dbPrompt.length > 0
-      ? dbPrompt
-      : isOperator
-      ? ECC_SYSTEM_PROMPT
-      : CLIENT_SYSTEM_PROMPT;
+  if (typeof dbPrompt !== "string" || dbPrompt.length === 0) {
+    logger.warn({ companyId, platform: input.platform }, "orchestrator: ECC agent has no system prompt in DB — run will use Claude defaults");
+  }
+  const systemPrompt = typeof dbPrompt === "string" && dbPrompt.length > 0 ? dbPrompt : "";
   await fs.writeFile(promptPath, systemPrompt, "utf-8");
+
+  const agentMeta = (activeEccAgent?.metadata ?? {}) as EccAgentMetadata;
+  const existingSessionId = agentMeta.claudeSessionId;
 
   const args = [
     "--print",
     "--output-format", "stream-json",
     "--verbose",
     "--dangerously-skip-permissions",
-    "--no-session-persistence",
     "--mcp-config", mcpConfigPath,
     "--append-system-prompt-file", promptPath,
   ];
+
+  if (existingSessionId) {
+    args.push("--resume", existingSessionId);
+    logger.info({ companyId, agentId: activeEccAgent?.id, sessionId: existingSessionId }, "orchestrator: resuming claude session");
+  }
 
   const stdin = `Human: ${userMessage}`;
 
@@ -339,44 +329,148 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   );
 
   const messagePreview = input.body.slice(0, 120);
-  if (execAgent) await eccSvc.setProcessing(execAgent.id, "", "", messagePreview).catch(() => {});
-  if (clientAgent) await eccSvc.setProcessing(clientAgent.id, "", "", messagePreview).catch(() => {});
+  if (activeEccAgent) await eccSvc.setProcessing(activeEccAgent.id, "", "", messagePreview).catch(() => {});
 
   const spawnStart = new Date();
-  const proc = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
-  proc.stdin.write(stdin);
-  proc.stdin.end();
-
   let stderr = "";
   let stdout = "";
-  proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-  proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+  let shouldClearSession = false;
 
-  await new Promise<void>((resolve) => {
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        logger.warn({ code, stderr: stderr.slice(0, 500), companyId }, "orchestrator: claude exited non-zero");
-      } else {
-        logger.info({ companyId, platform: input.platform }, "orchestrator: complete");
-      }
-      resolve();
+  try {
+    const proc = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
+    proc.stdin.write(stdin);
+    proc.stdin.end();
+
+    proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+
+    let exitCode = 0;
+    await new Promise<void>((resolve) => {
+      proc.on("close", (code) => {
+        exitCode = code ?? 0;
+        if (code !== 0) {
+          logger.warn({ code, stderr: stderr.slice(0, 500), companyId }, "orchestrator: claude exited non-zero");
+        } else {
+          logger.info({ companyId, platform: input.platform }, "orchestrator: complete");
+        }
+        resolve();
+      });
     });
-  });
 
-  await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
+    // Log stderr even on exit 0 so we can diagnose silent failures
+    if (stderr.trim()) {
+      logger.info({ companyId, exitCode, stderr: stderr.slice(0, 500) }, "orchestrator: claude stderr");
+    }
 
-  if (execAgent) await eccSvc.setIdle(execAgent.id).catch(() => {});
-  if (clientAgent) await eccSvc.setIdle(clientAgent.id).catch(() => {});
+    // Detect stale/invalid session from stderr so we clear it before next run
+    if (existingSessionId && /session.*not found|invalid.*session|could not resume|no such session|session.*expired|failed to resume|unknown session/i.test(stderr)) {
+      shouldClearSession = true;
+      logger.warn({ agentId: activeEccAgent?.id, sessionId: existingSessionId }, "orchestrator: stale session detected in stderr — will clear");
+    }
+
+    // If Claude exited non-zero and run is still running, mark it failed
+    if (exitCode !== 0 && stubRunId) {
+      shouldClearSession = true;
+      const [runRow] = await db.select({ overallStatus: workflowRuns.overallStatus }).from(workflowRuns).where(eq(workflowRuns.id, stubRunId)).limit(1);
+      if (runRow?.overallStatus === "running") {
+        const now = new Date();
+        const errText = stderr.slice(0, 300) || `Claude exited with code ${exitCode}`;
+        await db.update(workflowRuns).set({ overallStatus: "failed", finishedAt: now }).where(eq(workflowRuns.id, stubRunId)).catch(() => {});
+        await db.insert(workflowStageResults).values({
+          runId: stubRunId, stageId: "claude_error", label: "Claude process error",
+          status: "failed", expectations: [], actuals: { exitCode, stderr: errText },
+          errorText: errText, ord: 98, computedAt: now,
+        }).catch(() => {});
+      }
+    }
+
+    await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
+
+    // Save the session ID so the next message can resume the conversation (skip if we're about to clear it)
+    if (activeEccAgent && !shouldClearSession) {
+      const newSessionId = parseSessionId(stdout);
+      if (newSessionId) {
+        await eccSvc.saveSessionId(activeEccAgent.id, newSessionId).catch(() => {});
+        logger.info({ agentId: activeEccAgent.id, sessionId: newSessionId }, "orchestrator: saved claude session id");
+      }
+    }
+  } catch (orchErr) {
+    logger.error({ err: orchErr, companyId, platform: input.platform }, "orchestrator: fatal error");
+    const errMsg = orchErr instanceof Error ? orchErr.message : String(orchErr);
+    // Mark stub run as failed
+    if (stubRunId) {
+      const now = new Date();
+      await db.update(workflowRuns).set({ overallStatus: "failed", finishedAt: now }).where(eq(workflowRuns.id, stubRunId)).catch(() => {});
+      await db.insert(workflowStageResults).values({
+        runId: stubRunId, stageId: "orchestrator_error", label: "Orchestrator error",
+        status: "failed", expectations: [], actuals: { error: errMsg.slice(0, 300) },
+        errorText: errMsg.slice(0, 300), ord: 99, computedAt: now,
+      }).catch(() => {});
+    }
+    await notifyOperatorTelegram(db, `⚠️ Orchestrator error on ${input.platform} message:\n\n${errMsg.slice(0, 300)}\n\nOriginal message: "${input.body.slice(0, 100)}"`)
+      .catch(() => {});
+  } finally {
+    // Always reset to idle — even if spawn or anything above throws
+    if (activeEccAgent) await eccSvc.setIdle(activeEccAgent.id, { clearSession: shouldClearSession }).catch(() => {});
+  }
 
   if (isOperator) {
     try {
       const convSvc = eccConversationsService(db);
+      const topicSvc = eccTopicsService(db);
       const active = await convSvc.listAllActive();
       const touched = active.find((c) => c.lastMessageAt >= spawnStart);
       if (touched) {
         await convSvc.appendMessage(touched.id, "user", input.body);
         const assistantText = parseAssistantText(stdout);
         if (assistantText) await convSvc.appendMessage(touched.id, "assistant", assistantText);
+
+        // Update inbound message with identified topic + workflow run link
+        if (input.inboundMessageId) {
+          const topic = await topicSvc.getById(touched.topicId).catch(() => null);
+          const [wfRun] = activeEccAgent
+            ? await db
+                .select({ id: workflowRuns.id })
+                .from(workflowRuns)
+                .where(and(eq(workflowRuns.agentId, activeEccAgent.id), gte(workflowRuns.startedAt, spawnStart)))
+                .orderBy(desc(workflowRuns.startedAt))
+                .limit(1)
+            : [];
+          await db
+            .update(operatorMessages)
+            .set({
+              rawPayload: {
+                identifyStatus: "identified",
+                topicId: touched.topicId,
+                topicName: topic?.name ?? null,
+                workflowRunId: wfRun?.id ?? null,
+                eccAgentId: activeEccAgent?.id ?? null,
+              },
+            })
+            .where(eq(operatorMessages.id, input.inboundMessageId))
+            .catch(() => {});
+        }
+      } else if (input.inboundMessageId) {
+        // No topic matched — landed in inbox
+        const [wfRun] = activeEccAgent
+          ? await db
+              .select({ id: workflowRuns.id })
+              .from(workflowRuns)
+              .where(and(eq(workflowRuns.agentId, activeEccAgent.id), gte(workflowRuns.startedAt, spawnStart)))
+              .orderBy(desc(workflowRuns.startedAt))
+              .limit(1)
+          : [];
+        await db
+          .update(operatorMessages)
+          .set({
+            rawPayload: {
+              identifyStatus: "inbox",
+              workflowRunId: wfRun?.id ?? null,
+              eccAgentId: activeEccAgent?.id ?? null,
+            },
+          })
+          .where(eq(operatorMessages.id, input.inboundMessageId))
+          .catch(() => {});
       }
     } catch (e) {
       logger.warn({ err: e }, "orchestrator: failed to append conversation message");

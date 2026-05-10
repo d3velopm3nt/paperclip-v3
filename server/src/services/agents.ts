@@ -227,7 +227,7 @@ export function agentService(db: Db) {
     return new Map(rows.map((row) => [row.agentId, Number(row.spentMonthlyCents ?? 0)]));
   }
 
-  async function hydrateAgentSpend<T extends { id: string; companyId: string; spentMonthlyCents: number }>(rows: T[]) {
+  async function hydrateAgentSpend<T extends { id: string; companyId: string | null; spentMonthlyCents: number }>(rows: T[]) {
     const agentIds = rows.map((row) => row.id);
     const companyId = rows[0]?.companyId;
     if (!companyId || agentIds.length === 0) return rows;
@@ -317,7 +317,9 @@ export function agentService(db: Db) {
 
     if (data.reportsTo !== undefined) {
       if (data.reportsTo) {
-        await ensureManager(existing.companyId, data.reportsTo);
+        if (existing.companyId) {
+          await ensureManager(existing.companyId, data.reportsTo);
+        }
       }
       await assertNoCycle(id, data.reportsTo);
     }
@@ -325,7 +327,7 @@ export function agentService(db: Db) {
     if (data.name !== undefined) {
       const previousShortname = normalizeAgentUrlKey(existing.name);
       const nextShortname = normalizeAgentUrlKey(data.name);
-      if (previousShortname !== nextShortname) {
+      if (previousShortname !== nextShortname && existing.companyId) {
         await assertCompanyShortnameAvailable(existing.companyId, data.name, { excludeAgentId: id });
       }
     }
@@ -352,7 +354,7 @@ export function agentService(db: Db) {
       const changedKeys = diffConfigSnapshot(beforeConfig, afterConfig);
       if (changedKeys.length > 0) {
         await db.insert(agentConfigRevisions).values({
-          companyId: normalizedUpdated.companyId,
+          companyId: normalizedUpdated.companyId!,
           agentId: normalizedUpdated.id,
           createdByAgentId: options?.recordRevision?.createdByAgentId ?? null,
           createdByUserId: options?.recordRevision?.createdByUserId ?? null,
@@ -577,7 +579,7 @@ export function agentService(db: Db) {
         .insert(agentApiKeys)
         .values({
           agentId: id,
-          companyId: existing.companyId,
+          companyId: existing.companyId!,
           name,
           keyHash,
         })

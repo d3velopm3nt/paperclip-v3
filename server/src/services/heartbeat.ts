@@ -1004,7 +1004,7 @@ export function heartbeatService(db: Db) {
     if (taskKey) {
       const codec = getAdapterSessionCodec(agent.adapterType);
       const existingTaskSession = await getTaskSession(
-        agent.companyId,
+        agent.companyId!,
         agent.id,
         agent.adapterType,
         taskKey,
@@ -1042,7 +1042,7 @@ export function heartbeatService(db: Db) {
       .where(
         and(
           eq(heartbeatRuns.id, resumeFromRunId),
-          eq(heartbeatRuns.companyId, agent.companyId),
+          eq(heartbeatRuns.companyId, agent.companyId!),
           eq(heartbeatRuns.agentId, agent.id),
         ),
       )
@@ -1052,7 +1052,7 @@ export function heartbeatService(db: Db) {
     const resumeContext = parseObject(resumeRun.contextSnapshot);
     const resumeTaskKey = deriveTaskKey(resumeContext, null) ?? taskKey;
     const resumeTaskSession = resumeTaskKey
-      ? await getTaskSession(agent.companyId, agent.id, agent.adapterType, resumeTaskKey)
+      ? await getTaskSession(agent.companyId!, agent.id, agent.adapterType, resumeTaskKey)
       : null;
     const sessionCodec = getAdapterSessionCodec(agent.adapterType);
     const sessionOverride = buildExplicitResumeSessionOverride({
@@ -1090,7 +1090,7 @@ export function heartbeatService(db: Db) {
             projectWorkspaceId: issues.projectWorkspaceId,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+          .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId!)))
           .then((rows) => rows[0] ?? null)
       : null;
     const issueProjectId = issueProjectRef?.projectId ?? null;
@@ -1106,7 +1106,7 @@ export function heartbeatService(db: Db) {
           .from(projectWorkspaces)
           .where(
             and(
-              eq(projectWorkspaces.companyId, agent.companyId),
+              eq(projectWorkspaces.companyId, agent.companyId!),
               eq(projectWorkspaces.projectId, workspaceProjectId),
             ),
           )
@@ -1141,7 +1141,7 @@ export function heartbeatService(db: Db) {
         if (!projectCwd || projectCwd === REPO_ONLY_CWD_SENTINEL) {
           try {
             const managedWorkspace = await ensureManagedProjectWorkspace({
-              companyId: agent.companyId,
+              companyId: agent.companyId!,
               projectId: workspaceProjectId ?? resolvedProjectId ?? workspace.projectId,
               repoUrl: readNonEmptyString(workspace.repoUrl),
             });
@@ -1213,7 +1213,7 @@ export function heartbeatService(db: Db) {
 
     if (workspaceProjectId) {
       const managedWorkspace = await ensureManagedProjectWorkspace({
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
         projectId: workspaceProjectId,
         repoUrl: null,
       });
@@ -1355,7 +1355,7 @@ export function heartbeatService(db: Db) {
       .insert(agentRuntimeState)
       .values({
         agentId: agent.id,
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
         adapterType: agent.adapterType,
         stateJson: {},
       })
@@ -1715,7 +1715,7 @@ export function heartbeatService(db: Db) {
 
     if (updated) {
       publishLiveEvent({
-        companyId: updated.companyId,
+        companyId: updated.companyId!,
         type: "agent.status",
         payload: {
           agentId: updated.id,
@@ -1858,7 +1858,7 @@ export function heartbeatService(db: Db) {
     const hasTokenUsage = inputTokens > 0 || outputTokens > 0 || cachedInputTokens > 0;
     const provider = result.provider ?? "unknown";
     const biller = resolveLedgerBiller(result);
-    const ledgerScope = await resolveLedgerScopeForRun(db, agent.companyId, run);
+    const ledgerScope = await resolveLedgerScopeForRun(db, agent.companyId!, run);
 
     await db
       .update(agentRuntimeState)
@@ -1878,7 +1878,7 @@ export function heartbeatService(db: Db) {
 
     if (additionalCostCents > 0 || hasTokenUsage) {
       const costs = costService(db, budgetHooks);
-      await costs.createEvent(agent.companyId, {
+      await costs.createEvent(agent.companyId!, {
         heartbeatRunId: run.id,
         agentId: agent.id,
         issueId: ledgerScope.issueId,
@@ -1989,7 +1989,7 @@ export function heartbeatService(db: Db) {
             executionWorkspaceSettings: issues.executionWorkspaceSettings,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+          .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId!)))
           .then((rows) => rows[0] ?? null)
       : null;
     const issueAssigneeOverrides =
@@ -2008,7 +2008,7 @@ export function heartbeatService(db: Db) {
       ? await db
           .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
           .from(projects)
-          .where(and(eq(projects.id, executionProjectId), eq(projects.companyId, agent.companyId)))
+          .where(and(eq(projects.id, executionProjectId), eq(projects.companyId, agent.companyId!)))
           .then((rows) =>
             gateProjectExecutionWorkspacePolicy(
               parseProjectExecutionWorkspacePolicy(rows[0]?.executionWorkspacePolicy),
@@ -2016,7 +2016,7 @@ export function heartbeatService(db: Db) {
             ))
       : null;
     const taskSession = taskKey
-      ? await getTaskSession(agent.companyId, agent.id, agent.adapterType, taskKey)
+      ? await getTaskSession(agent.companyId!, agent.id, agent.adapterType, taskKey)
       : null;
     // V2: Per-project session — use project session as primary if available
     // V2: Per-project session — normalize to same shape as taskSession
@@ -2075,10 +2075,10 @@ export function heartbeatService(db: Db) {
       ? { ...workspaceManagedConfig, ...issueAssigneeOverrides.adapterConfig }
       : workspaceManagedConfig;
     const { config: resolvedConfig, secretKeys } = await secretsSvc.resolveAdapterConfigForRuntime(
-      agent.companyId,
+      agent.companyId!,
       mergedConfig,
     );
-    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
+    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId!);
     const runtimeConfig = {
       ...resolvedConfig,
       paperclipRuntimeSkills: runtimeSkillEntries,
@@ -2097,7 +2097,7 @@ export function heartbeatService(db: Db) {
     const existingExecutionWorkspace =
       issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
     const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
-      companyId: agent.companyId,
+      companyId: agent.companyId!,
       heartbeatRunId: run.id,
       executionWorkspaceId: existingExecutionWorkspace?.id ?? null,
     });
@@ -2115,7 +2115,7 @@ export function heartbeatService(db: Db) {
       agent: {
         id: agent.id,
         name: agent.name,
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
       },
       recorder: workspaceOperationRecorder,
     });
@@ -2145,7 +2145,7 @@ export function heartbeatService(db: Db) {
           })
         : resolvedProjectId
           ? await executionWorkspacesSvc.create({
-              companyId: agent.companyId,
+              companyId: agent.companyId!,
               projectId: resolvedProjectId,
               projectWorkspaceId: resolvedProjectWorkspaceId,
               sourceIssueId: issueRef?.id ?? null,
@@ -2386,7 +2386,7 @@ export function heartbeatService(db: Db) {
 
       if (runningAgent) {
         publishLiveEvent({
-          companyId: runningAgent.companyId,
+          companyId: runningAgent.companyId!,
           type: "agent.status",
           payload: {
             agentId: runningAgent.id,
@@ -2467,7 +2467,7 @@ export function heartbeatService(db: Db) {
         agent: {
           id: agent.id,
           name: agent.name,
-          companyId: agent.companyId,
+          companyId: agent.companyId!,
         },
         issue: issueRef,
         workspace: executionWorkspace,
@@ -2522,7 +2522,7 @@ export function heartbeatService(db: Db) {
 
       const adapter = getServerAdapter(agent.adapterType);
       const authToken = adapter.supportsLocalAgentJwt
-        ? createLocalAgentJwt(agent.id, agent.companyId, agent.adapterType, run.id)
+        ? createLocalAgentJwt(agent.id, agent.companyId!, agent.adapterType, run.id)
         : null;
       if (adapter.supportsLocalAgentJwt && !authToken) {
         logger.warn(
@@ -2638,7 +2638,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
       try {
         const { mcpResolverService } = await import("./agent-runtime/mcp-resolver.js");
         const mcpResolver = mcpResolverService(db);
-        const mcpServers = await mcpResolver.resolveMcpConfig(agent.id, agent.companyId);
+        const mcpServers = await mcpResolver.resolveMcpConfig(agent.id, agent.companyId!);
         if (mcpServers.length > 0) {
           const os = await import("node:os");
           const fs = await import("node:fs");
@@ -2662,7 +2662,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
 
       const adapterResult = await adapter.execute({
         runId: run.id,
-        agent,
+        agent: agent as typeof agent & { companyId: string },
         runtime: runtimeForAdapter,
         config: runtimeConfig,
         context,
@@ -2685,7 +2685,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
             agent: {
               id: agent.id,
               name: agent.name,
-              companyId: agent.companyId,
+              companyId: agent.companyId!,
             },
             issue: issueRef,
             workspace: executionWorkspace,
@@ -2848,13 +2848,13 @@ Keep memories concise and specific. Don't write vague platitudes.`;
         }, normalizedUsage);
         if (taskKey) {
           if (adapterResult.clearSession || (!nextSessionState.params && !nextSessionState.displayId)) {
-            await clearTaskSessions(agent.companyId, agent.id, {
+            await clearTaskSessions(agent.companyId!, agent.id, {
               taskKey,
               adapterType: agent.adapterType,
             });
           } else {
             await upsertTaskSession({
-              companyId: agent.companyId,
+              companyId: agent.companyId!,
               agentId: agent.id,
               adapterType: agent.adapterType,
               taskKey,
@@ -2890,7 +2890,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
           const finishedAt = new Date();
           await postRunEval.recordKpis({
             agentId: agent.id,
-            companyId: agent.companyId,
+            companyId: agent.companyId!,
             projectId: executionProjectId ?? null,
             runId: run.id,
             taskCompleted: outcome === "succeeded",
@@ -2914,7 +2914,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
           const [{ value: totalKpis }] = await db
             .select({ value: count() })
             .from(kpiTable)
-            .where(eq(kpiTable.companyId, agent.companyId));
+            .where(eq(kpiTable.companyId, agent.companyId!));
 
           if (totalKpis > 0 && totalKpis % CEO_REVIEW_INTERVAL === 0) {
             // Find CEO agent (role === "ceo" or reportsTo === null and not the current agent)
@@ -2923,7 +2923,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
               .from(agentsTable)
               .where(
                 and(
-                  eq(agentsTable.companyId, agent.companyId),
+                  eq(agentsTable.companyId, agent.companyId!),
                   eq(agentsTable.role, "ceo"),
                 ),
               )
@@ -2934,7 +2934,7 @@ Keep memories concise and specific. Don't write vague platitudes.`;
               // Build a trend report for the CEO
               const { kpiAnalyticsService } = await import("./agent-runtime/kpi-analytics.js");
               const analytics = kpiAnalyticsService(db);
-              const companyAnalytics = await analytics.getCompanyAnalytics(agent.companyId);
+              const companyAnalytics = await analytics.getCompanyAnalytics(agent.companyId!);
 
               const agentSummaries = companyAnalytics.agents
                 .filter((a) => a.totalRuns > 0)
@@ -3108,7 +3108,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
 
         if (taskKey && (previousSessionParams || previousSessionDisplayId || taskSession)) {
           await upsertTaskSession({
-            companyId: agent.companyId,
+            companyId: agent.companyId!,
             agentId: agent.id,
             adapterType: agent.adapterType,
             taskKey,
@@ -3357,7 +3357,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
 
     const writeSkippedRequest = async (skipReason: string) => {
       await db.insert(agentWakeupRequests).values({
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
         agentId,
         source,
         triggerDetail,
@@ -3376,11 +3376,11 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
       projectId = await db
         .select({ projectId: issues.projectId })
         .from(issues)
-        .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+        .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId!)))
         .then((rows) => rows[0]?.projectId ?? null);
     }
 
-    const budgetBlock = await budgets.getInvocationBlock(agent.companyId, agentId, {
+    const budgetBlock = await budgets.getInvocationBlock(agent.companyId!, agentId, {
       issueId,
       projectId,
     });
@@ -3420,7 +3420,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
 
       const outcome = await db.transaction(async (tx) => {
         await tx.execute(
-          sql`select id from issues where id = ${issueId} and company_id = ${agent.companyId} for update`,
+          sql`select id from issues where id = ${issueId} and company_id = ${agent.companyId!} for update`,
         );
 
         const issue = await tx
@@ -3431,12 +3431,12 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
             executionAgentNameKey: issues.executionAgentNameKey,
           })
           .from(issues)
-          .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)))
+          .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId!)))
           .then((rows) => rows[0] ?? null);
 
         if (!issue) {
           await tx.insert(agentWakeupRequests).values({
-            companyId: agent.companyId,
+            companyId: agent.companyId!,
             agentId,
             source,
             triggerDetail,
@@ -3544,7 +3544,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
               .then((rows) => rows[0] ?? activeExecutionRun);
 
             await tx.insert(agentWakeupRequests).values({
-              companyId: agent.companyId,
+              companyId: agent.companyId!,
               agentId,
               source,
               triggerDetail,
@@ -3573,7 +3573,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
             .from(agentWakeupRequests)
             .where(
               and(
-                eq(agentWakeupRequests.companyId, agent.companyId),
+                eq(agentWakeupRequests.companyId, agent.companyId!),
                 eq(agentWakeupRequests.agentId, agentId),
                 eq(agentWakeupRequests.status, "deferred_issue_execution"),
                 sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issue.id}`,
@@ -3610,7 +3610,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
           }
 
           await tx.insert(agentWakeupRequests).values({
-            companyId: agent.companyId,
+            companyId: agent.companyId!,
             agentId,
             source,
             triggerDetail,
@@ -3628,7 +3628,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
         const wakeupRequest = await tx
           .insert(agentWakeupRequests)
           .values({
-            companyId: agent.companyId,
+            companyId: agent.companyId!,
             agentId,
             source,
             triggerDetail,
@@ -3645,7 +3645,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
         const newRun = await tx
           .insert(heartbeatRuns)
           .values({
-            companyId: agent.companyId,
+            companyId: agent.companyId!,
             agentId,
             invocationSource: source,
             triggerDetail,
@@ -3733,7 +3733,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
         .then((rows) => rows[0] ?? coalescedTargetRun);
 
       await db.insert(agentWakeupRequests).values({
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
         agentId,
         source,
         triggerDetail,
@@ -3753,7 +3753,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
     const wakeupRequest = await db
       .insert(agentWakeupRequests)
       .values({
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
         agentId,
         source,
         triggerDetail,
@@ -3770,7 +3770,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
     const newRun = await db
       .insert(heartbeatRuns)
       .values({
-        companyId: agent.companyId,
+        companyId: agent.companyId!,
         agentId,
         invocationSource: source,
         triggerDetail,
@@ -4035,7 +4035,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
       const latestTaskSession = await db
         .select()
         .from(agentTaskSessions)
-        .where(and(eq(agentTaskSessions.companyId, agent.companyId), eq(agentTaskSessions.agentId, agent.id)))
+        .where(and(eq(agentTaskSessions.companyId, agent.companyId!), eq(agentTaskSessions.agentId, agent.id)))
         .orderBy(desc(agentTaskSessions.updatedAt))
         .limit(1)
         .then((rows) => rows[0] ?? null);
@@ -4050,6 +4050,7 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
       const agent = await getAgent(agentId);
       if (!agent) throw notFound("Agent not found");
 
+      if (!agent.companyId) return [];
       return db
         .select()
         .from(agentTaskSessions)
@@ -4062,11 +4063,13 @@ Focus on **trends over time**, not single runs. Only act when you see a sustaine
       if (!agent) throw notFound("Agent not found");
       await ensureRuntimeState(agent);
       const taskKey = readNonEmptyString(opts?.taskKey);
-      const clearedTaskSessions = await clearTaskSessions(
-        agent.companyId,
-        agent.id,
-        taskKey ? { taskKey, adapterType: agent.adapterType } : undefined,
-      );
+      const clearedTaskSessions = agent.companyId
+        ? await clearTaskSessions(
+            agent.companyId,
+            agent.id,
+            taskKey ? { taskKey, adapterType: agent.adapterType } : undefined,
+          )
+        : [];
       const runtimePatch: Partial<typeof agentRuntimeState.$inferInsert> = {
         sessionId: null,
         lastError: null,

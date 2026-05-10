@@ -72,6 +72,7 @@ function agentPath(id: string, companyId?: string, suffix = "") {
 
 export const agentsApi = {
   list: (companyId: string) => api.get<Agent[]>(`/companies/${companyId}/agents`),
+  listEcc: () => api.get<Agent[]>("/ecc/agents"),
   org: (companyId: string) => api.get<OrgNode[]>(`/companies/${companyId}/org`),
   listConfigurations: (companyId: string) =>
     api.get<Record<string, unknown>[]>(`/companies/${companyId}/agent-configurations`),

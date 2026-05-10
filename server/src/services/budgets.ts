@@ -113,7 +113,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       .then((rows) => rows[0] ?? null);
     if (!row) throw notFound("Agent not found");
     return {
-      companyId: row.companyId,
+      companyId: row.companyId!,
       name: row.name,
       paused: row.status === "paused",
       pauseReason: (row.pauseReason as ScopeRecord["pauseReason"]) ?? null,

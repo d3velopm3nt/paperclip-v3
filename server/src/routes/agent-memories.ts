@@ -3,7 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { agents } from "@paperclipai/db";
 import { eq } from "drizzle-orm";
 import { memoryLoaderService } from "../services/agent-runtime/memory-loader.js";
-import { assertCompanyAccess } from "./authz.js";
+import { assertCompanyAccess, assertBoard } from "./authz.js";
 
 export function agentMemoryRoutes(db: Db) {
   const router = Router();
@@ -64,11 +64,12 @@ export function agentMemoryRoutes(db: Db) {
   router.get("/agents/:agentId/memories", async (req, res) => {
     const { agentId } = req.params;
     const companyId = await getAgentCompanyId(agentId);
+    // ECC agents have null companyId — board-only access
     if (!companyId) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
+      assertBoard(req);
+    } else {
+      assertCompanyAccess(req, companyId);
     }
-    assertCompanyAccess(req, companyId);
 
     const scope = req.query.scope as "global" | "project" | undefined;
     const projectId = req.query.projectId as string | undefined;
@@ -83,21 +84,28 @@ export function agentMemoryRoutes(db: Db) {
     const { agentId } = req.params;
     const companyId = await getAgentCompanyId(agentId);
     if (!companyId) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
+      assertBoard(req);
+    } else {
+      assertCompanyAccess(req, companyId);
     }
-    assertCompanyAccess(req, companyId);
 
-    const { scope, projectId, category, title, content, source, confidence } = req.body;
+    const { scope, projectId, category, title, content, source, confidence, companyId: bodyCompanyId } = req.body;
 
     if (!scope || !category || !title || !content || !source) {
       res.status(400).json({ error: "Missing required fields: scope, category, title, content, source" });
       return;
     }
 
+    // ECC agents have null companyId — caller must supply one in the body
+    const resolvedCompanyId = companyId ?? bodyCompanyId;
+    if (!resolvedCompanyId) {
+      res.status(400).json({ error: "companyId required for cross-company agents" });
+      return;
+    }
+
     const memory = await svc.saveMemory({
       agentId,
-      companyId,
+      companyId: resolvedCompanyId,
       scope,
       projectId: projectId ?? null,
       category,
@@ -115,10 +123,10 @@ export function agentMemoryRoutes(db: Db) {
     const { agentId, memoryId } = req.params;
     const companyId = await getAgentCompanyId(agentId);
     if (!companyId) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
+      assertBoard(req);
+    } else {
+      assertCompanyAccess(req, companyId);
     }
-    assertCompanyAccess(req, companyId);
 
     const existing = await svc.getMemory(memoryId);
     if (!existing || existing.agentId !== agentId) {
@@ -142,10 +150,10 @@ export function agentMemoryRoutes(db: Db) {
     const { agentId, memoryId } = req.params;
     const companyId = await getAgentCompanyId(agentId);
     if (!companyId) {
-      res.status(404).json({ error: "Agent not found" });
-      return;
+      assertBoard(req);
+    } else {
+      assertCompanyAccess(req, companyId);
     }
-    assertCompanyAccess(req, companyId);
 
     const existing = await svc.getMemory(memoryId);
     if (!existing || existing.agentId !== agentId) {

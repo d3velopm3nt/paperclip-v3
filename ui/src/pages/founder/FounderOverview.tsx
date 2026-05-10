@@ -1,6 +1,6 @@
 // v3: founder overview — two-column dashboard (companies + agents left, conversations right).
 import { useNavigate } from "@/lib/router";
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useQuery, useQueries, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, XCircle, Clock, Activity, MessageSquare } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useCompany } from "../../context/CompanyContext";
@@ -9,6 +9,7 @@ import { workflowRunsApi, type WorkflowRun } from "../../api/workflowRuns";
 import { queryKeys } from "../../lib/queryKeys";
 import { cn } from "../../lib/utils";
 import { api } from "../../api/client";
+import { IncomingMessages, type InboundMessage } from "../FounderConversations";
 import type { Company } from "@paperclipai/shared";
 import type { Issue } from "@paperclipai/shared";
 
@@ -149,6 +150,7 @@ function ConvCard({ conv, onClick }: { conv: EccConversation; onClick: () => voi
 // ── EccAgentCard (left panel — ECC Agents section) ───────────────────────────
 
 function EccAgentCard({ agent, onClick }: { agent: EccAgent; onClick: () => void }) {
+  const qc = useQueryClient();
   const isProcessing = agent.status === "processing";
   const isPaused = agent.status === "paused" || agent.status === "error";
   const topicName = agent.metadata?.currentTopicName;
@@ -162,6 +164,12 @@ function EccAgentCard({ agent, onClick }: { agent: EccAgent; onClick: () => void
   const bgColor = isProcessing ? "bg-blue-500/5" : isPaused ? "bg-red-500/5" : "bg-card";
   const dotColor = isProcessing ? "bg-blue-400" : isPaused ? "bg-red-400" : "bg-muted-foreground/30";
 
+  async function resetAgent(e: React.MouseEvent) {
+    e.stopPropagation();
+    await api.post(`/ecc/agents/${agent.id}/reset`, {});
+    qc.invalidateQueries({ queryKey: ["ecc-agents"] });
+  }
+
   return (
     <button
       onClick={onClick}
@@ -171,7 +179,17 @@ function EccAgentCard({ agent, onClick }: { agent: EccAgent; onClick: () => void
         <span
           className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor} ${isProcessing ? "animate-pulse" : ""}`}
         />
-        <span className="text-xs font-medium truncate">{agent.name}</span>
+        <span className="text-xs font-medium truncate flex-1">{agent.name}</span>
+        {isProcessing && (
+          <span
+            role="button"
+            onClick={resetAgent}
+            title="Force reset to idle"
+            className="text-[9px] text-blue-400/60 hover:text-blue-400 border border-blue-400/20 hover:border-blue-400/50 rounded px-1 py-0.5 transition-colors cursor-pointer"
+          >
+            reset
+          </span>
+        )}
       </div>
       <div className="mb-1">
         <span
@@ -417,8 +435,19 @@ export function FounderOverview() {
         </section>
       </div>
 
-      {/* RIGHT: Conversations */}
+      {/* RIGHT: Incoming + Conversations */}
       <div className="flex-[2] border-t lg:border-t-0 lg:border-l border-border pt-6 lg:pt-0 lg:pl-6 overflow-auto space-y-3 pb-6">
+        <IncomingMessages
+          onMessageClick={(msg: InboundMessage) => {
+            const { eccAgentId, workflowRunId } = msg.rawPayload ?? {};
+            if (eccAgentId && workflowRunId) {
+              navigate(`/agents/${eccAgentId}/runs/${workflowRunId}`);
+            } else if (eccAgentId) {
+              navigate(`/agents/${eccAgentId}`);
+            }
+          }}
+        />
+
         <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
           Live Conversations
         </h2>

@@ -1565,13 +1565,13 @@ export function companySkillService(db: Db) {
         } else {
           try {
             const { config: runtimeConfig } = await secretsSvc.resolveAdapterConfigForRuntime(
-              agent.companyId,
+              agent.companyId!,
               agent.adapterConfig as Record<string, unknown>,
             );
-            const runtimeSkillEntries = await listRuntimeSkillEntries(agent.companyId);
+            const runtimeSkillEntries = await listRuntimeSkillEntries(agent.companyId!);
             const snapshot = await adapter.listSkills({
               agentId: agent.id,
-              companyId: agent.companyId,
+              companyId: agent.companyId!,
               adapterType: agent.adapterType,
               config: {
                 ...runtimeConfig,

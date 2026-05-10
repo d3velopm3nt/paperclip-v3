@@ -95,6 +95,7 @@ import {
 } from "@paperclipai/shared";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@paperclipai/adapter-utils";
 import { agentRouteRef } from "../lib/utils";
+import { workflowRunsApi, type WorkflowRun, type WorkflowStageResult } from "../api/workflowRuns";
 import {
   applyAgentSkillSnapshot,
   arraysEqual,
@@ -564,7 +565,9 @@ export function AgentDetail() {
     enabled: canFetchAgent,
   });
   const resolvedCompanyId = agent?.companyId ?? selectedCompanyId;
-  const canonicalAgentRef = agent ? agentRouteRef(agent) : routeAgentRef;
+  // ECC agents (companyId=null) have no company scope — use UUID as canonical ref
+  // to avoid slug-based redirect that would produce a failed URL-key lookup on the server.
+  const canonicalAgentRef = agent ? (agent.companyId ? agentRouteRef(agent) : agent.id) : routeAgentRef;
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
 
@@ -1047,7 +1050,11 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "runs" && (
+      {activeView === "runs" && !agent.companyId && (
+        <EccRunsTab agentId={agent.id} initialRunId={urlRunId ?? null} />
+      )}
+
+      {activeView === "runs" && agent.companyId && (
         <RunsTab
           runs={heartbeats ?? []}
           companyId={resolvedCompanyId!}
@@ -1697,6 +1704,15 @@ function PromptsTab({
     agent.adapterType === "hermes_local" ||
     agent.adapterType === "cursor";
 
+  const isEcc = agent.adapterType === "ecc";
+  const [eccDraft, setEccDraft] = useState<string | null>(null);
+  const eccPersistedPrompt =
+    typeof (agent.adapterConfig as Record<string, unknown>)?.systemPrompt === "string"
+      ? ((agent.adapterConfig as Record<string, unknown>).systemPrompt as string)
+      : "";
+  const eccCurrentPrompt = eccDraft ?? eccPersistedPrompt;
+  const eccDirty = eccDraft !== null && eccDraft !== eccPersistedPrompt;
+
   const { data: bundle, isLoading: bundleLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsBundle(agent.id),
     queryFn: () => agentsApi.instructionsBundle(agent.id, companyId),
@@ -1787,6 +1803,12 @@ function PromptsTab({
       if (!selectedCompanyId) throw new Error("Select a company to upload images");
       return assetsApi.uploadImage(selectedCompanyId, file, namespace);
     },
+  });
+
+  const saveEccMutation = useMutation({
+    mutationFn: (prompt: string) =>
+      agentsApi.update(agent.id, { adapterConfig: { ...(agent.adapterConfig as Record<string, unknown> ?? {}), systemPrompt: prompt } }, companyId ?? undefined),
+    onSuccess: () => setEccDraft(null),
   });
 
   useEffect(() => {
@@ -1921,6 +1943,22 @@ function PromptsTab({
     } : null);
   }, [bundle, isDirty, onCancelActionChange, persistedMode, persistedRootPath]);
 
+  useEffect(() => {
+    if (!isEcc) return;
+    onDirtyChange(eccDirty);
+    onSavingChange(saveEccMutation.isPending);
+  }, [isEcc, eccDirty, saveEccMutation.isPending, onDirtyChange, onSavingChange]);
+
+  useEffect(() => {
+    if (!isEcc) return;
+    onSaveActionChange(eccDirty ? () => { saveEccMutation.mutate(eccCurrentPrompt); } : null);
+  }, [isEcc, eccDirty, eccCurrentPrompt, onSaveActionChange, saveEccMutation]);
+
+  useEffect(() => {
+    if (!isEcc) return;
+    onCancelActionChange(eccDirty ? () => { setEccDraft(null); } : null);
+  }, [isEcc, eccDirty, onCancelActionChange]);
+
   const handleSeparatorDrag = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -1943,6 +1981,25 @@ function PromptsTab({
   }, [filePanelWidth]);
 
   if (!isLocal) {
+    if (isEcc) {
+      return (
+        <div className="max-w-3xl space-y-4">
+          <div>
+            <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide font-semibold">System Prompt</p>
+            <p className="text-xs text-muted-foreground mb-3">Saved to agent config. Orchestrator reads this on next spawn.</p>
+            <textarea
+              className="w-full min-h-[520px] rounded-md border border-border bg-muted/30 px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+              value={eccCurrentPrompt}
+              onChange={(e) => setEccDraft(e.target.value)}
+              spellCheck={false}
+            />
+          </div>
+          {eccDirty && (
+            <p className="text-xs text-amber-500">Unsaved changes — use the Save button above to apply.</p>
+          )}
+        </div>
+      );
+    }
     return (
       <div className="max-w-3xl">
         <p className="text-sm text-muted-foreground">
@@ -2799,6 +2856,134 @@ function AgentSkillsTab({
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+/* ---- ECC Runs Tab (workflow_runs, not heartbeat_runs) ---- */
+
+const ECC_STATUS_ICONS: Record<string, { icon: typeof CheckCircle2; color: string }> = {
+  passed: { icon: CheckCircle2, color: "text-emerald-600 dark:text-emerald-400" },
+  failed: { icon: XCircle, color: "text-red-600 dark:text-red-400" },
+  running: { icon: Loader2, color: "text-blue-600 dark:text-blue-400" },
+  partial: { icon: Clock, color: "text-amber-600 dark:text-amber-400" },
+};
+
+const ECC_STAGE_LABELS: Record<string, string> = {
+  message_received: "Message received",
+  topic_matched: "Topic matched",
+  conversation_resolved: "Conversation resolved",
+  operator_notified: "Operator notified",
+  client_reply_sent: "Client reply sent",
+  client_reply_approved: "Client reply approved",
+  memory_updated: "Memory updated",
+  action_taken: "Action taken",
+};
+
+function EccStageRow({ stage }: { stage: WorkflowStageResult }) {
+  const meta = ECC_STATUS_ICONS[stage.status] ?? { icon: Clock, color: "text-muted-foreground" };
+  const Icon = meta.icon;
+  const label = ECC_STAGE_LABELS[stage.stageId] ?? stage.label;
+  const actuals = stage.actuals as Record<string, unknown>;
+  const detail = actuals.actionSummary ?? actuals.message ?? actuals.messagePreview ?? actuals.topicName ?? null;
+  return (
+    <div className="flex items-start gap-2 py-1.5 border-b border-border/50 last:border-0">
+      <Icon className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", meta.color, (stage.status as string) === "running" && "animate-spin")} />
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium">{label}</span>
+        {detail && typeof detail === "string" && (
+          <p className="text-xs text-muted-foreground truncate mt-0.5">{detail.slice(0, 120)}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EccRunsTab({ agentId, initialRunId }: { agentId: string; initialRunId?: string | null }) {
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId ?? null);
+
+  const runsQuery = useQuery({
+    queryKey: ["ecc-workflow-runs", agentId],
+    queryFn: () => workflowRunsApi.listByAgent(agentId, 50),
+    refetchInterval: 15_000,
+  });
+
+  const detailQuery = useQuery({
+    queryKey: ["ecc-workflow-runs", "detail", selectedRunId],
+    queryFn: () => workflowRunsApi.getEcc(selectedRunId!),
+    enabled: !!selectedRunId,
+    staleTime: 30_000,
+  });
+
+  const runs = runsQuery.data ?? [];
+
+  if (runsQuery.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (runs.length === 0) return <p className="text-sm text-muted-foreground">No runs yet.</p>;
+
+  const effectiveRunId = selectedRunId ?? runs[0]?.id ?? null;
+  if (effectiveRunId && !selectedRunId) setSelectedRunId(effectiveRunId);
+
+  const selectedRun = runs.find((r) => r.id === effectiveRunId) ?? null;
+  const stages = detailQuery.data?.stages ?? [];
+
+  function durLabel(run: WorkflowRun): string | null {
+    if (!run.finishedAt) return null;
+    const ms = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+    return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  return (
+    <div className="flex gap-4 min-h-0">
+      {/* Left: run list */}
+      <div className="w-64 shrink-0 border border-border overflow-y-auto">
+        {runs.map((run) => {
+          const meta = ECC_STATUS_ICONS[run.overallStatus] ?? { icon: Clock, color: "text-muted-foreground" };
+          const Icon = meta.icon;
+          const isActive = run.id === effectiveRunId;
+          return (
+            <button
+              key={run.id}
+              onClick={() => setSelectedRunId(run.id)}
+              className={cn(
+                "w-full text-left flex items-start gap-2 px-3 py-2.5 border-b border-border last:border-0 transition-colors",
+                isActive ? "bg-accent/40" : "hover:bg-accent/20"
+              )}
+            >
+              <Icon className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", meta.color, run.overallStatus === "running" && "animate-spin")} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-[11px] text-muted-foreground">{run.id.slice(0, 8)}</span>
+                  {durLabel(run) && <span className="text-[11px] text-muted-foreground">{durLabel(run)}</span>}
+                </div>
+                <span className="text-[11px] text-muted-foreground">{relativeTime(run.startedAt)}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Right: stage detail */}
+      <div className="flex-1 min-w-0 border border-border p-4 overflow-y-auto">
+        {!selectedRun && <p className="text-sm text-muted-foreground">Select a run.</p>}
+        {selectedRun && (
+          <>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="font-mono text-xs text-muted-foreground">{selectedRun.id.slice(0, 8)}</span>
+              <span className="text-xs text-muted-foreground">{relativeTime(selectedRun.startedAt)}</span>
+              {durLabel(selectedRun) && <span className="text-xs text-muted-foreground">{durLabel(selectedRun)}</span>}
+            </div>
+            {detailQuery.isLoading && <p className="text-xs text-muted-foreground">Loading stages…</p>}
+            {stages.length > 0 && (
+              <div>
+                {stages.map((s) => <EccStageRow key={s.id} stage={s} />)}
+              </div>
+            )}
+            {!detailQuery.isLoading && stages.length === 0 && (
+              <p className="text-xs text-muted-foreground">No stages recorded.</p>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

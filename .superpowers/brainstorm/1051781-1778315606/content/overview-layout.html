@@ -1,0 +1,114 @@
+<h2>Founder Overview — Layout Options</h2>
+<p class="subtitle">Which structure works best for seeing companies + agents + conversations in one place?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Two-column split</h3>
+      <p>Left 60%: Company cards (enhanced with topic state + active agents) + Needs Attention table. Right 40%: Live conversations feed, compact cards, scrollable. Conversations tab becomes optional shortcut.</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">Preview</div>
+        <div class="mockup-body" style="display:flex;gap:12px;padding:12px;min-height:200px">
+          <div style="flex:3;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Companies</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
+              <div class="placeholder" style="height:60px;border-radius:6px;font-size:10px;display:flex;align-items:flex-start;flex-direction:column;justify-content:space-between;padding:8px">
+                <span style="font-weight:600">Innotrack</span>
+                <span style="opacity:.5;font-size:9px">21 open · 1 blocked · 2 agents active</span>
+              </div>
+              <div class="placeholder" style="height:60px;border-radius:6px;font-size:10px;display:flex;align-items:flex-start;flex-direction:column;justify-content:space-between;padding:8px">
+                <span style="font-weight:600">Develtech</span>
+                <span style="opacity:.5;font-size:9px">9 open · 1 blocked · 1 agent active</span>
+              </div>
+            </div>
+            <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase;margin-top:4px">Needs Attention</div>
+            <div class="placeholder" style="height:80px;border-radius:6px;font-size:9px;opacity:.6;padding:8px">INN-13 · Add WebSocket … blocked<br/>DEV-69 · Email triage … blocked</div>
+          </div>
+          <div style="flex:2;display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Conversations</div>
+            <div class="placeholder" style="flex:1;border-radius:6px;font-size:9px;opacity:.6;padding:8px;display:flex;flex-direction:column;gap:6px">
+              <div>✅ Innotrack tender · 2m ago</div>
+              <div>✅ Rockdog client · 15m ago</div>
+              <div>⏱ Life · 1h ago</div>
+              <div style="opacity:.4">…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Company-first dashboard</h3>
+      <p>Full-width compact company status bar at top (one row per company: name, open/blocked, active agents, latest conversation snippet). Below: Needs Attention table + recent conversations side by side.</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">Preview</div>
+        <div class="mockup-body" style="display:flex;flex-direction:column;gap:8px;padding:12px;min-height:200px">
+          <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Companies</div>
+          <div style="display:flex;flex-direction:column;gap:4px">
+            <div class="placeholder" style="border-radius:6px;padding:6px 10px;display:flex;align-items:center;gap:12px;font-size:9px">
+              <span style="font-weight:600;min-width:70px">Innotrack</span>
+              <span style="opacity:.5">21 open · 1 blocked</span>
+              <span style="color:#3b82f6">2 agents running</span>
+              <span style="opacity:.5;margin-left:auto">Tender analysis — 2m ago</span>
+            </div>
+            <div class="placeholder" style="border-radius:6px;padding:6px 10px;display:flex;align-items:center;gap:12px;font-size:9px">
+              <span style="font-weight:600;min-width:70px">Develtech</span>
+              <span style="opacity:.5">9 open · 1 blocked</span>
+              <span style="color:#3b82f6">1 agent running</span>
+              <span style="opacity:.5;margin-left:auto">Dev sprint planning — 1h ago</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex:1">
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Needs Attention</div>
+              <div class="placeholder" style="flex:1;border-radius:6px;font-size:9px;opacity:.6;padding:8px">INN-13 blocked<br/>DEV-69 blocked</div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;gap:4px">
+              <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Recent Conversations</div>
+              <div class="placeholder" style="flex:1;border-radius:6px;font-size:9px;opacity:.6;padding:8px">✅ Innotrack tender<br/>✅ Rockdog client<br/>⏱ Life</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Rich company cards + side feed</h3>
+      <p>Company cards expanded: each shows topic state summary, active agents (with names), blocked count. Right sidebar: live conversation feed. No separate "Needs Attention" section — blocked issues shown inside each company card.</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header">Preview</div>
+        <div class="mockup-body" style="display:flex;gap:12px;padding:12px;min-height:200px">
+          <div style="flex:3;display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Companies</div>
+            <div class="placeholder" style="border-radius:6px;padding:8px;font-size:9px;display:flex;flex-direction:column;gap:4px">
+              <div style="font-weight:600;font-size:10px">Innotrack</div>
+              <div style="opacity:.5">Topics: Tender pipeline, AssetX development</div>
+              <div style="color:#3b82f6">Agents: CEO agent (active), Dev agent (idle)</div>
+              <div style="color:#ef4444">⚠ INN-13 blocked</div>
+            </div>
+            <div class="placeholder" style="border-radius:6px;padding:8px;font-size:9px;display:flex;flex-direction:column;gap:4px">
+              <div style="font-weight:600;font-size:10px">Develtech</div>
+              <div style="opacity:.5">Topics: Paperclip v3, Client work</div>
+              <div style="color:#3b82f6">Agents: CEO agent (active)</div>
+              <div style="color:#ef4444">⚠ DEV-69 blocked</div>
+            </div>
+          </div>
+          <div style="flex:2;display:flex;flex-direction:column;gap:6px">
+            <div style="font-size:10px;font-weight:600;letter-spacing:.08em;opacity:.5;text-transform:uppercase">Live Conversations</div>
+            <div class="placeholder" style="flex:1;border-radius:6px;font-size:9px;opacity:.6;padding:8px;display:flex;flex-direction:column;gap:6px">
+              <div>✅ Tender landed from Ukusiza…<br/><span style="opacity:.5">Innotrack · 2m ago</span></div>
+              <div style="border-top:1px solid rgba(255,255,255,.1);padding-top:6px">✅ Bug from Michelle: HTTP 413…<br/><span style="opacity:.5">Innotrack · 15m ago</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
