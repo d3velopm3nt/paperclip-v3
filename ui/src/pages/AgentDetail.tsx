@@ -1705,6 +1705,7 @@ function PromptsTab({
     agent.adapterType === "cursor";
 
   const isEcc = agent.adapterType === "ecc";
+  const eccHasBundle = isEcc && !!(agent.adapterConfig as Record<string, unknown>)?.instructionsBundleMode;
   const [eccDraft, setEccDraft] = useState<string | null>(null);
   const eccPersistedPrompt =
     typeof (agent.adapterConfig as Record<string, unknown>)?.systemPrompt === "string"
@@ -1716,7 +1717,8 @@ function PromptsTab({
   const { data: bundle, isLoading: bundleLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsBundle(agent.id),
     queryFn: () => agentsApi.instructionsBundle(agent.id, companyId),
-    enabled: Boolean(companyId && isLocal),
+    enabled: Boolean((companyId && isLocal) || eccHasBundle),
+    staleTime: 30_000,
   });
 
   const persistedMode = bundle?.mode ?? "managed";
@@ -1750,10 +1752,13 @@ function PromptsTab({
   const selectedFileExists = bundleMatchesDraft && fileOptions.includes(selectedOrEntryFile);
   const selectedFileSummary = bundle?.files.find((file) => file.path === selectedOrEntryFile) ?? null;
 
+  const eccFileQueryEnabled = eccHasBundle && bundle != null && fileOptions.includes(selectedOrEntryFile);
   const { data: selectedFileDetail, isLoading: fileLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsFile(agent.id, selectedOrEntryFile),
     queryFn: () => agentsApi.instructionsFile(agent.id, selectedOrEntryFile, companyId),
-    enabled: Boolean(companyId && isLocal && selectedFileExists),
+    enabled: Boolean((companyId && isLocal && selectedFileExists) || eccFileQueryEnabled),
+    staleTime: 0,
+    gcTime: 0,
   });
 
   const updateBundle = useMutation({
@@ -1841,7 +1846,8 @@ function PromptsTab({
   }, [visibleFilePaths]);
 
   useEffect(() => {
-    const versionKey = selectedFileExists && selectedFileDetail
+    const fileLoaded = (selectedFileExists || eccFileQueryEnabled) && selectedFileDetail;
+    const versionKey = fileLoaded
       ? `${selectedFileDetail.path}:${selectedFileDetail.content}`
       : `draft:${currentMode}:${currentRootPath}:${selectedOrEntryFile}`;
     if (awaitingRefresh) {
@@ -1855,7 +1861,7 @@ function PromptsTab({
       setDraft(null);
       lastFileVersionRef.current = versionKey;
     }
-  }, [awaitingRefresh, currentMode, currentRootPath, selectedFileDetail, selectedFileExists, selectedOrEntryFile]);
+  }, [awaitingRefresh, currentMode, currentRootPath, eccFileQueryEnabled, selectedFileDetail, selectedFileExists, selectedOrEntryFile]);
 
   useEffect(() => {
     if (!bundle) return;
@@ -1878,7 +1884,7 @@ function PromptsTab({
     };
   }, [bundle, currentEntryFile, currentMode, currentRootPath, selectedOrEntryFile]);
 
-  const currentContent = selectedFileExists ? (selectedFileDetail?.content ?? "") : "";
+  const currentContent = (selectedFileExists || eccFileQueryEnabled) ? (selectedFileDetail?.content ?? "") : "";
   const displayValue = draft ?? currentContent;
   const bundleDirty = Boolean(
     bundleDraft &&
@@ -1980,7 +1986,7 @@ function PromptsTab({
     document.body.style.userSelect = "none";
   }, [filePanelWidth]);
 
-  if (!isLocal) {
+  if (!isLocal && !eccHasBundle) {
     if (isEcc) {
       return (
         <div className="max-w-3xl space-y-4">
@@ -2329,7 +2335,7 @@ function PromptsTab({
               <div className="min-w-0">
                 <h4 className="text-sm font-medium font-mono truncate">{selectedOrEntryFile}</h4>
                 <p className="text-xs text-muted-foreground">
-                  {selectedFileExists
+                  {(selectedFileExists || eccFileQueryEnabled)
                     ? selectedFileSummary?.deprecated
                       ? "Deprecated virtual file"
                       : `${selectedFileDetail?.language ?? "text"} file`
@@ -2337,7 +2343,7 @@ function PromptsTab({
                 </p>
               </div>
             </div>
-            {selectedFileExists && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
+            {(selectedFileExists || eccFileQueryEnabled) && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
               <Button
                 type="button"
                 size="sm"
@@ -2359,7 +2365,7 @@ function PromptsTab({
             )}
           </div>
 
-          {selectedFileExists && fileLoading && !selectedFileDetail ? (
+          {(selectedFileExists || eccFileQueryEnabled) && fileLoading && !selectedFileDetail ? (
             <PromptEditorSkeleton />
           ) : isMarkdown(selectedOrEntryFile) ? (
             <MarkdownEditor
@@ -2885,14 +2891,20 @@ function EccStageRow({ stage }: { stage: WorkflowStageResult }) {
   const Icon = meta.icon;
   const label = ECC_STAGE_LABELS[stage.stageId] ?? stage.label;
   const actuals = stage.actuals as Record<string, unknown>;
-  const detail = actuals.actionSummary ?? actuals.message ?? actuals.messagePreview ?? actuals.topicName ?? null;
+  const detail = actuals.actionSummary ?? actuals.message ?? actuals.messagePreview ?? actuals.topicName
+    ?? actuals.stderr ?? actuals.error ?? null;
+  const exitCode = typeof actuals.exitCode === "number" ? actuals.exitCode : null;
+  const errorText = stage.errorText ?? null;
   return (
     <div className="flex items-start gap-2 py-1.5 border-b border-border/50 last:border-0">
       <Icon className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", meta.color, (stage.status as string) === "running" && "animate-spin")} />
       <div className="flex-1 min-w-0">
-        <span className="text-xs font-medium">{label}</span>
+        <span className="text-xs font-medium">{label}{exitCode !== null ? ` (exit ${exitCode})` : ""}</span>
         {detail && typeof detail === "string" && (
-          <p className="text-xs text-muted-foreground truncate mt-0.5">{detail.slice(0, 120)}</p>
+          <p className="text-xs text-muted-foreground mt-0.5 break-all whitespace-pre-wrap">{detail.slice(0, 300)}</p>
+        )}
+        {!detail && errorText && (
+          <p className="text-xs text-muted-foreground mt-0.5 break-all">{errorText.slice(0, 300)}</p>
         )}
       </div>
     </div>

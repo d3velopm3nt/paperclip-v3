@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { emailAccounts, emailAttachments, emailMessages } from "@paperclipai/db";
+import { emailAccounts, emailAttachments, emailMessages, issueComments, issues, agentWakeupRequests } from "@paperclipai/db";
 import { badRequest, notFound } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
 import { resolveEmailAttachmentsRoot } from "../home-paths.js";
@@ -59,6 +59,27 @@ export function emailMessageRoutes(db: Db) {
         accountLabel: labelByAccount.get(r.emailAccountId) ?? null,
       })),
     );
+  });
+
+  // GET /api/companies/:companyId/issues/:issueId/emails — emails linked to an issue (with attachments)
+  router.get("/companies/:companyId/issues/:issueId/emails", async (req, res) => {
+    const { companyId, issueId } = req.params;
+    assertCompanyAccess(req, companyId);
+    const accountIds = (await db.select({ id: emailAccounts.id }).from(emailAccounts)
+      .where(eq(emailAccounts.companyId, companyId))).map((r) => r.id);
+    if (accountIds.length === 0) { res.json([]); return; }
+
+    const msgs = await db.select().from(emailMessages)
+      .where(and(inArray(emailMessages.emailAccountId, accountIds), eq(emailMessages.issueId, issueId)))
+      .orderBy(desc(emailMessages.receivedAt));
+
+    const result = await Promise.all(msgs.map(async (msg) => {
+      const attachments = await db.select().from(emailAttachments)
+        .where(eq(emailAttachments.emailMessageId, msg.id))
+        .orderBy(emailAttachments.filename);
+      return { ...msg, attachments };
+    }));
+    res.json(result);
   });
 
   // GET /api/email-messages/:id  — includes attachments
@@ -175,6 +196,78 @@ export function emailMessageRoutes(db: Db) {
     }
 
     res.json({ html });
+  });
+
+  // PATCH /api/email-messages/:id — link to an issue (issueId)
+  router.patch("/email-messages/:id", async (req, res) => {
+    const { id } = req.params;
+    const [msg] = await db.select({ id: emailMessages.id, emailAccountId: emailMessages.emailAccountId })
+      .from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db.select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts).where(eq(emailAccounts.id, msg.emailAccountId)).limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    const prevMsg = await db.select({ issueId: emailMessages.issueId, fromAddr: emailMessages.fromAddr, subject: emailMessages.subject })
+      .from(emailMessages).where(eq(emailMessages.id, id)).limit(1).then((r) => r[0]);
+
+    const patch: Record<string, unknown> = {};
+    if ("issueId" in req.body) patch.issueId = req.body.issueId ?? null;
+    if ("approvalId" in req.body) patch.approvalId = req.body.approvalId ?? null;
+
+    const [updated] = await db.update(emailMessages).set(patch).where(eq(emailMessages.id, id)).returning();
+
+    // When issueId is set, auto-post a comment so the agent sees the linked email + attachments
+    const newIssueId = typeof patch.issueId === "string" ? patch.issueId : null;
+    if (newIssueId) {
+      const atts = await db.select({ filename: emailAttachments.filename, contentType: emailAttachments.contentType, storagePath: emailAttachments.storagePath, isInline: emailAttachments.isInline, sizeBytes: emailAttachments.sizeBytes })
+        .from(emailAttachments)
+        .where(and(eq(emailAttachments.emailMessageId, id), eq(emailAttachments.isInline, false)));
+
+      const attLines = atts.map((a) => `  - ${a.filename} (${(a.sizeBytes / 1024).toFixed(0)} KB) → \`${a.storagePath}\``).join("\n");
+      const commentBody = [
+        `📧 **Email linked:** "${prevMsg?.subject || "(no subject)"}"`,
+        `**From:** ${prevMsg?.fromAddr || "unknown"}`,
+        atts.length > 0
+          ? `\n**${atts.length} attachment${atts.length !== 1 ? "s" : ""} on disk:**\n${attLines}`
+          : "\nNo attachments.",
+        `\nUse \`list_issue_emails\` MCP tool to query these from the agent.`,
+      ].join("\n");
+
+      await db.insert(issueComments).values({
+        issueId: newIssueId,
+        companyId: account.companyId,
+        body: commentBody,
+        authorAgentId: null,
+      }).catch(() => {});
+
+      // Unblock issue — if blocked, set back to in_progress and create wakeup request
+      const [blockedIssue] = await db
+        .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+        .from(issues)
+        .where(and(eq(issues.id, newIssueId), eq(issues.status, "blocked")))
+        .limit(1);
+      if (blockedIssue) {
+        await db.update(issues)
+          .set({ status: "in_progress", updatedAt: new Date() })
+          .where(eq(issues.id, newIssueId))
+          .catch(() => {});
+        if (blockedIssue.assigneeAgentId) {
+          await db.insert(agentWakeupRequests).values({
+            companyId: account.companyId,
+            agentId: blockedIssue.assigneeAgentId,
+            source: "assignment",
+            triggerDetail: "email_linked",
+            reason: "issue_unblocked",
+            payload: { issueId: newIssueId },
+            status: "pending",
+          }).catch(() => {});
+        }
+      }
+    }
+
+    res.json(updated);
   });
 
   // DELETE /api/email-messages/:id — removes the email and all derived

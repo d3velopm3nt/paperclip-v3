@@ -29,7 +29,7 @@ type BundleMode = "managed" | "external";
 
 type AgentLike = {
   id: string;
-  companyId: string;
+  companyId: string | null;
   name: string;
   adapterConfig: unknown;
 };
@@ -131,6 +131,7 @@ function resolvePathWithinRoot(rootPath: string, relativePath: string): string {
 }
 
 function resolveManagedInstructionsRoot(agent: AgentLike): string {
+  if (!agent.companyId) throw new Error(`Cannot resolve managed instructions root for system agent ${agent.id}`);
   return path.resolve(
     resolvePaperclipInstanceRoot(),
     "companies",
@@ -247,10 +248,10 @@ function deriveBundleState(agent: AgentLike): BundleState {
       const resolvedLegacyPath = resolveLegacyInstructionsPath(legacyInstructionsPath, config);
       rootPath = path.dirname(resolvedLegacyPath);
       entryFile = path.basename(resolvedLegacyPath);
-      mode = resolvedLegacyPath.startsWith(`${resolveManagedInstructionsRoot(agent)}${path.sep}`)
+      mode = agent.companyId && (
+        resolvedLegacyPath.startsWith(`${resolveManagedInstructionsRoot(agent)}${path.sep}`)
         || resolvedLegacyPath === path.join(resolveManagedInstructionsRoot(agent), entryFile)
-        ? "managed"
-        : "external";
+      ) ? "managed" : "external";
       if (!path.isAbsolute(legacyInstructionsPath)) {
         warnings.push("Using legacy relative instructionsFilePath; migrate this agent to a managed or absolute external bundle.");
       }
@@ -274,6 +275,7 @@ function deriveBundleState(agent: AgentLike): BundleState {
 }
 
 async function recoverManagedBundleState(agent: AgentLike, state: BundleState): Promise<BundleState> {
+  if (!agent.companyId) return state;
   const managedRootPath = resolveManagedInstructionsRoot(agent);
   const stat = await statIfExists(managedRootPath);
   if (!stat?.isDirectory()) return state;
@@ -347,10 +349,10 @@ function toBundle(agent: AgentLike, state: BundleState, files: AgentInstructions
   nextFiles.sort((left, right) => left.path.localeCompare(right.path));
   return {
     agentId: agent.id,
-    companyId: agent.companyId,
+    companyId: agent.companyId ?? "",
     mode: state.mode,
     rootPath: state.rootPath,
-    managedRootPath: resolveManagedInstructionsRoot(agent),
+    managedRootPath: agent.companyId ? resolveManagedInstructionsRoot(agent) : "",
     entryFile: state.entryFile,
     resolvedEntryPath: state.resolvedEntryPath,
     editable: Boolean(state.rootPath),
@@ -444,10 +446,10 @@ export function syncInstructionsBundleConfigFromFilePath(
   const resolvedPath = resolveLegacyInstructionsPath(instructionsFilePath, adapterConfig);
   const rootPath = path.dirname(resolvedPath);
   const entryFile = path.basename(resolvedPath);
-  const mode: BundleMode = resolvedPath.startsWith(`${resolveManagedInstructionsRoot(agent)}${path.sep}`)
+  const mode: BundleMode = agent.companyId && (
+    resolvedPath.startsWith(`${resolveManagedInstructionsRoot(agent)}${path.sep}`)
     || resolvedPath === path.join(resolveManagedInstructionsRoot(agent), entryFile)
-    ? "managed"
-    : "external";
+  ) ? "managed" : "external";
   return applyBundleConfig(next, { mode, rootPath, entryFile });
 }
 

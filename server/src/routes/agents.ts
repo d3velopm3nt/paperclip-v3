@@ -1574,7 +1574,6 @@ export function agentRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    if (!requireCompanyAgent(existing, res)) return;
     await assertCanReadAgent(req, existing);
     res.json(await instructions.getBundle(existing));
   });
@@ -1586,16 +1585,13 @@ export function agentRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    if (!requireCompanyAgent(existing, res)) return;
     await assertCanManageInstructionsPath(req, existing);
 
     const actor = getActorInfo(req);
     const { bundle, adapterConfig } = await instructions.updateBundle(existing, req.body);
-    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
-      existing.companyId,
-      adapterConfig,
-      { strictMode: strictSecretsMode },
-    );
+    const normalizedAdapterConfig = existing.companyId
+      ? await secretsSvc.normalizeAdapterConfigForPersistence(existing.companyId, adapterConfig, { strictMode: strictSecretsMode })
+      : adapterConfig;
     await svc.update(
       id,
       { adapterConfig: normalizedAdapterConfig },
@@ -1608,22 +1604,24 @@ export function agentRoutes(db: Db) {
       },
     );
 
-    await logActivity(db, {
-      companyId: existing.companyId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "agent.instructions_bundle_updated",
-      entityType: "agent",
-      entityId: existing.id,
-      details: {
-        mode: bundle.mode,
-        rootPath: bundle.rootPath,
-        entryFile: bundle.entryFile,
-        clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate === true,
-      },
-    });
+    if (existing.companyId) {
+      await logActivity(db, {
+        companyId: existing.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "agent.instructions_bundle_updated",
+        entityType: "agent",
+        entityId: existing.id,
+        details: {
+          mode: bundle.mode,
+          rootPath: bundle.rootPath,
+          entryFile: bundle.entryFile,
+          clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate === true,
+        },
+      });
+    }
 
     res.json(bundle);
   });
@@ -1635,7 +1633,6 @@ export function agentRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    if (!requireCompanyAgent(existing, res)) return;
     await assertCanReadAgent(req, existing);
 
     const relativePath = typeof req.query.path === "string" ? req.query.path : "";
@@ -1654,18 +1651,15 @@ export function agentRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    if (!requireCompanyAgent(existing, res)) return;
     await assertCanManageInstructionsPath(req, existing);
 
     const actor = getActorInfo(req);
     const result = await instructions.writeFile(existing, req.body.path, req.body.content, {
       clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate,
     });
-    const normalizedAdapterConfig = await secretsSvc.normalizeAdapterConfigForPersistence(
-      existing.companyId,
-      result.adapterConfig,
-      { strictMode: strictSecretsMode },
-    );
+    const normalizedAdapterConfig = existing.companyId
+      ? await secretsSvc.normalizeAdapterConfigForPersistence(existing.companyId, result.adapterConfig, { strictMode: strictSecretsMode })
+      : result.adapterConfig;
     await svc.update(
       id,
       { adapterConfig: normalizedAdapterConfig },
@@ -1678,21 +1672,23 @@ export function agentRoutes(db: Db) {
       },
     );
 
-    await logActivity(db, {
-      companyId: existing.companyId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "agent.instructions_file_updated",
-      entityType: "agent",
-      entityId: existing.id,
-      details: {
-        path: result.file.path,
-        size: result.file.size,
-        clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate === true,
-      },
-    });
+    if (existing.companyId) {
+      await logActivity(db, {
+        companyId: existing.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "agent.instructions_file_updated",
+        entityType: "agent",
+        entityId: existing.id,
+        details: {
+          path: result.file.path,
+          size: result.file.size,
+          clearLegacyPromptTemplate: req.body.clearLegacyPromptTemplate === true,
+        },
+      });
+    }
 
     res.json(result.file);
   });
@@ -1704,7 +1700,6 @@ export function agentRoutes(db: Db) {
       res.status(404).json({ error: "Agent not found" });
       return;
     }
-    if (!requireCompanyAgent(existing, res)) return;
     await assertCanManageInstructionsPath(req, existing);
 
     const relativePath = typeof req.query.path === "string" ? req.query.path : "";
@@ -1715,19 +1710,21 @@ export function agentRoutes(db: Db) {
 
     const actor = getActorInfo(req);
     const result = await instructions.deleteFile(existing, relativePath);
-    await logActivity(db, {
-      companyId: existing.companyId,
-      actorType: actor.actorType,
-      actorId: actor.actorId,
-      agentId: actor.agentId,
-      runId: actor.runId,
-      action: "agent.instructions_file_deleted",
-      entityType: "agent",
-      entityId: existing.id,
-      details: {
-        path: relativePath,
-      },
-    });
+    if (existing.companyId) {
+      await logActivity(db, {
+        companyId: existing.companyId,
+        actorType: actor.actorType,
+        actorId: actor.actorId,
+        agentId: actor.agentId,
+        runId: actor.runId,
+        action: "agent.instructions_file_deleted",
+        entityType: "agent",
+        entityId: existing.id,
+        details: {
+          path: relativePath,
+        },
+      });
+    }
 
     res.json(result.bundle);
   });

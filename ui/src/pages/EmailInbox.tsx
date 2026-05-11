@@ -1,8 +1,9 @@
 // v3: inbox view of processed inbound email for the selected company.
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@/lib/router";
+import { Link, useNavigate } from "@/lib/router";
 import { useToast } from "../context/ToastContext";
+import { issuesApi } from "../api/issues";
 import { useConfirm } from "../components/ConfirmDialogProvider";
 import {
   emailMessagesApi,
@@ -20,6 +21,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { FolderSelector, type FolderSelection } from "../components/FolderSelector";
 import {
   Inbox as InboxIcon,
+  Link2,
   Mail,
   Paperclip,
   RefreshCw,
@@ -457,13 +459,13 @@ function AttachmentRow({ messageId, att, companyId }: {
 }
 
 function EmailBodyRenderer({ messageId, plainBody }: { messageId: string; plainBody: string }) {
+  const isDark = document.documentElement.classList.contains("dark");
   const { data, isLoading } = useQuery({
     queryKey: ["email-html", messageId],
     queryFn: () => emailMessagesApi.getHtml(messageId),
   });
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Auto-size iframe to content height
   const handleIframeLoad = () => {
     const frame = iframeRef.current;
     if (!frame?.contentDocument?.body) return;
@@ -475,21 +477,27 @@ function EmailBodyRenderer({ messageId, plainBody }: { messageId: string; plainB
   }
 
   if (data?.html) {
-    // Sandboxed iframe: allow-same-origin for image loading, NO allow-scripts
-    const darkStyles = `<style>
-      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: #e5e5e5; background: transparent; margin: 0; padding: 16px; word-break: break-word; }
-      a { color: #60a5fa; } img { max-width: 100%; height: auto; }
+    const bg = isDark ? "#141414" : "#ffffff";
+    const fg = isDark ? "#e5e5e5" : "#111111";
+    const link = isDark ? "#60a5fa" : "#2563eb";
+    const overrides = isDark
+      ? "html { background: #141414 !important; } body { background: #141414 !important; color: #e5e5e5; } table, td, th { background-color: transparent !important; }"
+      : "";
+    const injected = `<style>
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; color: ${fg}; margin: 0; padding: 16px; word-break: break-word; }
+      a { color: ${link}; } img { max-width: 100%; height: auto; }
+      ${overrides}
     </style>`;
-    const srcDoc = `<!DOCTYPE html><html><head>${darkStyles}</head><body>${data.html}</body></html>`;
+    const srcDoc = `<!DOCTYPE html><html><head>${injected}</head><body>${data.html}</body></html>`;
     return (
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden" style={{ background: bg }}>
         <iframe
           ref={iframeRef}
           srcDoc={srcDoc}
           sandbox="allow-same-origin"
           title="Email body"
           className="w-full min-h-32 border-0"
-          style={{ height: "400px" }}
+          style={{ height: "400px", background: bg }}
           onLoad={handleIframeLoad}
         />
       </Card>
@@ -497,8 +505,8 @@ function EmailBodyRenderer({ messageId, plainBody }: { messageId: string; plainB
   }
 
   return (
-    <Card className="p-4">
-      <pre className="text-sm whitespace-pre-wrap break-words font-sans">{plainBody || "(empty body)"}</pre>
+    <Card className="p-4 bg-muted/30">
+      <pre className="text-sm whitespace-pre-wrap break-words font-sans text-foreground">{plainBody || "(empty body)"}</pre>
     </Card>
   );
 }
@@ -523,9 +531,49 @@ function MessageDetail({
   companyId: string;
 }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  const { pushToast } = useToast();
+  const [linkOpen, setLinkOpen] = useState(false);
+  const [issueSearch, setIssueSearch] = useState("");
+
+  const issuesQuery = useQuery({
+    queryKey: ["issues", "list", companyId],
+    queryFn: () => issuesApi.list(companyId),
+    enabled: linkOpen,
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: ({ id, issueId }: { id: string; issueId: string | null }) =>
+      emailMessagesApi.linkToIssue(id, issueId),
+    onSuccess: (_data, vars) => {
+      pushToast({ tone: "success", title: vars.issueId ? "Linked to issue" : "Issue link removed" });
+      qc.invalidateQueries({ queryKey: ["email-messages", "detail", vars.id] });
+      setLinkOpen(false);
+    },
+    onError: (err: Error) => pushToast({ tone: "warn", title: "Failed", body: err.message }),
+  });
+
   if (loading || !detail) {
     return <div className="p-6 text-sm text-muted-foreground">Loading…</div>;
   }
+
+  const filteredIssues = (issuesQuery.data ?? [])
+    .filter((issue) => {
+      if (!issueSearch.trim()) return true;
+      const q = issueSearch.toLowerCase();
+      return (
+        issue.title.toLowerCase().includes(q) ||
+        (issue.identifier ?? "").toLowerCase().includes(q)
+      );
+    })
+    .sort((a, b) => {
+      // Sort by identifier number descending (DEV-87 before DEV-86)
+      const numA = parseInt((a.identifier ?? "").replace(/\D/g, "") || "0", 10);
+      const numB = parseInt((b.identifier ?? "").replace(/\D/g, "") || "0", 10);
+      return numB - numA;
+    })
+    .slice(0, 100);
+
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
@@ -533,6 +581,14 @@ function MessageDetail({
           <ArrowLeft className="h-4 w-4 mr-1" /> Back
         </Button>
         <div className="flex items-center gap-2 ml-auto">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setIssueSearch(""); setLinkOpen(true); }}
+          >
+            <Link2 className="h-3.5 w-3.5 mr-1" />
+            {detail.issueId ? "Re-link Issue" : "Link to Issue"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -610,7 +666,22 @@ function MessageDetail({
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {detail.issueId && (
             <span className="inline-flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3" /> Linked to issue {detail.issueId.slice(0, 8)}
+              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+              Linked to issue{" "}
+              <Link
+                to={`/issues/${detail.issueId}`}
+                className="font-mono hover:underline text-foreground"
+              >
+                {detail.issueId.slice(0, 8)}
+              </Link>
+              <button
+                className="ml-1 text-muted-foreground/60 hover:text-destructive transition-colors"
+                title="Remove link"
+                onClick={() => linkMutation.mutate({ id: detail.id, issueId: null })}
+                disabled={linkMutation.isPending}
+              >
+                ×
+              </button>
             </span>
           )}
           {detail.approvalId && (
@@ -620,6 +691,56 @@ function MessageDetail({
           )}
         </div>
       )}
+
+      {/* Link to Issue dialog */}
+      <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <Link2 className="h-4 w-4" />
+              Link email to issue
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Search issues…"
+              value={issueSearch}
+              onChange={(e) => setIssueSearch(e.target.value)}
+              className="h-8 text-sm"
+              autoFocus
+            />
+            <div className="max-h-72 overflow-y-auto divide-y divide-border rounded-md border border-border">
+              {issuesQuery.isLoading ? (
+                <p className="p-3 text-xs text-muted-foreground">Loading…</p>
+              ) : filteredIssues.length === 0 ? (
+                <p className="p-3 text-xs text-muted-foreground">No issues found.</p>
+              ) : (
+                filteredIssues.map((issue) => (
+                  <button
+                    key={issue.id}
+                    className="w-full text-left px-3 py-2 text-sm hover:bg-accent/40 transition-colors flex items-center gap-2"
+                    onClick={() => linkMutation.mutate({ id: detail.id, issueId: issue.id })}
+                    disabled={linkMutation.isPending}
+                  >
+                    <span className="font-mono text-xs text-muted-foreground shrink-0 w-14">
+                      {issue.identifier ?? issue.id.slice(0, 8)}
+                    </span>
+                    <span
+                      className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full ${STATE_COLORS[issue.status] ?? "bg-muted text-muted-foreground"}`}
+                    >
+                      {issue.status}
+                    </span>
+                    <span className="truncate">{issue.title}</span>
+                  </button>
+                ))
+              )}
+            </div>
+            {linkMutation.isPending && (
+              <p className="text-xs text-muted-foreground">Saving…</p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

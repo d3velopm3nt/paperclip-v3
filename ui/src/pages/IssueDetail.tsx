@@ -3,6 +3,7 @@ import { pickTextColorForPillBg } from "@/lib/color-contrast";
 import { Link, useLocation, useNavigate, useParams } from "@/lib/router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { issuesApi } from "../api/issues";
+import { emailMessagesApi } from "../api/emailMessages";
 import { activityApi } from "../api/activity";
 import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
@@ -44,9 +45,11 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Download,
   EyeOff,
   Hexagon,
   ListTree,
+  Mail,
   MessageSquare,
   MoreHorizontal,
   Paperclip,
@@ -210,6 +213,7 @@ export function IssueDetail() {
   const [detailTab, setDetailTab] = useState("comments");
   const [secondaryOpen, setSecondaryOpen] = useState({
     approvals: false,
+    emails: false,
   });
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [attachmentDragActive, setAttachmentDragActive] = useState(false);
@@ -252,6 +256,12 @@ export function IssueDetail() {
     queryKey: queryKeys.issues.attachments(issueId!),
     queryFn: () => issuesApi.listAttachments(issueId!),
     enabled: !!issueId,
+  });
+
+  const { data: linkedEmails } = useQuery({
+    queryKey: ["issues", issueId, "emails"],
+    queryFn: () => emailMessagesApi.listForIssue(resolvedCompanyId!, issueId!),
+    enabled: !!issueId && !!resolvedCompanyId,
   });
 
   const { data: liveRuns } = useQuery({
@@ -1180,6 +1190,80 @@ export function IssueDetail() {
         </Collapsible>
       )}
 
+
+      {linkedEmails && linkedEmails.length > 0 && (
+        <Collapsible
+          open={secondaryOpen.emails}
+          onOpenChange={(open) => setSecondaryOpen((prev) => ({ ...prev, emails: open }))}
+          className="rounded-lg border border-border"
+        >
+          <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2 text-left">
+            <span className="text-sm font-medium text-muted-foreground">
+              Linked Emails ({linkedEmails.length})
+            </span>
+            <ChevronDown
+              className={cn("h-4 w-4 text-muted-foreground transition-transform", secondaryOpen.emails && "rotate-180")}
+            />
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="border-t border-border divide-y divide-border">
+              {linkedEmails.map((email) => (
+                <div key={email.id} className="px-3 py-2.5 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <Mail className="h-3.5 w-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{email.subject || "(no subject)"}</p>
+                      <p className="text-[11px] text-muted-foreground truncate">
+                        {email.fromAddr} · {relativeTime(email.receivedAt)}
+                      </p>
+                    </div>
+                  </div>
+                  {email.attachments && email.attachments.length > 0 && (
+                    <div className="pl-5 space-y-1.5">
+                      <div className="flex flex-wrap gap-2">
+                        {email.attachments.filter((a) => !a.isInline).map((att) => {
+                          const isImage = att.contentType.startsWith("image/");
+                          const url = emailMessagesApi.attachmentUrl(email.id, att.id, isImage);
+                          return (
+                            <div key={att.id} className="flex flex-col gap-1">
+                              {isImage ? (
+                                <a href={url} target="_blank" rel="noreferrer" title={att.filename}>
+                                  <img
+                                    src={url}
+                                    alt={att.filename}
+                                    className="h-20 w-20 rounded border border-border object-cover bg-accent/10"
+                                    loading="lazy"
+                                  />
+                                </a>
+                              ) : (
+                                <a
+                                  href={emailMessagesApi.attachmentUrl(email.id, att.id)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-border rounded px-2 py-1"
+                                  title={att.filename}
+                                >
+                                  <Download className="h-3 w-3 shrink-0" />
+                                  <span className="truncate max-w-[120px]">{att.filename}</span>
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {email.attachments.filter((a) => !a.isInline).length > 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {email.attachments.filter((a) => !a.isInline).length} attachment{email.attachments.filter((a) => !a.isInline).length !== 1 ? "s" : ""}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
       {/* Mobile properties drawer */}
       <Sheet open={mobilePropsOpen} onOpenChange={setMobilePropsOpen}>

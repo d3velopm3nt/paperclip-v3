@@ -297,12 +297,47 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     },
   }), "utf-8");
 
-  const dbPrompt = (activeEccAgent?.adapterConfig as Record<string, unknown> | null)?.systemPrompt;
-  if (typeof dbPrompt !== "string" || dbPrompt.length === 0) {
-    logger.warn({ companyId, platform: input.platform }, "orchestrator: ECC agent has no system prompt in DB — run will use Claude defaults");
+  const adapterCfg = (activeEccAgent?.adapterConfig as Record<string, unknown> | null) ?? {};
+  const instructionsFilePath = typeof adapterCfg.instructionsFilePath === "string" && adapterCfg.instructionsFilePath
+    ? adapterCfg.instructionsFilePath : null;
+
+  let systemPrompt = "";
+  if (instructionsFilePath) {
+    try {
+      systemPrompt = await fs.readFile(instructionsFilePath, "utf-8");
+      logger.info({ agentId: activeEccAgent?.id, instructionsFilePath }, "orchestrator: loaded instructions from file");
+    } catch (err) {
+      logger.warn({ instructionsFilePath, err }, "orchestrator: failed to read instructions file — falling back to systemPrompt");
+    }
   }
-  const systemPrompt = typeof dbPrompt === "string" && dbPrompt.length > 0 ? dbPrompt : "";
-  await fs.writeFile(promptPath, systemPrompt, "utf-8");
+  if (!systemPrompt) {
+    // Legacy fallback: systemPrompt text blob in adapterConfig
+    const dbPrompt = adapterCfg.systemPrompt;
+    systemPrompt = typeof dbPrompt === "string" && dbPrompt.length > 0 ? dbPrompt : "";
+    if (!systemPrompt) {
+      logger.warn({ companyId, platform: input.platform }, "orchestrator: no instructions found — run will use Claude defaults");
+    }
+  }
+  // Inject agent memories into system prompt (same pattern as heartbeat service)
+  let memorySection = "";
+  if (activeEccAgent) {
+    try {
+      const { memoryLoaderService } = await import("./agent-runtime/memory-loader.js");
+      const memoryLoader = memoryLoaderService(db);
+      const memories = await memoryLoader.loadMemories(activeEccAgent.id);
+      if (memories.length > 0) {
+        memorySection = `\n\n---\n\n# Your Memories\n\nThese are your accumulated learnings. Use them to inform your work.\n\n${
+          memories
+            .map((m) => `## ${m.title}\n**Category:** ${m.category} | **Source:** ${m.source} | **Scope:** ${m.scope}\n\n${m.content}`)
+            .join("\n\n---\n\n")
+        }`;
+        logger.info({ agentId: activeEccAgent.id, memoryCount: memories.length }, "orchestrator: injected agent memories");
+      }
+    } catch (memErr) {
+      logger.warn({ err: memErr, agentId: activeEccAgent.id }, "orchestrator: failed to load agent memories");
+    }
+  }
+  await fs.writeFile(promptPath, systemPrompt + memorySection, "utf-8");
 
   const agentMeta = (activeEccAgent?.metadata ?? {}) as EccAgentMetadata;
   const existingSessionId = agentMeta.claudeSessionId;
@@ -332,40 +367,46 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   if (activeEccAgent) await eccSvc.setProcessing(activeEccAgent.id, "", "", messagePreview).catch(() => {});
 
   const spawnStart = new Date();
-  let stderr = "";
-  let stdout = "";
   let shouldClearSession = false;
+  let stdout = "";
+
+  const STALE_SESSION_RE = /session.*not found|no conversation found|invalid.*session|could not resume|no such session|session.*expired|failed to resume|unknown session|conversation.*not found/i;
+
+  const spawnClaude = (spawnArgs: string[]) =>
+    new Promise<{ stdout: string; stderr: string; exitCode: number }>((resolve) => {
+      let out = "", err = "";
+      const proc = spawn("claude", spawnArgs, { stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
+      proc.stdin.write(stdin);
+      proc.stdin.end();
+      proc.stderr.on("data", (chunk: Buffer) => { err += chunk.toString(); });
+      proc.stdout.on("data", (chunk: Buffer) => { out += chunk.toString(); });
+      proc.on("close", (code) => resolve({ stdout: out, stderr: err, exitCode: code ?? 0 }));
+    });
 
   try {
-    const proc = spawn("claude", args, { stdio: ["pipe", "pipe", "pipe"], cwd: os.tmpdir() });
-    proc.stdin.write(stdin);
-    proc.stdin.end();
+    let result = await spawnClaude(args);
 
-    proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    // Session expired → strip --resume and retry immediately so user still gets a reply
+    if (existingSessionId && STALE_SESSION_RE.test(result.stderr)) {
+      shouldClearSession = true;
+      logger.warn({ agentId: activeEccAgent?.id, sessionId: existingSessionId }, "orchestrator: stale session — retrying without --resume");
+      const resumeIdx = args.indexOf("--resume");
+      const freshArgs = resumeIdx >= 0 ? [...args.slice(0, resumeIdx), ...args.slice(resumeIdx + 2)] : args;
+      result = await spawnClaude(freshArgs);
+    }
 
-    let exitCode = 0;
-    await new Promise<void>((resolve) => {
-      proc.on("close", (code) => {
-        exitCode = code ?? 0;
-        if (code !== 0) {
-          logger.warn({ code, stderr: stderr.slice(0, 500), companyId }, "orchestrator: claude exited non-zero");
-        } else {
-          logger.info({ companyId, platform: input.platform }, "orchestrator: complete");
-        }
-        resolve();
-      });
-    });
+    const { stdout: out, stderr, exitCode } = result;
+    stdout = out;
+
+    if (exitCode !== 0) {
+      logger.warn({ code: exitCode, stderr: stderr.slice(0, 500), companyId }, "orchestrator: claude exited non-zero");
+    } else {
+      logger.info({ companyId, platform: input.platform }, "orchestrator: complete");
+    }
 
     // Log stderr even on exit 0 so we can diagnose silent failures
     if (stderr.trim()) {
       logger.info({ companyId, exitCode, stderr: stderr.slice(0, 500) }, "orchestrator: claude stderr");
-    }
-
-    // Detect stale/invalid session from stderr so we clear it before next run
-    if (existingSessionId && /session.*not found|invalid.*session|could not resume|no such session|session.*expired|failed to resume|unknown session/i.test(stderr)) {
-      shouldClearSession = true;
-      logger.warn({ agentId: activeEccAgent?.id, sessionId: existingSessionId }, "orchestrator: stale session detected in stderr — will clear");
     }
 
     // If Claude exited non-zero and run is still running, mark it failed

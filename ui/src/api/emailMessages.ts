@@ -70,4 +70,8 @@ export const emailMessagesApi = {
       deletedComments: number;
       deletedIssue: boolean;
     }>(`/email-messages/${encodeURIComponent(id)}`),
+  listForIssue: (companyId: string, issueId: string) =>
+    api.get<EmailMessageDetail[]>(`/companies/${encodeURIComponent(companyId)}/issues/${encodeURIComponent(issueId)}/emails`),
+  linkToIssue: (id: string, issueId: string | null) =>
+    api.patch<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}`, { issueId }),
 };

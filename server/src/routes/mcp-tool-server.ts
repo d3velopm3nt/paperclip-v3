@@ -5,12 +5,15 @@ import { agents, agentMemories, issues, projects, activityLog, emailMessages, em
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
+import { issueService } from "../services/issues.js";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { eccConversationsService } from "../services/ecc-conversations.js";
+import type { ConversationMessage } from "../services/ecc-conversations.js";
 import { eccAgentsService } from "../services/ecc-agents.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
+import { notifyOperatorTelegram } from "../services/telegram-polling.js";
 import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
 import { readInstanceToken } from "../services/instance-token-store.js";
 
@@ -295,6 +298,17 @@ const TOOLS = [
     },
   },
   {
+    name: "list_issue_emails",
+    description: "List emails linked to an issue. Returns sender, subject, body preview, and attachment file paths on disk so the agent can read them directly.",
+    inputSchema: {
+      type: "object",
+      required: ["issueId"],
+      properties: {
+        issueId: { type: "string", description: "UUID of the issue" },
+      },
+    },
+  },
+  {
     name: "list_companies",
     description: "List all companies you have access to. Returns id, name, and slug for each. Use the id to query issues, clients, or projects for a specific company.",
     inputSchema: { type: "object", properties: {} },
@@ -539,6 +553,11 @@ async function handleTool(
       action: "issue.updated", entityType: "issue", entityId: issueId,
       agentId: callerAgentId, details: { patch, via: "mcp-chat" },
     });
+
+    // Notify operator when agent sets status to blocked
+    if (patch.status === "blocked") {
+      await notifyOperatorTelegram(db, `🚫 Issue blocked: *${updated.title ?? issueId}*\n\nID: \`${updated.identifier ?? issueId}\``).catch(() => {});
+    }
 
     return JSON.stringify(updated, null, 2);
   }
@@ -822,14 +841,8 @@ async function handleTool(
 
     // Auto-notify operator so JayJay sees the plan without waiting for notify_operator
     try {
-      const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-      const [tgSettings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
-      const tgGeneral = (tgSettings?.general ?? {}) as Record<string, unknown>;
-      const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
-      if (token && chatId) {
-        const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — ECC will call approve_plan.`;
-        await sendTelegramMessage(token, chatId, planNotice).catch(() => {});
-      }
+      const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — ECC will call approve_plan.`;
+      await notifyOperatorTelegram(db, planNotice);
     } catch { /* non-fatal */ }
 
     return `Plan created. Approval ID: ${approval!.id}. Awaiting operator approval.`;
@@ -837,7 +850,7 @@ async function handleTool(
 
   if (name === "add_issue_comment") {
     const { issueId, body: commentBody } = args as { issueId: string; body: string };
-    const [existing] = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1);
+    const [existing] = await db.select({ companyId: issues.companyId, title: issues.title, identifier: issues.identifier }).from(issues).where(eq(issues.id, issueId)).limit(1);
     if (!existing) return `Issue ${issueId} not found`;
     await db.insert(issueComments).values({
       issueId,
@@ -845,6 +858,14 @@ async function handleTool(
       body: commentBody,
       authorAgentId: null,
     });
+
+    // Notify operator whenever an agent adds a comment
+    {
+      const issueRef = existing.identifier ?? issueId.slice(0, 8);
+      const preview = commentBody.replace(/#+\s*/g, "").slice(0, 400);
+      await notifyOperatorTelegram(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`).catch(() => {});
+    }
+
     return `Comment added to issue ${issueId}.`;
   }
 
@@ -864,15 +885,9 @@ async function handleTool(
 
   if (name === "notify_operator") {
     const { body: notifyBody, issueId: notifyIssueId } = args as { body: string; issueId?: string };
-    const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-    const [tgSettings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
-    const tgGeneral = (tgSettings?.general ?? {}) as Record<string, unknown>;
-    const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
-    if (token && chatId) {
-      await sendTelegramMessage(token, chatId, notifyBody).catch((err) => {
-        logger.warn({ err }, "notify_operator: telegram send failed");
-      });
-    }
+    await notifyOperatorTelegram(db, notifyBody).catch((err) => {
+      logger.warn({ err }, "notify_operator: telegram send failed");
+    });
     await db.insert(operatorMessages).values({
       companyId,
       issueId: notifyIssueId ?? null,
@@ -949,13 +964,7 @@ async function handleTool(
       body: `🚫 **Blocked:** ${reason}`,
       authorAgentId: null,
     });
-    const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-    const [tgSettingsBlocked] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
-    const tgGeneralBlocked = (tgSettingsBlocked?.general ?? {}) as Record<string, unknown>;
-    const chatId = (tgGeneralBlocked.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
-    if (token && chatId) {
-      await sendTelegramMessage(token, chatId, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
-    }
+    await notifyOperatorTelegram(db, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
     return `Issue marked as blocked. Operator notified.`;
   }
 
@@ -1023,6 +1032,36 @@ async function handleTool(
       .limit(50);
     if (!rows.length) return `No comments on issue ${commentIssueId}`;
     return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "list_issue_emails") {
+    const { issueId: emailIssueId } = args as { issueId: string };
+    const msgs = await db
+      .select({
+        id: emailMessages.id,
+        fromAddr: emailMessages.fromAddr,
+        subject: emailMessages.subject,
+        body: emailMessages.body,
+        receivedAt: emailMessages.receivedAt,
+        processingState: emailMessages.processingState,
+      })
+      .from(emailMessages)
+      .where(eq(emailMessages.issueId, emailIssueId))
+      .orderBy(desc(emailMessages.receivedAt));
+    if (!msgs.length) return `No emails linked to issue ${emailIssueId}`;
+
+    const result = await Promise.all(msgs.map(async (msg) => {
+      const atts = await db
+        .select({ id: emailAttachments.id, filename: emailAttachments.filename, contentType: emailAttachments.contentType, storagePath: emailAttachments.storagePath, sizeBytes: emailAttachments.sizeBytes })
+        .from(emailAttachments)
+        .where(and(eq(emailAttachments.emailMessageId, msg.id), eq(emailAttachments.isInline, false)));
+      return {
+        ...msg,
+        bodyPreview: msg.body.slice(0, 300),
+        attachments: atts,
+      };
+    }));
+    return JSON.stringify(result, null, 2);
   }
 
   if (name === "list_companies") {
@@ -1167,6 +1206,7 @@ async function handleTool(
       expiresAt: conversation.expiresAt.toISOString(),
       messageCount: conversation.messageCount,
       warningDays,
+      recentMessages: (conversation.recentMessages as ConversationMessage[]) ?? [],
       _REMINDER: "call notify_operator BEFORE complete_conversation_turn — JayJay sees nothing without it",
     });
   }
@@ -1235,15 +1275,9 @@ async function handleTool(
         ),
       ));
     if (notifyStages.length === 0 && actionSummary) {
-      const token = (await readInstanceToken(db, "telegramBotToken")) ?? (process.env.TELEGRAM_BOT_TOKEN ?? "");
-      const [tgSettings] = await db.select({ general: instanceSettings.general }).from(instanceSettings).limit(1);
-      const tgGeneral = (tgSettings?.general ?? {}) as Record<string, unknown>;
-      const chatId = (tgGeneral.telegramOperatorChatId as string | undefined) ?? (process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "");
-      if (token && chatId) {
-        await sendTelegramMessage(token, chatId, actionSummary).catch((err) => {
-          logger.warn({ err }, "complete_conversation_turn: auto-notify fallback failed");
-        });
-      }
+      await notifyOperatorTelegram(db, actionSummary).catch((err) => {
+        logger.warn({ err }, "complete_conversation_turn: auto-notify fallback failed");
+      });
       await db.insert(workflowStageResults).values({
         runId,
         stageId: "operator_notified",
@@ -1306,25 +1340,57 @@ async function handleTool(
     if (approved) {
       const payload = approval.payload as Record<string, unknown>;
       const issueId = payload.issueId as string | undefined;
+
+      let resolvedIssue: { id: string; assigneeAgentId: string | null; status: string } | null = null;
+
       if (issueId) {
-        const [issue] = await db
-          .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+        const [existing] = await db
+          .select({ id: issues.id, assigneeAgentId: issues.assigneeAgentId, status: issues.status })
           .from(issues)
           .where(eq(issues.id, issueId))
           .limit(1);
-        if (issue && ["backlog", "todo"].includes(issue.status)) {
-          await db.update(issues).set({ status: "in_progress", updatedAt: new Date() }).where(eq(issues.id, issueId));
+        resolvedIssue = existing ?? null;
+      }
+
+      // Issue missing (deleted or hallucinated ID) — create one from plan details
+      if (!resolvedIssue && approval.companyId) {
+        const proposalText = typeof payload.proposalText === "string" ? payload.proposalText : "";
+        const steps = Array.isArray(payload.steps) ? (payload.steps as string[]) : [];
+
+        // Extract title: strip first markdown heading prefix
+        const titleLine = proposalText.split("\n").find((l) => l.trim()) ?? "";
+        const title = titleLine.replace(/^#+\s*(Plan:\s*)?/i, "").trim() || "Approved plan";
+        const description = steps.length
+          ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+          : proposalText.slice(0, 500);
+
+        const svc = issueService(db);
+        const created = await svc.create(approval.companyId, {
+          title,
+          description: description || null,
+          status: "todo",
+          priority: "medium",
+          originKind: "chat",
+        });
+
+        resolvedIssue = created ? { id: created.id, assigneeAgentId: created.assigneeAgentId ?? null, status: created.status } : null;
+        logger.info({ approvalId, issueId: created?.id, identifier: created?.identifier, title }, "approve_plan: created missing issue from plan");
+      }
+
+      if (resolvedIssue) {
+        if (["backlog", "todo"].includes(resolvedIssue.status)) {
+          await db.update(issues).set({ status: "in_progress", updatedAt: new Date() }).where(eq(issues.id, resolvedIssue.id));
         }
-        if (issue?.assigneeAgentId) {
+        if (resolvedIssue.assigneeAgentId) {
           const hb = heartbeatService(db);
-          await hb.wakeup(issue.assigneeAgentId, {
+          await hb.wakeup(resolvedIssue.assigneeAgentId, {
             source: "automation",
             triggerDetail: "system",
             reason: "plan_approved",
-            payload: { approvalId, issueId },
+            payload: { approvalId, issueId: resolvedIssue.id },
             requestedByActorType: "system",
             requestedByActorId: "ecc",
-            contextSnapshot: { source: "plan.approved", approvalId, issueId },
+            contextSnapshot: { source: "plan.approved", approvalId, issueId: resolvedIssue.id },
           }).catch(() => {});
         }
       }
