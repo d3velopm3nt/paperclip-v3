@@ -6,10 +6,10 @@ import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
 import { issueService } from "../services/issues.js";
-import { eccTopicsService } from "../services/ecc-topics.js";
-import { eccConversationsService } from "../services/ecc-conversations.js";
-import type { ConversationMessage } from "../services/ecc-conversations.js";
-import { eccAgentsService } from "../services/ecc-agents.js";
+import { topicsService } from "../services/topics.js";
+import { eaConversationsService } from "../services/ea-conversations.js";
+import type { ConversationMessage } from "../services/ea-conversations.js";
+import { eaAgentsService } from "../services/ea-agents.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
@@ -1073,7 +1073,7 @@ async function handleTool(
   }
 
   if (name === "list_topics") {
-    const svc = eccTopicsService(db);
+    const svc = topicsService(db);
     const status = typeof args.status === "string" ? args.status : "active";
     const topics = await svc.list(status);
     if (!topics.length) return `No ${status} topics found.`;
@@ -1081,7 +1081,7 @@ async function handleTool(
   }
 
   if (name === "create_topic") {
-    const svc = eccTopicsService(db);
+    const svc = topicsService(db);
     const topic = await svc.create({
       name: String(args.name),
       companyId: typeof args.companyId === "string" ? args.companyId : null,
@@ -1090,7 +1090,7 @@ async function handleTool(
   }
 
   if (name === "update_topic_memory") {
-    const svc = eccTopicsService(db);
+    const svc = topicsService(db);
     const updates: { summary?: string; currentState?: string | null } = {};
     if (typeof args.summary === "string") updates.summary = args.summary;
     if (typeof args.currentState === "string") updates.currentState = args.currentState;
@@ -1100,7 +1100,7 @@ async function handleTool(
   }
 
   if (name === "link_issue_to_topic") {
-    const svc = eccTopicsService(db);
+    const svc = topicsService(db);
     await svc.linkIssue(String(args.topicId), String(args.issueId));
     return `Issue ${args.issueId} linked to topic ${args.topicId}`;
   }
@@ -1108,11 +1108,11 @@ async function handleTool(
   if (name === "resolve_conversation") {
     const topicId = String(args.topicId);
     const messagePreview = typeof args.messagePreview === "string" ? args.messagePreview.slice(0, 300) : undefined;
-    const topicSvc = eccTopicsService(db);
+    const topicSvc = topicsService(db);
     const topic = await topicSvc.getById(topicId);
     if (!topic) return `Error: topic ${topicId} not found`;
 
-    const convSvc = eccConversationsService(db);
+    const convSvc = eaConversationsService(db);
     const conversation = await convSvc.resolveActive(topicId);
 
     const runCompanyId = topic.companyId ?? effectiveCompanyId;
@@ -1151,7 +1151,7 @@ async function handleTool(
     }
 
     if (callerAgentId) {
-      eccAgentsService(db).setProcessing(callerAgentId, topic.id, topic.name, messagePreview ?? "").catch(() => {});
+      eaAgentsService(db).setProcessing(callerAgentId, topic.id, topic.name, messagePreview ?? "").catch(() => {});
     }
 
     await db.insert(workflowStageResults).values([
@@ -1212,7 +1212,7 @@ async function handleTool(
   }
 
   if (name === "extend_conversation") {
-    const convSvc = eccConversationsService(db);
+    const convSvc = eaConversationsService(db);
     const result = await convSvc.extend(String(args.conversationId));
     return `Conversation extended until ${result.expiresAt.toISOString()}.`;
   }
@@ -1389,7 +1389,7 @@ async function handleTool(
             reason: "plan_approved",
             payload: { approvalId, issueId: resolvedIssue.id },
             requestedByActorType: "system",
-            requestedByActorId: "ecc",
+            requestedByActorId: "ea",
             contextSnapshot: { source: "plan.approved", approvalId, issueId: resolvedIssue.id },
           }).catch(() => {});
         }

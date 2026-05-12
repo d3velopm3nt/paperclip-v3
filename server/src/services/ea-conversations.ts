@@ -5,7 +5,7 @@ import type { ConversationMessage } from "@paperclipai/db";
 
 export type { ConversationMessage };
 
-export interface EccConversation {
+export interface EaConversation {
   id: string;
   topicId: string;
   status: string;
@@ -20,8 +20,8 @@ export interface EccConversation {
 const WINDOW_DAYS = 14;
 const MAX_RECENT = 20;
 
-export function eccConversationsService(db: Db) {
-  async function resolveActive(topicId: string): Promise<EccConversation> {
+export function eaConversationsService(db: Db) {
+  async function resolveActive(topicId: string): Promise<EaConversation> {
     const now = new Date();
     const existing = await db
       .select()
@@ -47,7 +47,7 @@ export function eccConversationsService(db: Db) {
         })
         .where(eq(eccConversations.id, existing[0].id))
         .returning();
-      return updated as EccConversation;
+      return updated as EaConversation;
     }
 
     const expiresAt = new Date(now.getTime() + WINDOW_DAYS * 86_400_000);
@@ -63,7 +63,7 @@ export function eccConversationsService(db: Db) {
         recentMessages: [],
       })
       .returning();
-    return created as EccConversation;
+    return created as EaConversation;
   }
 
   async function appendMessage(
@@ -93,7 +93,7 @@ export function eccConversationsService(db: Db) {
       .where(eq(eccConversations.id, conversationId));
   }
 
-  async function extend(conversationId: string, extraDays = WINDOW_DAYS): Promise<EccConversation> {
+  async function extend(conversationId: string, extraDays = WINDOW_DAYS): Promise<EaConversation> {
     const rows = await db
       .select({ expiresAt: eccConversations.expiresAt })
       .from(eccConversations)
@@ -108,7 +108,7 @@ export function eccConversationsService(db: Db) {
       .set({ expiresAt: newExpiry, status: "extended" })
       .where(eq(eccConversations.id, conversationId))
       .returning();
-    return updated as EccConversation;
+    return updated as EaConversation;
   }
 
   async function expire(conversationId: string): Promise<void> {
@@ -118,24 +118,24 @@ export function eccConversationsService(db: Db) {
       .where(eq(eccConversations.id, conversationId));
   }
 
-  async function list(topicId: string): Promise<EccConversation[]> {
+  async function list(topicId: string): Promise<EaConversation[]> {
     return db
       .select()
       .from(eccConversations)
       .where(eq(eccConversations.topicId, topicId))
-      .orderBy(desc(eccConversations.lastMessageAt)) as Promise<EccConversation[]>;
+      .orderBy(desc(eccConversations.lastMessageAt)) as Promise<EaConversation[]>;
   }
 
-  async function getById(id: string): Promise<EccConversation | null> {
+  async function getById(id: string): Promise<EaConversation | null> {
     const rows = await db
       .select()
       .from(eccConversations)
       .where(eq(eccConversations.id, id))
       .limit(1);
-    return (rows[0] as EccConversation) ?? null;
+    return (rows[0] as EaConversation) ?? null;
   }
 
-  async function listAllActive(limit = 100): Promise<EccConversation[]> {
+  async function listAllActive(limit = 100): Promise<EaConversation[]> {
     const now = new Date();
     return db
       .select()
@@ -147,15 +147,15 @@ export function eccConversationsService(db: Db) {
         ),
       )
       .orderBy(desc(eccConversations.lastMessageAt))
-      .limit(limit) as Promise<EccConversation[]>;
+      .limit(limit) as Promise<EaConversation[]>;
   }
 
-  async function listAll(limit = 100): Promise<EccConversation[]> {
+  async function listAll(limit = 100): Promise<EaConversation[]> {
     return db
       .select()
       .from(eccConversations)
       .orderBy(desc(eccConversations.lastMessageAt))
-      .limit(limit) as Promise<EccConversation[]>;
+      .limit(limit) as Promise<EaConversation[]>;
   }
 
   return { resolveActive, appendMessage, extend, expire, list, getById, listAllActive, listAll };

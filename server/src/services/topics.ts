@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { eccTopicIssues, eccTopics, issues } from "@paperclipai/db";
+import { topicIssues, topics, issues } from "@paperclipai/db";
 
 export interface TopicRow {
   id: string;
@@ -26,27 +26,27 @@ export interface TopicWithIssues extends Omit<TopicRow, "issueCount"> {
   issues: LinkedIssue[];
 }
 
-export function eccTopicsService(db: Db) {
+export function topicsService(db: Db) {
   async function list(statusFilter?: string): Promise<TopicRow[]> {
     const q = db
       .select({
-        id: eccTopics.id,
-        name: eccTopics.name,
-        summary: eccTopics.summary,
-        currentState: eccTopics.currentState,
-        companyId: eccTopics.companyId,
-        status: eccTopics.status,
-        createdAt: eccTopics.createdAt,
-        updatedAt: eccTopics.updatedAt,
-        issueCount: sql<number>`count(${eccTopicIssues.id})::int`,
+        id: topics.id,
+        name: topics.name,
+        summary: topics.summary,
+        currentState: topics.currentState,
+        companyId: topics.companyId,
+        status: topics.status,
+        createdAt: topics.createdAt,
+        updatedAt: topics.updatedAt,
+        issueCount: sql<number>`count(${topicIssues.id})::int`,
       })
-      .from(eccTopics)
-      .leftJoin(eccTopicIssues, eq(eccTopicIssues.topicId, eccTopics.id))
-      .groupBy(eccTopics.id)
-      .orderBy(desc(eccTopics.updatedAt));
+      .from(topics)
+      .leftJoin(topicIssues, eq(topicIssues.topicId, topics.id))
+      .groupBy(topics.id)
+      .orderBy(desc(topics.updatedAt));
 
     if (statusFilter) {
-      return q.where(eq(eccTopics.status, statusFilter));
+      return q.where(eq(topics.status, statusFilter));
     }
     return q;
   }
@@ -54,8 +54,8 @@ export function eccTopicsService(db: Db) {
   async function getById(id: string): Promise<TopicWithIssues | null> {
     const rows = await db
       .select()
-      .from(eccTopics)
-      .where(eq(eccTopics.id, id))
+      .from(topics)
+      .where(eq(topics.id, id))
       .limit(1);
     const topic = rows[0];
     if (!topic) return null;
@@ -68,17 +68,17 @@ export function eccTopicsService(db: Db) {
         status: issues.status,
         companyId: issues.companyId,
       })
-      .from(eccTopicIssues)
-      .innerJoin(issues, eq(issues.id, eccTopicIssues.issueId))
-      .where(eq(eccTopicIssues.topicId, id))
-      .orderBy(asc(eccTopicIssues.createdAt));
+      .from(topicIssues)
+      .innerJoin(issues, eq(issues.id, topicIssues.issueId))
+      .where(eq(topicIssues.topicId, id))
+      .orderBy(asc(topicIssues.createdAt));
 
     return { ...topic, issues: linkedIssues };
   }
 
   async function create(data: { name: string; companyId?: string | null }): Promise<TopicRow> {
     const [row] = await db
-      .insert(eccTopics)
+      .insert(topics)
       .values({ name: data.name, companyId: data.companyId ?? null })
       .returning();
     return { ...row!, issueCount: 0 };
@@ -95,9 +95,9 @@ export function eccTopicsService(db: Db) {
     },
   ): Promise<TopicRow | null> {
     const [row] = await db
-      .update(eccTopics)
+      .update(topics)
       .set({ ...data, updatedAt: new Date() })
-      .where(eq(eccTopics.id, id))
+      .where(eq(topics.id, id))
       .returning();
     if (!row) return null;
     return { ...row, issueCount: 0 };
@@ -105,23 +105,23 @@ export function eccTopicsService(db: Db) {
 
   async function remove(id: string): Promise<boolean> {
     const result = await db
-      .delete(eccTopics)
-      .where(eq(eccTopics.id, id))
-      .returning({ id: eccTopics.id });
+      .delete(topics)
+      .where(eq(topics.id, id))
+      .returning({ id: topics.id });
     return result.length > 0;
   }
 
   async function linkIssue(topicId: string, issueId: string): Promise<void> {
     await db
-      .insert(eccTopicIssues)
+      .insert(topicIssues)
       .values({ topicId, issueId })
       .onConflictDoNothing();
   }
 
   async function unlinkIssue(topicId: string, issueId: string): Promise<void> {
     await db
-      .delete(eccTopicIssues)
-      .where(and(eq(eccTopicIssues.topicId, topicId), eq(eccTopicIssues.issueId, issueId)));
+      .delete(topicIssues)
+      .where(and(eq(topicIssues.topicId, topicId), eq(topicIssues.issueId, issueId)));
   }
 
   return { list, getById, create, update, remove, linkIssue, unlinkIssue };

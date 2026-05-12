@@ -45,12 +45,12 @@ function makeDb(opts: {
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
-describe("eccConversationsService", () => {
+describe("eaConversationsService", () => {
   it("resolveActive creates new conversation when none found", async () => {
-    const { eccConversationsService } = await import("../services/ecc-conversations.js");
+    const { eaConversationsService } = await import("../services/ea-conversations.js");
     const row = makeConversationRow();
     const db = makeDb({ findRows: [], insertRows: [row] });
-    const svc = eccConversationsService(db);
+    const svc = eaConversationsService(db);
 
     const result = await svc.resolveActive("topic-1");
 
@@ -61,11 +61,11 @@ describe("eccConversationsService", () => {
   });
 
   it("resolveActive returns and touches existing conversation", async () => {
-    const { eccConversationsService } = await import("../services/ecc-conversations.js");
+    const { eaConversationsService } = await import("../services/ea-conversations.js");
     const row = makeConversationRow({ messageCount: 5 });
     const updated = makeConversationRow({ messageCount: 6 });
     const db = makeDb({ findRows: [row], updateRows: [updated] });
-    const svc = eccConversationsService(db);
+    const svc = eaConversationsService(db);
 
     const result = await svc.resolveActive("topic-1");
 
@@ -75,9 +75,9 @@ describe("eccConversationsService", () => {
   });
 
   it("appendMessage skips empty content", async () => {
-    const { eccConversationsService } = await import("../services/ecc-conversations.js");
+    const { eaConversationsService } = await import("../services/ea-conversations.js");
     const db = makeDb({ findRows: [] });
-    const svc = eccConversationsService(db);
+    const svc = eaConversationsService(db);
 
     await svc.appendMessage("conv-1", "user", "   ");
 
@@ -85,7 +85,7 @@ describe("eccConversationsService", () => {
   });
 
   it("appendMessage trims to 20 messages", async () => {
-    const { eccConversationsService } = await import("../services/ecc-conversations.js");
+    const { eaConversationsService } = await import("../services/ea-conversations.js");
     const existing: ConversationMessage[] = Array.from({ length: 20 }, (_, i) => ({
       role: "user" as const,
       content: `msg ${i}`,
@@ -93,7 +93,7 @@ describe("eccConversationsService", () => {
     }));
     const row = makeConversationRow({ recentMessages: existing });
     const db = makeDb({ findRows: [row], updateRows: [row] });
-    const svc = eccConversationsService(db);
+    const svc = eaConversationsService(db);
 
     await svc.appendMessage("conv-1", "assistant", "new response");
 
@@ -104,13 +104,13 @@ describe("eccConversationsService", () => {
   });
 
   it("extend updates expiresAt and sets status=extended", async () => {
-    const { eccConversationsService } = await import("../services/ecc-conversations.js");
+    const { eaConversationsService } = await import("../services/ea-conversations.js");
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
     const row = makeConversationRow({ expiresAt });
     const extended = makeConversationRow({ status: "extended" });
     const db = makeDb({ findRows: [row], updateRows: [extended] });
-    const svc = eccConversationsService(db);
+    const svc = eaConversationsService(db);
 
     const result = await svc.extend("conv-1");
 

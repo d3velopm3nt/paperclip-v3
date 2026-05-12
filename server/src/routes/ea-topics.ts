@@ -3,9 +3,9 @@ import { z } from "zod";
 import type { Db } from "@paperclipai/db";
 import { companies, operatorMessages, workflowRuns, workflowStageResults } from "@paperclipai/db";
 import { and, desc, eq } from "drizzle-orm";
-import { eccTopicsService } from "../services/ecc-topics.js";
-import { eccConversationsService } from "../services/ecc-conversations.js";
-import { eccAgentsService } from "../services/ecc-agents.js";
+import { topicsService } from "../services/topics.js";
+import { eaConversationsService } from "../services/ea-conversations.js";
+import { eaAgentsService } from "../services/ea-agents.js";
 import { validate } from "../middleware/validate.js";
 import { forbidden } from "../errors.js";
 
@@ -30,9 +30,9 @@ function assertBoard(req: Request): void {
   if (req.actor?.type !== "board") throw forbidden("Board access required");
 }
 
-export function eccTopicRoutes(db: Db) {
+export function eaTopicRoutes(db: Db) {
   const router = Router();
-  const svc = eccTopicsService(db);
+  const svc = topicsService(db);
 
   router.get("/ecc/topics", async (req, res) => {
     assertBoard(req);
@@ -89,7 +89,7 @@ export function eccTopicRoutes(db: Db) {
     res.status(204).send();
   });
 
-  async function enrichConv(conv: Awaited<ReturnType<ReturnType<typeof eccConversationsService>["getById"]>>) {
+  async function enrichConv(conv: Awaited<ReturnType<ReturnType<typeof eaConversationsService>["getById"]>>) {
     if (!conv) return null;
     const topic = await svc.getById(conv.topicId);
     const companyId = topic?.companyId ?? null;
@@ -118,7 +118,7 @@ export function eccTopicRoutes(db: Db) {
   // Default: active only. ?all=true: all statuses (including expired).
   router.get("/ecc/conversations", async (req, res) => {
     assertBoard(req);
-    const convSvc = eccConversationsService(db);
+    const convSvc = eaConversationsService(db);
     const showAll = req.query.all === "true";
     const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 50));
     const conversations = showAll ? await convSvc.listAll(limit) : await convSvc.listAllActive(limit);
@@ -129,7 +129,7 @@ export function eccTopicRoutes(db: Db) {
   // GET /ecc/conversations/:id — single conversation with topic info
   router.get("/ecc/conversations/:id", async (req, res) => {
     assertBoard(req);
-    const convSvc = eccConversationsService(db);
+    const convSvc = eaConversationsService(db);
     const conv = await convSvc.getById(String(req.params.id));
     if (!conv) {
       res.status(404).json({ error: "Conversation not found" });
@@ -141,15 +141,15 @@ export function eccTopicRoutes(db: Db) {
 
   router.get("/ecc/agents", async (req, res) => {
     assertBoard(req);
-    const agentSvc = eccAgentsService(db);
-    const eccAgents = await agentSvc.listEccAgents();
+    const agentSvc = eaAgentsService(db);
+    const eccAgents = await agentSvc.listEaAgents();
     res.json(eccAgents);
   });
 
   // POST /ecc/agents/:id/reset — force agent back to idle and clear stale session (board-only)
   router.post("/ecc/agents/:id/reset", async (req, res) => {
     assertBoard(req);
-    const agentSvc = eccAgentsService(db);
+    const agentSvc = eaAgentsService(db);
     await agentSvc.setIdle(req.params.id, { clearSession: true });
     res.json({ ok: true });
   });

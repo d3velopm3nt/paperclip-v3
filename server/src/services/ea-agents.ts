@@ -7,23 +7,23 @@ import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { loadDefaultAgentInstructionsBundle } from "./default-agent-instructions.js";
 
 // Bump this when the prompt changes to force a re-seed of existing agents.
-const PROMPT_VERSION = 5;
+const PROMPT_VERSION = 6;
 
-export interface EccAgentMetadata {
+export interface EaAgentMetadata {
   currentTopicId?: string;
   currentTopicName?: string;
   lastMessagePreview?: string;
   claudeSessionId?: string;
 }
 
-type EccBundleRole = "ecc-operator" | "ecc-client";
+type EaBundleRole = "ea-operator" | "ea-client";
 
-function resolveEccInstructionsRoot(agentId: string): string {
-  return path.resolve(resolvePaperclipInstanceRoot(), "ecc", agentId, "instructions");
+function resolveEaInstructionsRoot(agentId: string): string {
+  return path.resolve(resolvePaperclipInstanceRoot(), "ea", agentId, "instructions");
 }
 
-async function seedEccInstructionFiles(agentId: string, role: EccBundleRole, overwrite: boolean): Promise<string> {
-  const root = resolveEccInstructionsRoot(agentId);
+async function seedEaInstructionFiles(agentId: string, role: EaBundleRole, overwrite: boolean): Promise<string> {
+  const root = resolveEaInstructionsRoot(agentId);
   await fs.mkdir(root, { recursive: true });
 
   const files = await loadDefaultAgentInstructionsBundle(role);
@@ -32,7 +32,6 @@ async function seedEccInstructionFiles(agentId: string, role: EccBundleRole, ove
     if (overwrite) {
       await fs.writeFile(filePath, content, "utf-8");
     } else {
-      // Only write if the file doesn't exist yet — preserves manual edits
       try {
         await fs.access(filePath);
       } catch {
@@ -45,7 +44,7 @@ async function seedEccInstructionFiles(agentId: string, role: EccBundleRole, ove
 }
 
 function buildBundleAdapterConfig(agentId: string): Record<string, unknown> {
-  const root = resolveEccInstructionsRoot(agentId);
+  const root = resolveEaInstructionsRoot(agentId);
   return {
     instructionsBundleMode: "external",
     instructionsRootPath: root,
@@ -55,43 +54,42 @@ function buildBundleAdapterConfig(agentId: string): Record<string, unknown> {
   };
 }
 
-export function eccAgentsService(db: Db) {
-  async function listEccAgents() {
+export function eaAgentsService(db: Db) {
+  async function listEaAgents() {
     return db
       .select()
       .from(agents)
-      .where(and(isNull(agents.companyId), eq(agents.adapterType, "ecc")));
+      .where(and(isNull(agents.companyId), eq(agents.adapterType, "ea")));
   }
 
-  async function getEccAgent(role: "operator" | "client") {
+  async function getEaAgent(role: "operator" | "client") {
     const name =
       role === "operator" ? "Executive Control Agent" : "Client Control Agent";
     const rows = await db
       .select()
       .from(agents)
       .where(
-        and(isNull(agents.companyId), eq(agents.adapterType, "ecc"), eq(agents.name, name)),
+        and(isNull(agents.companyId), eq(agents.adapterType, "ea"), eq(agents.name, name)),
       );
     return rows[0] ?? null;
   }
 
-  async function seedEccAgents() {
-    const existing = await listEccAgents();
+  async function seedEaAgents() {
+    const existing = await listEaAgents();
     const existingByName = new Map(existing.map((a) => [a.name, a]));
 
-    const seedData: Array<{ name: string; bundleRole: EccBundleRole }> = [
-      { name: "Executive Control Agent", bundleRole: "ecc-operator" },
-      { name: "Client Control Agent", bundleRole: "ecc-client" },
+    const seedData: Array<{ name: string; bundleRole: EaBundleRole }> = [
+      { name: "Executive Control Agent", bundleRole: "ea-operator" },
+      { name: "Client Control Agent", bundleRole: "ea-client" },
     ];
 
     for (const seed of seedData) {
       const existingAgent = existingByName.get(seed.name);
       if (!existingAgent) {
-        // Create the agent first (need the ID for the instructions path)
         const [created] = await db.insert(agents).values({
           name: seed.name,
           role: "orchestrator",
-          adapterType: "ecc",
+          adapterType: "ea",
           companyId: null,
           adapterConfig: { promptVersion: PROMPT_VERSION },
           runtimeConfig: {},
@@ -102,16 +100,15 @@ export function eccAgentsService(db: Db) {
         }).returning({ id: agents.id });
 
         if (created) {
-          await seedEccInstructionFiles(created.id, seed.bundleRole, false);
+          await seedEaInstructionFiles(created.id, seed.bundleRole, false);
           const bundleConfig = buildBundleAdapterConfig(created.id);
           await db.update(agents).set({ adapterConfig: bundleConfig, updatedAt: new Date() }).where(eq(agents.id, created.id));
         }
       } else {
-        // Re-seed files if promptVersion is outdated
         const existingConfig = (existingAgent.adapterConfig ?? {}) as Record<string, unknown>;
         const existingVersion = typeof existingConfig.promptVersion === "number" ? existingConfig.promptVersion : 0;
         if (existingVersion < PROMPT_VERSION) {
-          await seedEccInstructionFiles(existingAgent.id, seed.bundleRole, true);
+          await seedEaInstructionFiles(existingAgent.id, seed.bundleRole, true);
           const bundleConfig = buildBundleAdapterConfig(existingAgent.id);
           await db.update(agents).set({ adapterConfig: bundleConfig, updatedAt: new Date() }).where(eq(agents.id, existingAgent.id));
         }
@@ -141,7 +138,7 @@ export function eccAgentsService(db: Db) {
 
   async function setIdle(id: string, opts?: { clearSession?: boolean }) {
     const [row] = await db.select({ metadata: agents.metadata }).from(agents).where(eq(agents.id, id)).limit(1);
-    const existing = (row?.metadata ?? {}) as EccAgentMetadata;
+    const existing = (row?.metadata ?? {}) as EaAgentMetadata;
     const keepSession = !opts?.clearSession && !!existing.claudeSessionId;
     await db
       .update(agents)
@@ -163,5 +160,5 @@ export function eccAgentsService(db: Db) {
       .where(eq(agents.id, id));
   }
 
-  return { listEccAgents, getEccAgent, seedEccAgents, setProcessing, setIdle, saveSessionId };
+  return { listEaAgents, getEaAgent, seedEaAgents, setProcessing, setIdle, saveSessionId };
 }
