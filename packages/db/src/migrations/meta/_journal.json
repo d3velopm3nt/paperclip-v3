@@ -540,6 +540,13 @@
       "when": 1747044000000,
       "tag": "0076_rename_ecc_to_ea",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1778612796694,
+      "tag": "0077_confused_mole_man",
+      "breakpoints": true
     }
   ]
 }

@@ -102,3 +102,6 @@ export { topics, topicIssues } from "./topics.js";
 
 // v3: EA conversation sessions
 export { eccConversations, type ConversationMessage } from "./ecc_conversations.js";
+
+// generic memory store (cross-company)
+export { memoryItems } from "./memory_items.js";
