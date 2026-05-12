@@ -1,31 +1,35 @@
-## Mandatory call sequence — every turn, no exceptions
+# EA Tool Reference
 
-  Step 1: resolve_conversation(topicId, messagePreview)   — FIRST
-  Step 2: [your work: list_issues, get_issue_comments, create_issue, etc.]
-  Step 3: notify_operator(body)                           — SECOND TO LAST, ALWAYS
-  Step 4: complete_conversation_turn(runId, summary, ...) — LAST
+## Memory (generic — any agent can use)
+- `search_memory` — search prior messages by query/sender/channel/type
+- `create_memory` — store message (memoryType: passive | active)
 
-Skipping step 3 = JayJay receives nothing this turn. Step 4 MUST come after step 3.
+## Topics (generic — any agent can use)
+- `search_topics` — find existing topics before creating new ones (always check first)
+- `create_topic` — create topic (active memory container)
+- `link_topic_to_issue` — attach issue to topic
 
-## Operating model
-1. Understand the message — who, what, which company, urgency, risk
-2. Call resolve_conversation → get full conversation context
-3. Retrieve additional context — call list_issues, get_issue_comments as needed
-4. Reason and suggest — propose next actions clearly
-5. Act or ask — execute low-risk actions directly, request approval for high-risk ones
-6. Call notify_operator with your response to JayJay — REQUIRED before step 7
-7. Call complete_conversation_turn — always last, always after notify_operator
+## Issues & Agents
+- `create_issue` — create operational issue in a company
+- `update_issue` — update status, assignee, priority
+- `list_issues` — query issues across a company
+- `list_agents` — find specialist agents in a company by name
+- `list_companies` — get all company IDs (for cross-company queries)
+- `create_plan` — propose action for operator approval
+- `list_issue_emails` — read inbound email content for a triage issue
 
-## Tool usage rules
-- **resolve_conversation**: First tool call on every message.
-- **notify_operator**: Second-to-last call. Short, direct. This is JayJay's only channel.
-- **complete_conversation_turn**: Last call. Pass runId, actionSummary, issuesLinked.
-- **extend_conversation**: Call when warningDays <= 3 or JayJay asks to extend.
-- **list_companies**: Call when unsure which company is relevant.
-- **list_topics**: Call to find or match a topic. Required when topic is ambiguous.
-- **list_issues**: Pass the relevant companyId. Use to find existing issues.
-- **get_issue_comments**: Read full thread before making decisions.
-- **create_plan**: Multi-step work needing JayJay review and approval.
-- **add_issue_comment**: Log important decisions on issues.
-- **update_memory**: Call when you learn something worth remembering across conversations — client preferences, project states, JayJay's patterns, key decisions. Call it BEFORE complete_conversation_turn.
-- **approve_plan**: Call when JayJay says "approve", "go ahead", "decline", or similar in response to a pending plan. Pass the approvalId from context. Approved plans wake the assignee agent automatically.
+## Communication
+- `notify_operator` — send Telegram to operator (respect notification matrix)
+- `search_contacts` — find known contacts
+- `search_companies` — find company by name/domain
+- `search_clients` — find client by name
+
+## Config
+- `get_instance_config` — read notification matrix and instance settings
+
+## Legacy conversation tools (EA conversations — still supported)
+- `resolve_conversation` — resolve or create active conversation for a topic
+- `extend_conversation` — extend conversation window
+- `complete_conversation_turn` — record workflow stages and mark run as passed
+- `update_memory` — store persistent memory fact (legacy agent memory)
+- `approve_plan` — approve or decline a pending plan on operator's behalf
