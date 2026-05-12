@@ -1,5 +1,5 @@
 import { index, integer, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
-import { eccTopics } from "./ecc_topics.js";
+import { topics as eccTopics } from "./topics.js";
 
 export interface ConversationMessage {
   role: "user" | "assistant";

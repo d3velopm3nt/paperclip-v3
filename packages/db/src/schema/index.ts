@@ -97,8 +97,8 @@ export { messageThreads } from "./message_threads.js";
 // v3: chat
 export { chatThreads } from "./chat_threads.js";
 
-// v3: founder topics (ECC memory boxes)
-export { eccTopics, eccTopicIssues } from "./ecc_topics.js";
+// v3: founder topics (generic memory containers)
+export { topics, topicIssues } from "./topics.js";
 
-// v3: ECC conversation sessions
+// v3: EA conversation sessions
 export { eccConversations, type ConversationMessage } from "./ecc_conversations.js";
