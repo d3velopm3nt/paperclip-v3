@@ -4,7 +4,7 @@
 
 **Goal:** Replace ECC with a proper Executive Agent — a cross-company intake, classification, and routing agent that gates all incoming messages, creates structured memory, and routes work to specialist per-company Paperclip agents. All specialist work is visible in the normal Paperclip UI.
 
-**Architecture:** EA (companyId: null, adapterType: "ea") handles intake only. Specialist agents (client_agent, proposal_agent, dev_agent per company) run through full Paperclip heartbeat/issue flow — visible on board, activity-logged, budget-tracked.
+**Architecture:** EA (companyId: null, adapterType: "ea") handles intake only. Specialist agents (client_agent, proposal_agent, dev_agent per company) run through full Paperclip heartbeat/issue flow — visible on board, activity-logged, budget-tracked. Memory and topics are **generic infrastructure** usable by any agent, not EA-specific.
 
 **Tech Stack:** Express 5, Drizzle ORM, React 19 + TanStack Query, existing MCP tool server, existing agent heartbeat system.
 
@@ -14,14 +14,14 @@
 
 | File | Change |
 |------|--------|
-| `packages/db/src/schema/ecc_topics.ts` | Rename symbols `eccTopics` → `eaTopics`, `eccTopicIssues` → `eaTopicIssues` |
+| `packages/db/src/schema/ecc_topics.ts` → `topics.ts` | Rename file + symbols `eccTopics` → `topics`, `eccTopicIssues` → `topicIssues` |
 | `packages/db/src/migrations/NNNN_rename_ecc_to_ea.sql` | ALTER TABLE renames + UPDATE adapterType |
-| `packages/db/src/schema/ea_memory_items.ts` | New — passive memory store |
+| `packages/db/src/schema/memory_items.ts` | New — generic memory store |
 | `server/src/services/ecc-agents.ts` → `ea-agents.ts` | Rename + update all symbols |
 | `server/src/services/ecc-conversations.ts` → `ea-conversations.ts` | Rename + update all symbols |
-| `server/src/services/ecc-topics.ts` → `ea-topics.ts` | Rename + update all symbols |
-| `server/src/routes/ecc-topics.ts` → `ea-topics.ts` | Rename + update all symbols |
-| `server/src/routes/mcp-tool-server.ts` | Add `search_passive_memory`, `create_passive_memory`, `search_ea_topics`, `create_ea_topic`, `link_topic_to_issue` tools |
+| `server/src/services/ecc-topics.ts` → `topics.ts` | Rename + update all symbols |
+| `server/src/routes/ecc-topics.ts` → `topics.ts` | Rename + update all symbols |
+| `server/src/routes/mcp-tool-server.ts` | Add `search_memory`, `create_memory`, `search_topics`, `create_topic`, `link_topic_to_issue` tools |
 | `server/src/onboarding-assets/ea-operator/AGENTS.md` | New — EA system prompt (replaces ecc-operator/AGENTS.md) |
 | `server/src/onboarding-assets/ea-operator/TOOLS.md` | New — EA tool reference |
 | `ui/src/pages/founder/FounderOverview.tsx` | Update labels ECC → EA |
@@ -35,7 +35,7 @@
 ## Task 1: Rename ECC → EA (DB + Code)
 
 **Files:**
-- Modify: `packages/db/src/schema/ecc_topics.ts`
+- Modify: `packages/db/src/schema/ecc_topics.ts` (rename to `topics.ts`)
 - Create: `packages/db/src/migrations/NNNN_rename_ecc_to_ea.sql`
 - Modify: `server/src/services/ecc-agents.ts` (rename file)
 - Modify: `server/src/services/ecc-conversations.ts` (rename file)
@@ -47,28 +47,28 @@
 ### Migration SQL
 
 ```sql
--- Rename tables
-ALTER TABLE ecc_topics RENAME TO ea_topics;
-ALTER TABLE ecc_topic_issues RENAME TO ea_topic_issues;
+-- Rename tables (ecc → generic names)
+ALTER TABLE ecc_topics RENAME TO topics;
+ALTER TABLE ecc_topic_issues RENAME TO topic_issues;
 
 -- Rename indexes
-ALTER INDEX ecc_topics_status_idx RENAME TO ea_topics_status_idx;
-ALTER INDEX ecc_topics_company_idx RENAME TO ea_topics_company_idx;
+ALTER INDEX ecc_topics_status_idx RENAME TO topics_status_idx;
+ALTER INDEX ecc_topics_company_idx RENAME TO topics_company_idx;
 
 -- Rename adapterType in agents table
 UPDATE agents SET adapter_type = 'ea' WHERE adapter_type = 'ecc';
 ```
 
-### Schema symbol rename (`ecc_topics.ts`)
+### Schema symbol rename (`topics.ts`)
 
 ```typescript
-// Before
+// Before (ecc_topics.ts)
 export const eccTopics = pgTable("ecc_topics", { ... });
 export const eccTopicIssues = pgTable("ecc_topic_issues", { ... });
 
-// After
-export const eaTopics = pgTable("ea_topics", { ... });
-export const eaTopicIssues = pgTable("ea_topic_issues", { ... });
+// After (topics.ts)
+export const topics = pgTable("topics", { ... });
+export const topicIssues = pgTable("topic_issues", { ... });
 ```
 
 Update `packages/db/src/schema/index.ts`:
@@ -76,16 +76,17 @@ Update `packages/db/src/schema/index.ts`:
 // Before
 export { eccTopics, eccTopicIssues } from "./ecc_topics.js";
 // After
-export { eaTopics, eaTopicIssues } from "./ea_topics.js";
+export { topics, topicIssues } from "./topics.js";
 ```
 
 ### Service file renames
 
 ```bash
+mv packages/db/src/schema/ecc_topics.ts packages/db/src/schema/topics.ts
 mv server/src/services/ecc-agents.ts server/src/services/ea-agents.ts
 mv server/src/services/ecc-conversations.ts server/src/services/ea-conversations.ts
-mv server/src/services/ecc-topics.ts server/src/services/ea-topics.ts
-mv server/src/routes/ecc-topics.ts server/src/routes/ea-topics.ts
+mv server/src/services/ecc-topics.ts server/src/services/topics.ts
+mv server/src/routes/ecc-topics.ts server/src/routes/topics.ts
 mv server/src/onboarding-assets/ecc-operator server/src/onboarding-assets/ea-operator
 mv server/src/onboarding-assets/ecc-client server/src/onboarding-assets/ea-client
 mv server/src/__tests__/ecc-agents.test.ts server/src/__tests__/ea-agents.test.ts
@@ -106,23 +107,23 @@ adapterType: "ea"
 
 ---
 
-## Task 2: ea_memory_items Schema + Migration
+## Task 2: memory_items Schema + Migration
 
 **Files:**
-- Create: `packages/db/src/schema/ea_memory_items.ts`
+- Create: `packages/db/src/schema/memory_items.ts`
 - Modify: `packages/db/src/schema/index.ts`
-- Create: `packages/db/src/migrations/NNNN_add_ea_memory_items.sql`
+- Create: `packages/db/src/migrations/NNNN_add_memory_items.sql`
 
 ### Schema
 
 ```typescript
-// packages/db/src/schema/ea_memory_items.ts
+// packages/db/src/schema/memory_items.ts
 import { pgTable, uuid, text, integer, jsonb, timestamp, index } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { emailMessages } from "./email_messages.js";
 
-export const eaMemoryItems = pgTable(
-  "ea_memory_items",
+export const memoryItems = pgTable(
+  "memory_items",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     companyId: uuid("company_id").references(() => companies.id, { onDelete: "cascade" }),
@@ -141,23 +142,23 @@ export const eaMemoryItems = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    companyIdx: index("ea_memory_items_company_idx").on(table.companyId),
-    channelIdx: index("ea_memory_items_channel_idx").on(table.sourceChannel),
-    senderIdx: index("ea_memory_items_sender_idx").on(table.senderIdentifier),
-    typeIdx: index("ea_memory_items_type_idx").on(table.memoryType),
+    companyIdx: index("memory_items_company_idx").on(table.companyId),
+    channelIdx: index("memory_items_channel_idx").on(table.sourceChannel),
+    senderIdx: index("memory_items_sender_idx").on(table.senderIdentifier),
+    typeIdx: index("memory_items_type_idx").on(table.memoryType),
   }),
 );
 ```
 
 Export from `packages/db/src/schema/index.ts`:
 ```typescript
-export { eaMemoryItems } from "./ea_memory_items.js";
+export { memoryItems } from "./memory_items.js";
 ```
 
 ### Migration SQL
 
 ```sql
-CREATE TABLE ea_memory_items (
+CREATE TABLE memory_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   company_id UUID REFERENCES companies(id) ON DELETE CASCADE,
   source_channel TEXT NOT NULL,
@@ -175,29 +176,29 @@ CREATE TABLE ea_memory_items (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX ea_memory_items_company_idx ON ea_memory_items(company_id);
-CREATE INDEX ea_memory_items_channel_idx ON ea_memory_items(source_channel);
-CREATE INDEX ea_memory_items_sender_idx ON ea_memory_items(sender_identifier);
-CREATE INDEX ea_memory_items_type_idx ON ea_memory_items(memory_type);
+CREATE INDEX memory_items_company_idx ON memory_items(company_id);
+CREATE INDEX memory_items_channel_idx ON memory_items(source_channel);
+CREATE INDEX memory_items_sender_idx ON memory_items(sender_identifier);
+CREATE INDEX memory_items_type_idx ON memory_items(memory_type);
 ```
 
 **Verification:** `pnpm db:generate && pnpm -r typecheck` passes.
 
 ---
 
-## Task 3: EA MCP Tools
+## Task 3: MCP Tools (generic memory + topics)
 
 **Files:**
 - Modify: `server/src/routes/mcp-tool-server.ts`
 
-Add 5 new tools after existing ECC/EA tools. All require EA agent context (`isEcc` check already in place — update to `isEa`).
+Add 5 new tools. These are generic — available to any agent, not gated to EA only.
 
 ### Tool definitions (add to tools array)
 
 ```typescript
 {
-  name: "search_passive_memory",
-  description: "Search EA passive memory for prior messages, context, or sender history. Use before classifying a new message to understand sender relationship and prior interactions.",
+  name: "search_memory",
+  description: "Search memory items for prior messages, context, or sender history. Use before classifying a new message to understand sender relationship and prior interactions.",
   inputSchema: {
     type: "object",
     properties: {
@@ -205,13 +206,14 @@ Add 5 new tools after existing ECC/EA tools. All require EA agent context (`isEc
       senderIdentifier: { type: "string", description: "Filter by sender email/phone/telegram user" },
       companyId: { type: "string", description: "Filter by company UUID" },
       channel: { type: "string", description: "Filter by channel: email | whatsapp | telegram | manual" },
+      memoryType: { type: "string", description: "passive | active | all (default: all)" },
       limit: { type: "number", description: "Max results (default 20)" },
     },
   },
 },
 {
-  name: "create_memory_item",
-  description: "Store a message in EA memory. Use memoryType='passive' for low-importance items (noise, FYI, casual). Use memoryType='active' when creating operational context (issue already created).",
+  name: "create_memory",
+  description: "Store a message or context in memory. Use memoryType='passive' for low-importance items (noise, FYI, casual). Use memoryType='active' when creating operational context alongside an issue.",
   inputSchema: {
     type: "object",
     required: ["content", "sourceChannel", "memoryType"],
@@ -231,8 +233,8 @@ Add 5 new tools after existing ECC/EA tools. All require EA agent context (`isEc
   },
 },
 {
-  name: "search_ea_topics",
-  description: "Search existing EA topics. Always check before creating a new topic to avoid duplicates.",
+  name: "search_topics",
+  description: "Search existing topics. Always check before creating a new topic to avoid duplicates. Topics group related issues under one business context.",
   inputSchema: {
     type: "object",
     properties: {
@@ -244,8 +246,8 @@ Add 5 new tools after existing ECC/EA tools. All require EA agent context (`isEc
   },
 },
 {
-  name: "create_ea_topic",
-  description: "Create a new EA topic (active memory container). A topic groups related issues under one business context (e.g. 'SafeX Proposal', 'Kevin O'Neill - Teaming Agreement').",
+  name: "create_topic",
+  description: "Create a new topic (active memory container). A topic groups related issues under one business context (e.g. 'SafeX Proposal', 'Kevin O'Neill - Teaming Agreement').",
   inputSchema: {
     type: "object",
     required: ["name"],
@@ -259,7 +261,7 @@ Add 5 new tools after existing ECC/EA tools. All require EA agent context (`isEc
 },
 {
   name: "link_topic_to_issue",
-  description: "Link an EA topic to an issue. Topics can have multiple linked issues.",
+  description: "Link a topic to an issue. Topics can have multiple linked issues.",
   inputSchema: {
     type: "object",
     required: ["topicId", "issueId"],
@@ -274,33 +276,33 @@ Add 5 new tools after existing ECC/EA tools. All require EA agent context (`isEc
 ### Tool handlers
 
 ```typescript
-if (name === "search_passive_memory") {
-  const { query, senderIdentifier, companyId: filterCompanyId, channel, limit = 20 } = args as {
-    query?: string; senderIdentifier?: string; companyId?: string; channel?: string; limit?: number;
+if (name === "search_memory") {
+  const { query, senderIdentifier, companyId: filterCompanyId, channel, memoryType, limit = 20 } = args as {
+    query?: string; senderIdentifier?: string; companyId?: string; channel?: string; memoryType?: string; limit?: number;
   };
   const conditions = [];
-  if (filterCompanyId) conditions.push(eq(eaMemoryItems.companyId, filterCompanyId));
-  if (senderIdentifier) conditions.push(eq(eaMemoryItems.senderIdentifier, senderIdentifier));
-  if (channel) conditions.push(eq(eaMemoryItems.sourceChannel, channel));
-  // Full-text search on content + summary
+  if (filterCompanyId) conditions.push(eq(memoryItems.companyId, filterCompanyId));
+  if (senderIdentifier) conditions.push(eq(memoryItems.senderIdentifier, senderIdentifier));
+  if (channel) conditions.push(eq(memoryItems.sourceChannel, channel));
+  if (memoryType && memoryType !== "all") conditions.push(eq(memoryItems.memoryType, memoryType));
   if (query) conditions.push(
-    sql`(${eaMemoryItems.content} ILIKE ${'%' + query + '%'} OR ${eaMemoryItems.summary} ILIKE ${'%' + query + '%'})`
+    sql`(${memoryItems.content} ILIKE ${'%' + query + '%'} OR ${memoryItems.summary} ILIKE ${'%' + query + '%'})`
   );
-  const rows = await db.select().from(eaMemoryItems)
+  const rows = await db.select().from(memoryItems)
     .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(eaMemoryItems.createdAt))
+    .orderBy(desc(memoryItems.createdAt))
     .limit(Math.min(limit, 50));
   return JSON.stringify(rows);
 }
 
-if (name === "create_memory_item") {
+if (name === "create_memory") {
   const { content, summary, sourceChannel, sourceId, sourceEmailMessageId, senderIdentifier,
     companyId: memCompanyId, intentCategory, importanceScore, memoryType, tags } = args as {
     content: string; summary?: string; sourceChannel: string; sourceId?: string;
     sourceEmailMessageId?: string; senderIdentifier?: string; companyId?: string;
     intentCategory?: string; importanceScore?: number; memoryType: string; tags?: string[];
   };
-  const [row] = await db.insert(eaMemoryItems).values({
+  const [row] = await db.insert(memoryItems).values({
     companyId: memCompanyId ?? null,
     sourceChannel,
     sourceId: sourceId ?? null,
@@ -312,44 +314,44 @@ if (name === "create_memory_item") {
     importanceScore: importanceScore ?? null,
     memoryType,
     tags: tags ?? [],
-  }).returning({ id: eaMemoryItems.id });
+  }).returning({ id: memoryItems.id });
   return `Memory item created: ${row!.id}`;
 }
 
-if (name === "search_ea_topics") {
+if (name === "search_topics") {
   const { query, companyId: topicCompanyId, status = "active", limit = 20 } = args as {
     query?: string; companyId?: string; status?: string; limit?: number;
   };
   const conditions = [];
-  if (topicCompanyId) conditions.push(eq(eaTopics.companyId, topicCompanyId));
-  if (status !== "all") conditions.push(eq(eaTopics.status, status));
+  if (topicCompanyId) conditions.push(eq(topics.companyId, topicCompanyId));
+  if (status !== "all") conditions.push(eq(topics.status, status));
   if (query) conditions.push(
-    sql`(${eaTopics.name} ILIKE ${'%' + query + '%'} OR ${eaTopics.summary} ILIKE ${'%' + query + '%'})`
+    sql`(${topics.name} ILIKE ${'%' + query + '%'} OR ${topics.summary} ILIKE ${'%' + query + '%'})`
   );
-  const rows = await db.select().from(eaTopics)
+  const rows = await db.select().from(topics)
     .where(conditions.length ? and(...conditions) : undefined)
-    .orderBy(desc(eaTopics.updatedAt))
+    .orderBy(desc(topics.updatedAt))
     .limit(Math.min(limit, 50));
   return JSON.stringify(rows);
 }
 
-if (name === "create_ea_topic") {
+if (name === "create_topic") {
   const { name: topicName, summary, currentState, companyId: topicCompanyId } = args as {
     name: string; summary?: string; currentState?: string; companyId?: string;
   };
-  const [row] = await db.insert(eaTopics).values({
+  const [row] = await db.insert(topics).values({
     name: topicName,
     summary: summary ?? "",
     currentState: currentState ?? null,
     companyId: topicCompanyId ?? null,
     status: "active",
-  }).returning({ id: eaTopics.id });
+  }).returning({ id: topics.id });
   return `Topic created: ${row!.id}`;
 }
 
 if (name === "link_topic_to_issue") {
   const { topicId, issueId: linkIssueId } = args as { topicId: string; issueId: string };
-  await db.insert(eaTopicIssues).values({ topicId, issueId: linkIssueId }).onConflictDoNothing();
+  await db.insert(topicIssues).values({ topicId, issueId: linkIssueId }).onConflictDoNothing();
   return `Linked topic ${topicId} to issue ${linkIssueId}`;
 }
 ```
@@ -420,7 +422,7 @@ Each toggle calls `PATCH /api/instance/settings` updating the matrix key. Read d
 
 ### EA notify_operator respects matrix
 
-In `ea-agents.ts` (or via EA system prompt instructions), the EA is told to call `notify_operator` only for events enabled in the matrix. The matrix config is injected into the EA's system context via `get_instance_config` MCP tool (already exists) so the EA can read it at runtime.
+EA reads notification matrix via `get_instance_config` MCP tool at runtime and calls `notify_operator` only for enabled event types.
 
 **Verification:** Toggle off `approval_required` on Telegram — no Telegram message fires when EA creates approval. Toggle on — message fires.
 
@@ -442,11 +444,12 @@ You are the first-line gatekeeper for ALL incoming messages and events across al
 You classify, score, route, and track — you do not execute business actions yourself.
 
 ## Operating model
-1. Receive message → identify sender → search passive memory for context
+1. Receive message → identify sender → search_memory for prior context on sender
 2. Score importance (0-100) using the factors below
-3. If score < 60: store as passive memory, do not activate workflow
-4. If score ≥ 60: search existing topics/issues for match → create/update topic → create issue → assign to specialist agent
-5. Notify JayJay based on notification matrix (read via get_instance_config)
+3. If score < 60: create_memory(memoryType='passive'), stop
+4. If score ≥ 60: search_topics → create_topic if no match → create_issue → assign to specialist agent → link_topic_to_issue → create_memory(memoryType='active')
+5. If approval needed: create_plan
+6. notify_operator IF event type is enabled in notification matrix (read via get_instance_config)
 
 ## Importance scoring
 
@@ -458,12 +461,6 @@ Start at 0. Add:
 - Risk: low=0, medium=10, high=25, critical=40
 
 Active threshold: 60. Urgent threshold: 85.
-
-## Your output (call tools, do not narrate)
-1. create_memory_item (always — passive or active)
-2. If active: search_ea_topics → create_ea_topic if no match → create_issue → assign issue to correct agent → link_topic_to_issue
-3. If approval needed: create_plan (creates approval for JayJay)
-4. notify_operator IF event type is enabled in notification matrix
 
 ## CRITICAL: your text output goes nowhere
 JayJay NEVER sees your reasoning. Only tool calls reach him. If you don't call notify_operator, JayJay receives NOTHING.
@@ -498,19 +495,20 @@ Operational only. No pleasantries. Signal, not noise.
 ```markdown
 # EA Tool Reference
 
-## Memory
-- search_passive_memory — search prior messages by query/sender/channel
-- create_memory_item — store message (passive or active)
+## Memory (generic — any agent can use)
+- search_memory — search prior messages by query/sender/channel/type
+- create_memory — store message (memoryType: passive | active)
 
-## Topics
-- search_ea_topics — find existing topics before creating new ones
-- create_ea_topic — create topic (active memory container)
+## Topics (generic — any agent can use)
+- search_topics — find existing topics before creating new ones
+- create_topic — create topic (active memory container)
 - link_topic_to_issue — attach issue to topic
 
 ## Issues & Agents
 - create_issue — create operational issue in a company
 - update_issue — update status, assignee
 - list_issues — query issues across a company
+- list_agents — find specialist agents in a company by name
 - list_companies — get all company IDs (for cross-company queries)
 - create_plan — propose action for JayJay approval
 
@@ -521,7 +519,7 @@ Operational only. No pleasantries. Signal, not noise.
 - search_clients — find client by name
 ```
 
-**Verification:** EA agent starts, loads correct system prompt, can call all new tools.
+**Verification:** EA agent starts, loads correct system prompt, can call all tools.
 
 ---
 
@@ -546,8 +544,8 @@ EA does NOT need to know agent UUIDs — it calls `list_agents(companyId)` and m
 
 ## Out of Scope (V1)
 
-- Slack notification channel (future — use plugin event system)
+- Slack notification channel (future — use plugin event system after `operator.notification.requested` event added)
 - Voice/audio message intake (future — Whisper pipeline)
 - EA-to-EA handoff (future — multi-EA for different personal domains)
-- Automatic passive memory expiry/cleanup
-- EA web UI for memory search (future — can query via EA Telegram commands)
+- Automatic memory expiry/cleanup
+- Web UI for memory search (future — can query via EA Telegram commands)
