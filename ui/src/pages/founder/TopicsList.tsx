@@ -33,7 +33,7 @@ export function TopicsList() {
   const [newCompanyId, setNewCompanyId] = useState<string>("");
 
   const topicsQuery = useQuery({
-    queryKey: ["ecc-topics", showArchived ? "archived" : "active"],
+    queryKey: ["topics", showArchived ? "archived" : "active"],
     queryFn: () => topicsApi.list(showArchived ? "archived" : "active"),
     staleTime: 30_000,
   });
@@ -42,7 +42,7 @@ export function TopicsList() {
     mutationFn: () =>
       topicsApi.create({ name: newName.trim(), companyId: newCompanyId || null }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ecc-topics"] });
+      queryClient.invalidateQueries({ queryKey: ["topics"] });
       setCreating(false);
       setNewName("");
       setNewCompanyId("");
@@ -53,14 +53,14 @@ export function TopicsList() {
     mutationFn: ({ id, status }: { id: string; status: "active" | "archived" }) =>
       topicsApi.update(id, { status }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ecc-topics"] });
+      queryClient.invalidateQueries({ queryKey: ["topics"] });
     },
   });
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => topicsApi.remove(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["ecc-topics"] });
+      queryClient.invalidateQueries({ queryKey: ["topics"] });
     },
   });
 

@@ -15,7 +15,7 @@ import type { Issue } from "@paperclipai/shared";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface EccAgent {
+interface EaAgent {
   id: string;
   name: string;
   status: string;
@@ -27,7 +27,7 @@ interface EccAgent {
   } | null;
 }
 
-interface EccTopic {
+interface EaTopic {
   id: string;
   name: string;
   companyId: string | null;
@@ -40,7 +40,7 @@ interface LinkedIssue {
   identifier: string;
 }
 
-interface EccConversation {
+interface EaConversation {
   id: string;
   topicName: string | null;
   companyName: string | null;
@@ -104,7 +104,7 @@ const CONV_STATUS_COLOR: Record<string, string> = {
   running: "text-blue-600",
 };
 
-function ConvCard({ conv, onClick }: { conv: EccConversation; onClick: () => void }) {
+function ConvCard({ conv, onClick }: { conv: EaConversation; onClick: () => void }) {
   const isExpired = conv.status === "expired" || daysUntil(conv.expiresAt) <= 0;
   const expiring = !isExpired && conv.status === "active" && daysUntil(conv.expiresAt) <= 3;
   const statusKey = isExpired ? "expired" : conv.status;
@@ -147,9 +147,9 @@ function ConvCard({ conv, onClick }: { conv: EccConversation; onClick: () => voi
   );
 }
 
-// ── EccAgentCard (left panel — ECC Agents section) ───────────────────────────
+// ── EaAgentCard (left panel — EA Agents section) ───────────────────────────
 
-function EccAgentCard({ agent, onClick }: { agent: EccAgent; onClick: () => void }) {
+function EaAgentCard({ agent, onClick }: { agent: EaAgent; onClick: () => void }) {
   const qc = useQueryClient();
   const isProcessing = agent.status === "processing";
   const isPaused = agent.status === "paused" || agent.status === "error";
@@ -167,7 +167,7 @@ function EccAgentCard({ agent, onClick }: { agent: EccAgent; onClick: () => void
   async function resetAgent(e: React.MouseEvent) {
     e.stopPropagation();
     await api.post(`/ecc/agents/${agent.id}/reset`, {});
-    qc.invalidateQueries({ queryKey: ["ecc-agents"] });
+    qc.invalidateQueries({ queryKey: ["ea-agents"] });
   }
 
   return (
@@ -234,7 +234,7 @@ function CompanyCard({
   issues: Issue[] | undefined;
   isLoading: boolean;
   isPersonal: boolean;
-  topics: EccTopic[];
+  topics: EaTopic[];
   runningAgents: WorkflowRun[];
 }) {
   const navigate = useNavigate();
@@ -314,8 +314,8 @@ export function FounderOverview() {
   });
 
   const topicsQuery = useQuery({
-    queryKey: ["ecc-topics", "active"],
-    queryFn: () => api.get<EccTopic[]>("/ecc/topics?status=active"),
+    queryKey: ["topics", "active"],
+    queryFn: () => api.get<EaTopic[]>("/ecc/topics?status=active"),
     staleTime: 30_000,
   });
 
@@ -329,14 +329,14 @@ export function FounderOverview() {
   });
 
   const convsQuery = useQuery({
-    queryKey: ["ecc-conversations", "overview"],
-    queryFn: () => api.get<EccConversation[]>("/ecc/conversations?limit=8"),
+    queryKey: ["ea-conversations", "overview"],
+    queryFn: () => api.get<EaConversation[]>("/ecc/conversations?limit=8"),
     refetchInterval: 15_000,
   });
 
-  const eccAgentsQuery = useQuery({
-    queryKey: ["ecc-agents"],
-    queryFn: () => api.get<EccAgent[]>("/ecc/agents"),
+  const eaAgentsQuery = useQuery({
+    queryKey: ["ea-agents"],
+    queryFn: () => api.get<EaAgent[]>("/ecc/agents"),
     refetchInterval: (query) =>
       query.state.data?.some((a) => a.status === "processing") ? 5_000 : 15_000,
   });
@@ -349,20 +349,20 @@ export function FounderOverview() {
   const companyById = new Map(activeCompanies.map((c) => [c.id, c]));
   const topics = topicsQuery.data ?? [];
   const conversations = convsQuery.data ?? [];
-  const eccAgents = eccAgentsQuery.data ?? [];
+  const eaAgents = eaAgentsQuery.data ?? [];
 
   return (
     <div className="flex flex-col lg:flex-row gap-0 h-full min-h-0">
-      {/* LEFT: ECC Agents + Companies + Needs Attention */}
+      {/* LEFT: EA Agents + Companies + Needs Attention */}
       <div className="flex-[3] pr-0 lg:pr-6 space-y-8 overflow-auto pb-6">
-        {eccAgents.length > 0 && (
+        {eaAgents.length > 0 && (
           <section>
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-              ECC Agents
+              EA Agents
             </h2>
             <div className="grid grid-cols-2 gap-3">
-              {eccAgents.map((agent) => (
-                <EccAgentCard
+              {eaAgents.map((agent) => (
+                <EaAgentCard
                   key={agent.id}
                   agent={agent}
                   onClick={() => navigate(`/agents/${agent.id}/instructions`)}
