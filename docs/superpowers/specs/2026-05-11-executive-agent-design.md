@@ -542,6 +542,60 @@ EA does NOT need to know agent UUIDs — it calls `list_agents(companyId)` and m
 
 ---
 
+## Task 7: EA as Unified Email Triage Agent
+
+**Goal:** Replace the per-account `triageAgentId` with EA so all inbound email flows through the same intake/classification pipeline as Telegram and WhatsApp. Email processor keeps handling IMAP, attachment extraction, and HTML parsing — EA replaces the triage agent at the end of that pipeline.
+
+### Current flow (before)
+
+```
+IMAP monitor → email-processor → wakes triageAgentId (dedicated per-account agent)
+                               → notifyOperatorTelegram (own hardcoded call)
+                               → triage agent creates issue + assigns specialist
+```
+
+### Unified flow (after)
+
+```
+IMAP monitor → email-processor → wakes EA
+EA:  list_issue_emails OR read emailMessage context from issue
+  → search_memory(senderIdentifier=fromAddr) for prior context
+  → score + classify
+  → passive: create_memory(passive), stop
+  → active:  search_topics → create_topic → create_issue → assign specialist → link_topic_to_issue
+  → notify_operator per notification matrix
+```
+
+### Changes
+
+**Files:**
+- Modify: `server/src/services/email-processor.ts` — remove own `notifyOperatorTelegram` calls (EA handles notifications via matrix)
+- Operational: set `emailAccounts.triageAgentId = EA agent ID` for all accounts via UI or migration
+
+**Remove from `email-processor.ts`:**
+
+All `notifyOperatorTelegram` / `sendTelegramMessage` calls inside the email processor. EA's notification matrix takes over. The processor still sends `teamEmails` (those are client-facing account notifications, not operator notifications — keep as-is).
+
+**EA system prompt addition** (add to `AGENTS.md` routing rules section):
+
+```markdown
+## Email triage
+When woken up for an email triage issue:
+1. Call list_issue_emails(issueId) to read the email body, sender, attachments
+2. Use fromAddr as senderIdentifier for search_memory
+3. Score and classify as normal
+4. If active: search_topics, create_topic if needed, create_issue for specialist, link_topic_to_issue
+5. The original triage issue can be closed or linked to the new specialist issue
+```
+
+**Operational setup (not code):**
+
+After EA agent is created, set `triageAgentId` on each `emailAccount` to the EA agent UUID via the Email Accounts settings page. From that point, all new inbound emails wake EA instead of the old triage agent.
+
+**Verification:** Send test email → EA woken up → EA classifies → if score ≥ 60, issue created and assigned to specialist agent. Operator receives Telegram only for event types enabled in notification matrix.
+
+---
+
 ## Out of Scope (V1)
 
 - Slack notification channel (future — use plugin event system after `operator.notification.requested` event added)
@@ -549,3 +603,4 @@ EA does NOT need to know agent UUIDs — it calls `list_agents(companyId)` and m
 - EA-to-EA handoff (future — multi-EA for different personal domains)
 - Automatic memory expiry/cleanup
 - Web UI for memory search (future — can query via EA Telegram commands)
+- Migrating existing triage issues to new EA flow (historical data stays as-is)
