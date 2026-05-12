@@ -533,6 +533,13 @@
       "when": 1778335118186,
       "tag": "0075_amused_wrecker",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1747044000000,
+      "tag": "0076_rename_ecc_to_ea",
+      "breakpoints": true
     }
   ]
 }
