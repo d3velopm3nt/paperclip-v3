@@ -1,8 +1,8 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults } from "@paperclipai/db";
-import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
+import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues } from "@paperclipai/db";
+import { and, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
 import { issueService } from "../services/issues.js";
@@ -424,6 +424,81 @@ const TOOLS = [
         content: { type: "string", description: "Full memory content — specific and actionable" },
         category: { type: "string", description: "pattern | preference | decision | learning | feedback" },
         companyId: { type: "string", description: "Company UUID this memory belongs to. Defaults to current company context." },
+      },
+    },
+  },
+  {
+    name: "search_memory",
+    description: "Search memory items for prior messages, context, or sender history. Use before classifying a new message to understand sender relationship and prior interactions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Full-text search query" },
+        senderIdentifier: { type: "string", description: "Filter by sender email/phone/telegram user" },
+        companyId: { type: "string", description: "Filter by company UUID" },
+        channel: { type: "string", description: "Filter by channel: email | whatsapp | telegram | manual" },
+        memoryType: { type: "string", description: "passive | active | all (default: all)" },
+        limit: { type: "number", description: "Max results (default 20)" },
+      },
+    },
+  },
+  {
+    name: "create_memory",
+    description: "Store a message or context in memory. Use memoryType='passive' for low-importance items. Use memoryType='active' when creating operational context alongside an issue.",
+    inputSchema: {
+      type: "object",
+      required: ["content", "sourceChannel", "memoryType"],
+      properties: {
+        content: { type: "string" },
+        summary: { type: "string" },
+        sourceChannel: { type: "string", description: "email | whatsapp | telegram | manual" },
+        sourceId: { type: "string" },
+        sourceEmailMessageId: { type: "string" },
+        senderIdentifier: { type: "string" },
+        companyId: { type: "string" },
+        intentCategory: { type: "string" },
+        importanceScore: { type: "number", description: "0-100" },
+        memoryType: { type: "string", description: "passive | active" },
+        tags: { type: "array", items: { type: "string" } },
+      },
+    },
+  },
+  {
+    name: "search_topics",
+    description: "Search existing topics. Always check before creating a new topic to avoid duplicates. Topics group related issues under one business context.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search name and summary" },
+        companyId: { type: "string" },
+        status: { type: "string", description: "active | archived | all (default: active)" },
+        limit: { type: "number", description: "Max results (default 20)" },
+      },
+    },
+  },
+  {
+    name: "create_topic",
+    description: "Create a new topic (active memory container). A topic groups related issues under one business context (e.g. 'SafeX Proposal', 'Kevin — Teaming Agreement').",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string" },
+        summary: { type: "string" },
+        currentState: { type: "string" },
+        companyId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "link_topic_to_issue",
+    description: "Link a topic to an issue. Topics can have multiple linked issues.",
+    inputSchema: {
+      type: "object",
+      required: ["topicId", "issueId"],
+      properties: {
+        topicId: { type: "string" },
+        issueId: { type: "string" },
       },
     },
   },
@@ -1397,6 +1472,88 @@ async function handleTool(
     }
 
     return `Plan ${newStatus}. Approval ID: ${approvalId}.`;
+  }
+
+  if (name === "search_memory") {
+    const { query, senderIdentifier, companyId: filterCompanyId, channel, memoryType, limit = 20 } = args as {
+      query?: string; senderIdentifier?: string; companyId?: string; channel?: string; memoryType?: string; limit?: number;
+    };
+    const conditions = [];
+    if (filterCompanyId) conditions.push(eq(memoryItems.companyId, filterCompanyId));
+    if (senderIdentifier) conditions.push(eq(memoryItems.senderIdentifier, senderIdentifier));
+    if (channel) conditions.push(eq(memoryItems.sourceChannel, channel));
+    if (memoryType && memoryType !== "all") conditions.push(eq(memoryItems.memoryType, memoryType));
+    if (query) conditions.push(
+      sql`(${memoryItems.content} ILIKE ${'%' + query + '%'} OR ${memoryItems.summary} ILIKE ${'%' + query + '%'})`
+    );
+    const rows = await db.select().from(memoryItems)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(memoryItems.createdAt))
+      .limit(Math.min(Number(limit), 50));
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "create_memory") {
+    const { content, summary, sourceChannel, sourceId, sourceEmailMessageId, senderIdentifier,
+      companyId: memCompanyId, intentCategory, importanceScore, memoryType, tags } = args as {
+      content: string; summary?: string; sourceChannel: string; sourceId?: string;
+      sourceEmailMessageId?: string; senderIdentifier?: string; companyId?: string;
+      intentCategory?: string; importanceScore?: number; memoryType: string; tags?: string[];
+    };
+    if (!content || !sourceChannel || !memoryType) return "Error: content, sourceChannel, and memoryType are required";
+    const [row] = await db.insert(memoryItems).values({
+      companyId: memCompanyId ?? null,
+      sourceChannel,
+      sourceId: sourceId ?? null,
+      sourceEmailMessageId: sourceEmailMessageId ?? null,
+      senderIdentifier: senderIdentifier ?? null,
+      content,
+      summary: summary ?? null,
+      intentCategory: intentCategory ?? null,
+      importanceScore: importanceScore ?? null,
+      memoryType,
+      tags: tags ?? [],
+    }).returning({ id: memoryItems.id });
+    return `Memory item created: ${row!.id}`;
+  }
+
+  if (name === "search_topics") {
+    const { query, companyId: topicCompanyId, status = "active", limit = 20 } = args as {
+      query?: string; companyId?: string; status?: string; limit?: number;
+    };
+    const conditions = [];
+    if (topicCompanyId) conditions.push(eq(topics.companyId, topicCompanyId));
+    if (status !== "all") conditions.push(eq(topics.status, status));
+    if (query) conditions.push(
+      sql`(${topics.name} ILIKE ${'%' + query + '%'} OR ${topics.summary} ILIKE ${'%' + query + '%'})`
+    );
+    const rows = await db.select().from(topics)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(topics.updatedAt))
+      .limit(Math.min(Number(limit), 50));
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "create_topic") {
+    const { name: topicName, summary, currentState, companyId: topicCompanyId } = args as {
+      name: string; summary?: string; currentState?: string; companyId?: string;
+    };
+    if (!topicName) return "Error: name is required";
+    const [row] = await db.insert(topics).values({
+      name: topicName,
+      summary: summary ?? "",
+      currentState: currentState ?? null,
+      companyId: topicCompanyId ?? null,
+      status: "active",
+    }).returning({ id: topics.id });
+    return `Topic created: ${row!.id}`;
+  }
+
+  if (name === "link_topic_to_issue") {
+    const { topicId, issueId: linkIssueId } = args as { topicId: string; issueId: string };
+    if (!topicId || !linkIssueId) return "Error: topicId and issueId are required";
+    await db.insert(topicIssues).values({ topicId, issueId: linkIssueId }).onConflictDoNothing();
+    return `Linked topic ${topicId} to issue ${linkIssueId}`;
   }
 
   return `Error: unknown tool "${name}"`;
