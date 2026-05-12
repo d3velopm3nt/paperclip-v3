@@ -11,12 +11,12 @@ import { approvals, companies, issues, operatorMessages, workflowRuns, workflowS
 import { and, desc, eq, gte, notInArray } from "drizzle-orm";
 import { signMcpToken } from "./mcp-session-token.js";
 import { logger } from "../middleware/logger.js";
-import { eccConversationsService } from "./ecc-conversations.js";
-import { eccTopicsService } from "./ecc-topics.js";
-import { eccAgentsService } from "./ecc-agents.js";
+import { eaConversationsService } from "./ea-conversations.js";
+import { topicsService } from "./topics.js";
+import { eaAgentsService } from "./ea-agents.js";
 import { notifyOperatorTelegram } from "./telegram-polling.js";
-import type { ConversationMessage } from "./ecc-conversations.js";
-import type { EccAgentMetadata } from "./ecc-agents.js";
+import type { ConversationMessage } from "./ea-conversations.js";
+import type { EaAgentMetadata } from "./ea-agents.js";
 
 export interface OrchestratorInput {
   companyId: string;
@@ -34,7 +34,7 @@ export interface OrchestratorInput {
 
 
 async function buildActiveConversationsContext(db: Db): Promise<{ context: string; inboxTopicId: string }> {
-  const topicSvc = eccTopicsService(db);
+  const topicSvc = topicsService(db);
 
   // Ensure ECC Inbox topic exists for unmatched messages
   const allTopics = await topicSvc.list("active");
@@ -61,7 +61,7 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
 
   // Active conversations with memory
   try {
-    const convSvc = eccConversationsService(db);
+    const convSvc = eaConversationsService(db);
     const active = await convSvc.listAllActive();
     const activeNonInbox = active.filter((c) => c.topicId !== inboxTopic!.id);
 
@@ -211,10 +211,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   const { companyId } = input;
   const isOperator = input.fromType === "operator";
 
-  const eccSvc = eccAgentsService(db);
-  const execAgent = await eccSvc.getEccAgent("operator");
-  const clientAgent = await eccSvc.getEccAgent("client");
-  const activeEccAgent = isOperator ? execAgent : clientAgent;
+  const eaSvc = eaAgentsService(db);
+  const execAgent = await eaSvc.getEaAgent("operator");
+  const clientAgent = await eaSvc.getEaAgent("client");
+  const activeEaAgent = isOperator ? execAgent : clientAgent;
 
   const contextLines: string[] = [
     `## Inbound message`,
@@ -251,12 +251,12 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   // Create stub workflow run so the run always exists (even if agent fails before calling resolve_conversation).
   // resolve_conversation will adopt this run rather than creating a new one.
   let stubRunId: string | null = null;
-  if (activeEccAgent) {
+  if (activeEaAgent) {
     try {
       const sourceId = input.inboundMessageId ?? randomUUID();
       const [stubRun] = await db.insert(workflowRuns).values({
         companyId,
-        agentId: activeEccAgent.id,
+        agentId: activeEaAgent.id,
         workflowType: "ecc_message",
         sourceTable: input.inboundMessageId ? "operator_messages" : "ecc_conversations",
         sourceId,
@@ -278,7 +278,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
 
   const mcpToken = signMcpToken({
     companyId,
-    agentId: activeEccAgent?.id ?? "orchestrator",
+    agentId: activeEaAgent?.id ?? "orchestrator",
     isOperator,
   });
 
@@ -297,7 +297,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     },
   }), "utf-8");
 
-  const adapterCfg = (activeEccAgent?.adapterConfig as Record<string, unknown> | null) ?? {};
+  const adapterCfg = (activeEaAgent?.adapterConfig as Record<string, unknown> | null) ?? {};
   const instructionsFilePath = typeof adapterCfg.instructionsFilePath === "string" && adapterCfg.instructionsFilePath
     ? adapterCfg.instructionsFilePath : null;
 
@@ -305,7 +305,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   if (instructionsFilePath) {
     try {
       systemPrompt = await fs.readFile(instructionsFilePath, "utf-8");
-      logger.info({ agentId: activeEccAgent?.id, instructionsFilePath }, "orchestrator: loaded instructions from file");
+      logger.info({ agentId: activeEaAgent?.id, instructionsFilePath }, "orchestrator: loaded instructions from file");
     } catch (err) {
       logger.warn({ instructionsFilePath, err }, "orchestrator: failed to read instructions file — falling back to systemPrompt");
     }
@@ -320,26 +320,26 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   }
   // Inject agent memories into system prompt (same pattern as heartbeat service)
   let memorySection = "";
-  if (activeEccAgent) {
+  if (activeEaAgent) {
     try {
       const { memoryLoaderService } = await import("./agent-runtime/memory-loader.js");
       const memoryLoader = memoryLoaderService(db);
-      const memories = await memoryLoader.loadMemories(activeEccAgent.id);
+      const memories = await memoryLoader.loadMemories(activeEaAgent.id);
       if (memories.length > 0) {
         memorySection = `\n\n---\n\n# Your Memories\n\nThese are your accumulated learnings. Use them to inform your work.\n\n${
           memories
             .map((m) => `## ${m.title}\n**Category:** ${m.category} | **Source:** ${m.source} | **Scope:** ${m.scope}\n\n${m.content}`)
             .join("\n\n---\n\n")
         }`;
-        logger.info({ agentId: activeEccAgent.id, memoryCount: memories.length }, "orchestrator: injected agent memories");
+        logger.info({ agentId: activeEaAgent.id, memoryCount: memories.length }, "orchestrator: injected agent memories");
       }
     } catch (memErr) {
-      logger.warn({ err: memErr, agentId: activeEccAgent.id }, "orchestrator: failed to load agent memories");
+      logger.warn({ err: memErr, agentId: activeEaAgent.id }, "orchestrator: failed to load agent memories");
     }
   }
   await fs.writeFile(promptPath, systemPrompt + memorySection, "utf-8");
 
-  const agentMeta = (activeEccAgent?.metadata ?? {}) as EccAgentMetadata;
+  const agentMeta = (activeEaAgent?.metadata ?? {}) as EaAgentMetadata;
   const existingSessionId = agentMeta.claudeSessionId;
 
   const args = [
@@ -353,7 +353,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
 
   if (existingSessionId) {
     args.push("--resume", existingSessionId);
-    logger.info({ companyId, agentId: activeEccAgent?.id, sessionId: existingSessionId }, "orchestrator: resuming claude session");
+    logger.info({ companyId, agentId: activeEaAgent?.id, sessionId: existingSessionId }, "orchestrator: resuming claude session");
   }
 
   const stdin = `Human: ${userMessage}`;
@@ -364,7 +364,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   );
 
   const messagePreview = input.body.slice(0, 120);
-  if (activeEccAgent) await eccSvc.setProcessing(activeEccAgent.id, "", "", messagePreview).catch(() => {});
+  if (activeEaAgent) await eaSvc.setProcessing(activeEaAgent.id, "", "", messagePreview).catch(() => {});
 
   const spawnStart = new Date();
   let shouldClearSession = false;
@@ -389,7 +389,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     // Session expired → strip --resume and retry immediately so user still gets a reply
     if (existingSessionId && STALE_SESSION_RE.test(result.stderr)) {
       shouldClearSession = true;
-      logger.warn({ agentId: activeEccAgent?.id, sessionId: existingSessionId }, "orchestrator: stale session — retrying without --resume");
+      logger.warn({ agentId: activeEaAgent?.id, sessionId: existingSessionId }, "orchestrator: stale session — retrying without --resume");
       const resumeIdx = args.indexOf("--resume");
       const freshArgs = resumeIdx >= 0 ? [...args.slice(0, resumeIdx), ...args.slice(resumeIdx + 2)] : args;
       result = await spawnClaude(freshArgs);
@@ -428,11 +428,11 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
 
     // Save the session ID so the next message can resume the conversation (skip if we're about to clear it)
-    if (activeEccAgent && !shouldClearSession) {
+    if (activeEaAgent && !shouldClearSession) {
       const newSessionId = parseSessionId(stdout);
       if (newSessionId) {
-        await eccSvc.saveSessionId(activeEccAgent.id, newSessionId).catch(() => {});
-        logger.info({ agentId: activeEccAgent.id, sessionId: newSessionId }, "orchestrator: saved claude session id");
+        await eaSvc.saveSessionId(activeEaAgent.id, newSessionId).catch(() => {});
+        logger.info({ agentId: activeEaAgent.id, sessionId: newSessionId }, "orchestrator: saved claude session id");
       }
     }
   } catch (orchErr) {
@@ -452,13 +452,13 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
       .catch(() => {});
   } finally {
     // Always reset to idle — even if spawn or anything above throws
-    if (activeEccAgent) await eccSvc.setIdle(activeEccAgent.id, { clearSession: shouldClearSession }).catch(() => {});
+    if (activeEaAgent) await eaSvc.setIdle(activeEaAgent.id, { clearSession: shouldClearSession }).catch(() => {});
   }
 
   if (isOperator) {
     try {
-      const convSvc = eccConversationsService(db);
-      const topicSvc = eccTopicsService(db);
+      const convSvc = eaConversationsService(db);
+      const topicSvc = topicsService(db);
       const active = await convSvc.listAllActive();
       const touched = active.find((c) => c.lastMessageAt >= spawnStart);
       if (touched) {
@@ -469,11 +469,11 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
         // Update inbound message with identified topic + workflow run link
         if (input.inboundMessageId) {
           const topic = await topicSvc.getById(touched.topicId).catch(() => null);
-          const [wfRun] = activeEccAgent
+          const [wfRun] = activeEaAgent
             ? await db
                 .select({ id: workflowRuns.id })
                 .from(workflowRuns)
-                .where(and(eq(workflowRuns.agentId, activeEccAgent.id), gte(workflowRuns.startedAt, spawnStart)))
+                .where(and(eq(workflowRuns.agentId, activeEaAgent.id), gte(workflowRuns.startedAt, spawnStart)))
                 .orderBy(desc(workflowRuns.startedAt))
                 .limit(1)
             : [];
@@ -485,7 +485,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
                 topicId: touched.topicId,
                 topicName: topic?.name ?? null,
                 workflowRunId: wfRun?.id ?? null,
-                eccAgentId: activeEccAgent?.id ?? null,
+                eaAgentId: activeEaAgent?.id ?? null,
               },
             })
             .where(eq(operatorMessages.id, input.inboundMessageId))
@@ -493,11 +493,11 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
         }
       } else if (input.inboundMessageId) {
         // No topic matched — landed in inbox
-        const [wfRun] = activeEccAgent
+        const [wfRun] = activeEaAgent
           ? await db
               .select({ id: workflowRuns.id })
               .from(workflowRuns)
-              .where(and(eq(workflowRuns.agentId, activeEccAgent.id), gte(workflowRuns.startedAt, spawnStart)))
+              .where(and(eq(workflowRuns.agentId, activeEaAgent.id), gte(workflowRuns.startedAt, spawnStart)))
               .orderBy(desc(workflowRuns.startedAt))
               .limit(1)
           : [];
@@ -507,7 +507,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
             rawPayload: {
               identifyStatus: "inbox",
               workflowRunId: wfRun?.id ?? null,
-              eccAgentId: activeEccAgent?.id ?? null,
+              eaAgentId: activeEaAgent?.id ?? null,
             },
           })
           .where(eq(operatorMessages.id, input.inboundMessageId))
