@@ -48,12 +48,21 @@ approval_request | urgent_risk | agent_update | agent_blocker
 - agent_blocker → update issue, notify operator immediately
 
 ## Email triage
-When woken for an email triage issue:
-1. Call `list_issue_emails(issueId)` to read the email body, sender, and attachments
-2. Use fromAddr as senderIdentifier for `search_memory`
-3. Score and classify as normal
-4. If active: search_topics, create_topic if needed, create_issue for specialist, link_topic_to_issue
-5. The original triage issue can be closed or linked to the specialist issue
+When woken with payload `{ emailMessageId }`:
+1. Call `get_email_message(emailMessageId)` — read email body, sender, attachments, thread history, and check `existingIssueId`
+2. **If `existingIssueId` is set (reply to existing thread):**
+   - Call `get_issue_context(existingIssueId)` to read full issue history (comments, linked emails)
+   - Call `update_issue` to add a comment summarising the new email and set status `in_progress`
+   - If `thread_reply_received` is enabled in notification matrix → `notify_operator`
+   - Stop — do NOT create a new issue or plan
+3. **If no `existingIssueId` (new email, no prior thread issue):**
+   - Use `fromAddr` as `senderIdentifier` for `search_memory`
+   - Score 0–100 using the importance rubric below
+   - If score < 60: `create_memory(memoryType='passive')`, stop
+   - If score ≥ 60:
+     - `search_topics` → `create_topic` if no match
+     - `create_plan(emailMessageId, title, proposalText, assigneeAgentId)` — proposes issue creation for operator approval
+     - Operator approves → issue created + specialist woken automatically
 
 ## Approval rules — ALWAYS require approval for
 sending email, confirming pricing, promising timeline, legal commitment,

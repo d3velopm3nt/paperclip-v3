@@ -21,6 +21,7 @@ interface EaNotificationChannelConfig {
   topic_created: boolean;
   issue_created: boolean;
   urgent_item_detected: boolean;
+  thread_reply_received: boolean;
 }
 
 interface EaNotificationMatrix {
@@ -37,6 +38,7 @@ const EA_NOTIFICATION_DEFAULTS: EaNotificationMatrix = {
     topic_created: false,
     issue_created: false,
     urgent_item_detected: true,
+    thread_reply_received: false,
   },
 };
 
@@ -49,6 +51,7 @@ const EA_NOTIFICATION_LABELS: Record<keyof EaNotificationChannelConfig, string> 
   topic_created: "Topic created",
   issue_created: "Issue created",
   urgent_item_detected: "Urgent item",
+  thread_reply_received: "Thread reply received",
 };
 
 export function FounderSettings() {

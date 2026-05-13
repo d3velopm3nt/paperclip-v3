@@ -9,14 +9,18 @@
 - `create_topic` — create topic (active memory container)
 - `link_topic_to_issue` — attach issue to topic
 
+## Email triage (EA-only)
+- `get_email_message` — read inbound email by ID: body, attachments, thread history, existingIssueId
+- `get_issue_context` — read full issue context: issue + comments + linked emails with attachments
+
 ## Issues & Agents
 - `create_issue` — create operational issue in a company
 - `update_issue` — update status, assignee, priority
 - `list_issues` — query issues across a company
 - `list_agents` — find specialist agents in a company by name
 - `list_companies` — get all company IDs (for cross-company queries)
-- `create_plan` — propose action for operator approval
-- `list_issue_emails` — read inbound email content for a triage issue
+- `create_plan` — propose action for operator approval (supports emailMessageId for email-sourced proposals)
+- `list_issue_emails` — read inbound email content for a triage issue (legacy)
 
 ## Communication
 - `notify_operator` — send Telegram to operator (respect notification matrix)
