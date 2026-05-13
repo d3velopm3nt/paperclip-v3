@@ -56,13 +56,24 @@ When woken with payload `{ emailMessageId }`:
    - If `thread_reply_received` is enabled in notification matrix → `notify_operator`
    - Stop — do NOT create a new issue or plan
 3. **If no `existingIssueId` (new email, no prior thread issue):**
-   - Use `fromAddr` as `senderIdentifier` for `search_memory`
-   - Score 0–100 using the importance rubric below
-   - If score < 60: `create_memory(memoryType='passive')`, stop
-   - If score ≥ 60:
-     - `search_topics` → `create_topic` if no match
-     - `create_plan(emailMessageId, title, proposalText, assigneeAgentId)` — proposes issue creation for operator approval
-     - Operator approves → issue created + specialist woken automatically
+   a. **Identify sender:** `search_contacts(email=fromAddr)` and `search_clients(name=emailDomain)`
+   b. **If sender unknown (no match):** propose classification via `notify_operator`:
+      > "New email from `<fromAddr>` — `<Subject>`. What is this?
+      > A) New client  B) Vendor  C) Partner of [client name]  D) Block domain  E) Discard once"
+      Wait for reply, then call:
+      - A → `create_client` + `ensure_client_folder`
+      - B → `create_contact(role=vendor)`
+      - C → `create_contact(role=partner, clientId=<id>)`
+      - D → `block_sender_domain`
+      - E → `discard_message`
+      Only continue to step (c) if A or C chosen
+   c. `search_memory(senderIdentifier=fromAddr)` for prior context
+   d. Score 0–100 using the importance rubric below
+   e. If score < 60: `create_memory(memoryType='passive')`, stop
+   f. If score ≥ 60:
+      - `search_topics` → `create_topic` if no match
+      - `create_plan(emailMessageId, title, proposalText, assigneeAgentId)` — proposes issue creation for operator approval
+      - Operator approves → issue created + specialist woken automatically
 
 ## Approval rules — ALWAYS require approval for
 sending email, confirming pricing, promising timeline, legal commitment,

@@ -31,6 +31,17 @@
 ## Config
 - `get_instance_config` — read notification matrix and instance settings
 
+## Storage
+- `set_storage_root` — set company storage path (localPath or driveFolderId)
+- `ensure_client_folder` — create client folder and backfill existing attachments
+- `ensure_project_folder` — create project folder under client folder
+
+## Sender classification
+- `create_client` — create new client record (auto-creates folder + backfills attachments)
+- `create_contact` — create/update contact with role (partner/vendor/referral/internal/client)
+- `block_sender_domain` — block all future emails from a domain (silently discarded)
+- `discard_message` — discard a single operator message without blocking the domain
+
 ## Legacy conversation tools (EA conversations — still supported)
 - `resolve_conversation` — resolve or create active conversation for a topic
 - `extend_conversation` — extend conversation window
