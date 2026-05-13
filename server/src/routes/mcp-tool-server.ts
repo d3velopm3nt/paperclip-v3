@@ -1,7 +1,7 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues } from "@paperclipai/db";
+import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
@@ -17,6 +17,14 @@ import { sendTelegramMessage } from "../services/telegram-adapter.js";
 import { notifyOperatorTelegram } from "../services/telegram-polling.js";
 import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
 import { readInstanceToken } from "../services/instance-token-store.js";
+import {
+  setCompanyStorageRoot,
+  ensureClientFolder,
+  ensureProjectFolder,
+  backfillClientAttachments,
+} from "../services/client-storage.js";
+import { clientService } from "../services/clients.js";
+import { contactService } from "../services/contacts.js";
 
 // ── JSON-RPC helpers ──────────────────────────────────────────────────────────
 
@@ -525,6 +533,95 @@ const TOOLS = [
       properties: {
         topicId: { type: "string" },
         issueId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "set_storage_root",
+    description: "Set the company storage root for filing attachments and client folders. Pass localPath for a local filesystem path (including a mounted Google Drive path). Pass driveFolderId for a native Google Drive folder ID.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        localPath: { type: "string", description: "Absolute local path (e.g. /home/user/Google Drive/Paperclip)" },
+        driveFolderId: { type: "string", description: "Google Drive folder ID" },
+        companyId: { type: "string", description: "Company UUID. Defaults to agent's company." },
+      },
+    },
+  },
+  {
+    name: "ensure_client_folder",
+    description: "Create the storage folder for a client (if it does not exist) and backfill all unfiled email attachments into it. Call after set_storage_root or after creating a client.",
+    inputSchema: {
+      type: "object",
+      required: ["clientId"],
+      properties: {
+        clientId: { type: "string", description: "UUID of the client" },
+      },
+    },
+  },
+  {
+    name: "ensure_project_folder",
+    description: "Create the storage folder for a project under its client folder.",
+    inputSchema: {
+      type: "object",
+      required: ["projectId"],
+      properties: {
+        projectId: { type: "string", description: "UUID of the project" },
+      },
+    },
+  },
+  {
+    name: "create_client",
+    description: "Create a new client record. Automatically creates their storage folder and backfills existing email attachments into it. Use when an unknown sender is confirmed as a new client.",
+    inputSchema: {
+      type: "object",
+      required: ["name"],
+      properties: {
+        name: { type: "string", description: "Client display name" },
+        emailDomain: { type: "string", description: "Primary email domain (e.g. acme.com)" },
+        extraEmails: { type: "array", items: { type: "string" }, description: "Individual email addresses to route to this client" },
+        companyId: { type: "string", description: "Company UUID. Defaults to agent's company." },
+      },
+    },
+  },
+  {
+    name: "create_contact",
+    description: "Register a specific email address as a contact with a role (partner, vendor, referral, internal, client). Link to an existing client with clientId.",
+    inputSchema: {
+      type: "object",
+      required: ["email", "role"],
+      properties: {
+        email: { type: "string", description: "Contact email address" },
+        firstName: { type: "string", description: "Contact first name" },
+        lastName: { type: "string", description: "Contact last name" },
+        role: { type: "string", description: "partner | vendor | referral | internal | client" },
+        clientId: { type: "string", description: "UUID of client to link this contact to" },
+        companyId: { type: "string", description: "Company UUID. Defaults to agent's company." },
+      },
+    },
+  },
+  {
+    name: "block_sender_domain",
+    description: "Block all future emails from a domain. Emails from blocked domains are silently discarded without creating issues or notifying the operator.",
+    inputSchema: {
+      type: "object",
+      required: ["domain"],
+      properties: {
+        domain: { type: "string", description: "Domain to block (e.g. spam.com)" },
+        reason: { type: "string", description: "Why this domain is blocked" },
+        companyId: { type: "string", description: "Company UUID. Defaults to agent's company." },
+      },
+    },
+  },
+  {
+    name: "discard_message",
+    description: "Mark a specific operator message as discarded. One-off action — does not block the sender's domain. Use for single irrelevant messages.",
+    inputSchema: {
+      type: "object",
+      required: ["messageId"],
+      properties: {
+        messageId: { type: "string", description: "UUID of the operator_messages row to discard" },
+        reason: { type: "string", description: "Why this message is discarded (optional, for logging)" },
       },
     },
   },
@@ -1701,6 +1798,81 @@ async function handleTool(
     if (!topicId || !linkIssueId) return "Error: topicId and issueId are required";
     await db.insert(topicIssues).values({ topicId, issueId: linkIssueId }).onConflictDoNothing();
     return `Linked topic ${topicId} to issue ${linkIssueId}`;
+  }
+
+  if (name === "set_storage_root") {
+    const { localPath, driveFolderId } = args as { localPath?: string; driveFolderId?: string };
+    await setCompanyStorageRoot(db, effectiveCompanyId, {
+      localPath: localPath ?? null,
+      driveFolderId: driveFolderId ?? null,
+    });
+    return JSON.stringify({ localPath: localPath ?? null, driveFolderId: driveFolderId ?? null });
+  }
+
+  if (name === "ensure_client_folder") {
+    const { clientId } = args as { clientId: string };
+    await ensureClientFolder(db, clientId);
+    void backfillClientAttachments(db, clientId).catch((e) =>
+      logger.warn({ err: e, clientId }, "mcp: backfillClientAttachments failed"),
+    );
+    return `Client folder ensured for ${clientId}. Backfill started.`;
+  }
+
+  if (name === "ensure_project_folder") {
+    const { projectId } = args as { projectId: string };
+    await ensureProjectFolder(db, projectId);
+    return `Project folder ensured for ${projectId}.`;
+  }
+
+  if (name === "create_client") {
+    const { name: clientName, emailDomain, extraEmails } = args as {
+      name: string; emailDomain?: string; extraEmails?: string[];
+    };
+    if (!clientName) return "Error: name is required";
+    const svc = clientService(db);
+    const client = await svc.create(effectiveCompanyId, {
+      name: clientName,
+      emailDomain: emailDomain ?? null,
+      extraEmails: extraEmails ?? [],
+    });
+    void backfillClientAttachments(db, client.id).catch((e) =>
+      logger.warn({ err: e, clientId: client.id }, "mcp: backfillClientAttachments failed"),
+    );
+    return JSON.stringify({ clientId: client.id, name: client.name, emailDomain: client.emailDomain });
+  }
+
+  if (name === "create_contact") {
+    const { email, firstName, lastName, role, clientId: contactClientId } = args as {
+      email: string; firstName?: string; lastName?: string; role?: string; clientId?: string;
+    };
+    if (!email) return "Error: email is required";
+    const svc = contactService(db);
+    const contact = await svc.upsertByEmail(effectiveCompanyId, email, contactClientId ?? null);
+    if (firstName !== undefined || lastName !== undefined || role !== undefined) {
+      await svc.update(effectiveCompanyId, contact.id, { firstName, lastName, role });
+    }
+    return JSON.stringify({ contactId: contact.id, email: contact.email });
+  }
+
+  if (name === "block_sender_domain") {
+    const { domain, reason } = args as { domain: string; reason?: string };
+    if (!domain) return "Error: domain is required";
+    const normalised = domain.trim().toLowerCase().replace(/^@+/, "");
+    await db
+      .insert(blockedSenderDomains)
+      .values({ companyId: effectiveCompanyId, domain: normalised, reason: reason ?? null })
+      .onConflictDoNothing();
+    return `Domain ${normalised} blocked.`;
+  }
+
+  if (name === "discard_message") {
+    const { messageId } = args as { messageId: string };
+    if (!messageId) return "Error: messageId is required";
+    await db
+      .update(operatorMessages)
+      .set({ discardedAt: new Date() })
+      .where(and(eq(operatorMessages.id, messageId), eq(operatorMessages.companyId, effectiveCompanyId)));
+    return `Message ${messageId} discarded.`;
   }
 
   return `Error: unknown tool "${name}"`;
