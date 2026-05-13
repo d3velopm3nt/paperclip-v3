@@ -2,7 +2,7 @@
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues } from "@paperclipai/db";
-import { and, desc, eq, gte, ilike, isNull, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
 import { issueService } from "../services/issues.js";
@@ -10,6 +10,7 @@ import { topicsService } from "../services/topics.js";
 import { eaConversationsService } from "../services/ea-conversations.js";
 import type { ConversationMessage } from "../services/ea-conversations.js";
 import { eaAgentsService } from "../services/ea-agents.js";
+import { planGateService } from "../services/plan-gate.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
@@ -186,13 +187,16 @@ const TOOLS = [
   },
   {
     name: "create_plan",
-    description: "Create a plan for an issue and queue it for operator approval. Returns the approval ID. The operator will see the proposal and can approve, decline, or question it.",
+    description: "Create a plan for operator approval. Two modes: (1) issue-linked: pass issueId to propose work on an existing issue; (2) email-sourced: pass emailMessageId (no issueId) to propose creating a new issue from an inbound email — used by the EA triage flow. Returns planId and approvalId.",
     inputSchema: {
       type: "object",
-      required: ["issueId", "proposalText"],
+      required: ["proposalText"],
       properties: {
-        issueId: { type: "string", description: "UUID of the issue this plan addresses" },
+        issueId: { type: "string", description: "UUID of an existing issue this plan addresses. Omit when proposing issue creation from an email." },
+        emailMessageId: { type: "string", description: "UUID of the source email_messages row. Required when proposing issue creation (no issueId). The EA triage flow passes this." },
+        title: { type: "string", description: "Proposed issue title (used when kind=create_issue without an existing issue)" },
         proposalText: { type: "string", description: "Full human-readable plan shown to operator for approval" },
+        assigneeAgentId: { type: "string", description: "UUID of the specialist agent to assign the new issue to on approval" },
         steps: { type: "array", items: { type: "string" }, description: "Ordered list of plan steps (optional, rendered inside proposalText)" },
       },
     },
@@ -300,6 +304,28 @@ const TOOLS = [
   {
     name: "list_issue_emails",
     description: "List emails linked to an issue. Returns sender, subject, body preview, and attachment file paths on disk so the agent can read them directly.",
+    inputSchema: {
+      type: "object",
+      required: ["issueId"],
+      properties: {
+        issueId: { type: "string", description: "UUID of the issue" },
+      },
+    },
+  },
+  {
+    name: "get_email_message",
+    description: "Read a single inbound email by ID. Returns sender, subject, body, attachments, and the thread history for any prior emails in the same thread. Also returns existingIssueId if any thread email is already linked to an issue — use this to detect reply threads before creating a new issue.",
+    inputSchema: {
+      type: "object",
+      required: ["emailMessageId"],
+      properties: {
+        emailMessageId: { type: "string", description: "UUID of the email_messages row" },
+      },
+    },
+  },
+  {
+    name: "get_issue_context",
+    description: "Read full context for an existing issue: the issue record, all comments, and all linked emails (with attachments). Use when a reply email arrives with an existingIssueId to understand prior history before adding a comment.",
     inputSchema: {
       type: "object",
       required: ["issueId"],
@@ -901,11 +927,47 @@ async function handleTool(
   }
 
   if (name === "create_plan") {
-    const { issueId, proposalText, steps } = args as { issueId: string; proposalText: string; steps?: string[] };
-    const [issueRow] = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1);
-    if (!issueRow) return `Error: issue ${issueId} not found`;
+    const { issueId, emailMessageId, title, proposalText, assigneeAgentId, steps } = args as {
+      issueId?: string;
+      emailMessageId?: string;
+      title?: string;
+      proposalText: string;
+      assigneeAgentId?: string;
+      steps?: string[];
+    };
     const stepsText = steps?.length ? "\n\nSteps:\n" + steps.map((s, i) => `  ${i + 1}. ${s}`).join("\n") : "";
     const fullProposal = `${proposalText}${stepsText}`;
+
+    if (emailMessageId && !issueId) {
+      // EA email-sourced path: propose a new issue without an existing issue.
+      if (!callerAgentId) return "Error: create_plan with emailMessageId requires an authenticated agent caller";
+      const [emailRow] = await db
+        .select({ matchedCompanyId: emailMessages.matchedCompanyId })
+        .from(emailMessages)
+        .where(eq(emailMessages.id, emailMessageId))
+        .limit(1);
+      if (!emailRow?.matchedCompanyId) return `Error: email ${emailMessageId} not found or has no matchedCompanyId`;
+      const { planId, approvalId } = await planGateService(db).proposePlan({
+        companyId: emailRow.matchedCompanyId,
+        agentId: callerAgentId,
+        actionType: "create_issue",
+        kind: "create_issue",
+        proposalText: fullProposal,
+        sourceEmailMessageId: emailMessageId,
+        assigneeAgentId: assigneeAgentId ?? null,
+        bypassReadinessGate: true,
+      });
+      try {
+        const planNotice = `📋 *New lead — approval required*\n\n${title ? `**${title}**\n\n` : ""}${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nPlan ID: \`${planId}\``;
+        await notifyOperatorTelegram(db, planNotice);
+      } catch { /* non-fatal */ }
+      return JSON.stringify({ planId, approvalId });
+    }
+
+    // Legacy issue-linked path
+    if (!issueId) return "Error: create_plan requires either issueId or emailMessageId";
+    const [issueRow] = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1);
+    if (!issueRow) return `Error: issue ${issueId} not found`;
     const [approval] = await db.insert(approvals).values({
       companyId: issueRow.companyId,
       type: "plan",
@@ -914,7 +976,6 @@ async function handleTool(
       payload: { issueId, proposalText: fullProposal, steps: steps ?? [] },
     }).returning({ id: approvals.id });
 
-    // Auto-notify operator so JayJay sees the plan without waiting for notify_operator
     try {
       const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — ECC will call approve_plan.`;
       await notifyOperatorTelegram(db, planNotice);
@@ -1137,6 +1198,92 @@ async function handleTool(
       };
     }));
     return JSON.stringify(result, null, 2);
+  }
+
+  if (name === "get_email_message") {
+    const { emailMessageId } = args as { emailMessageId: string };
+    const [row] = await db
+      .select({
+        id: emailMessages.id,
+        fromAddr: emailMessages.fromAddr,
+        subject: emailMessages.subject,
+        body: emailMessages.body,
+        receivedAt: emailMessages.receivedAt,
+        inReplyToHeader: emailMessages.inReplyToHeader,
+        referencesHeaders: emailMessages.referencesHeaders,
+        emailAccountId: emailMessages.emailAccountId,
+        issueId: emailMessages.issueId,
+      })
+      .from(emailMessages)
+      .where(eq(emailMessages.id, emailMessageId))
+      .limit(1);
+    if (!row) return `Email message not found: ${emailMessageId}`;
+
+    const attachments = await db
+      .select({ filename: emailAttachments.filename, contentType: emailAttachments.contentType, sizeBytes: emailAttachments.sizeBytes })
+      .from(emailAttachments)
+      .where(and(eq(emailAttachments.emailMessageId, emailMessageId), eq(emailAttachments.isInline, false)));
+
+    const referencedMsgIds = [
+      ...(row.referencesHeaders ?? []),
+      ...(row.inReplyToHeader ? [row.inReplyToHeader] : []),
+    ];
+    let threadHistory: Array<{ id: string; fromAddr: string; subject: string | null; body: string; receivedAt: Date; issueId: string | null }> = [];
+    if (referencedMsgIds.length > 0) {
+      threadHistory = await db
+        .select({ id: emailMessages.id, fromAddr: emailMessages.fromAddr, subject: emailMessages.subject, body: emailMessages.body, receivedAt: emailMessages.receivedAt, issueId: emailMessages.issueId })
+        .from(emailMessages)
+        .where(and(eq(emailMessages.emailAccountId, row.emailAccountId), inArray(emailMessages.messageIdHeader, referencedMsgIds)))
+        .orderBy(emailMessages.receivedAt);
+    }
+    const existingIssueId = threadHistory.find((t) => t.issueId)?.issueId ?? row.issueId ?? null;
+
+    return JSON.stringify({
+      id: row.id,
+      fromAddr: row.fromAddr,
+      subject: row.subject,
+      body: row.body,
+      receivedAt: row.receivedAt,
+      attachmentSummaries: attachments,
+      threadHistory: threadHistory.map((t) => ({ id: t.id, fromAddr: t.fromAddr, subject: t.subject, body: t.body, receivedAt: t.receivedAt, issueId: t.issueId })),
+      existingIssueId,
+    }, null, 2);
+  }
+
+  if (name === "get_issue_context") {
+    const { issueId: ctxIssueId } = args as { issueId: string };
+    const [issueRow] = await db
+      .select({ id: issues.id, identifier: issues.identifier, title: issues.title, description: issues.description, status: issues.status, priority: issues.priority, assigneeAgentId: issues.assigneeAgentId })
+      .from(issues)
+      .where(eq(issues.id, ctxIssueId))
+      .limit(1);
+    if (!issueRow) return `Issue not found: ${ctxIssueId}`;
+
+    const commentRows = await db
+      .select({ id: issueComments.id, body: issueComments.body, authorAgentId: issueComments.authorAgentId, authorUserId: issueComments.authorUserId, createdAt: issueComments.createdAt })
+      .from(issueComments)
+      .where(eq(issueComments.issueId, ctxIssueId))
+      .orderBy(issueComments.createdAt);
+
+    const emailRows = await db
+      .select({ id: emailMessages.id, fromAddr: emailMessages.fromAddr, subject: emailMessages.subject, body: emailMessages.body, receivedAt: emailMessages.receivedAt })
+      .from(emailMessages)
+      .where(eq(emailMessages.issueId, ctxIssueId))
+      .orderBy(emailMessages.receivedAt);
+
+    const emailsWithAttachments = await Promise.all(emailRows.map(async (msg) => {
+      const atts = await db
+        .select({ filename: emailAttachments.filename, contentType: emailAttachments.contentType, sizeBytes: emailAttachments.sizeBytes })
+        .from(emailAttachments)
+        .where(and(eq(emailAttachments.emailMessageId, msg.id), eq(emailAttachments.isInline, false)));
+      return { ...msg, attachmentSummaries: atts };
+    }));
+
+    return JSON.stringify({
+      issue: issueRow,
+      comments: commentRows,
+      emails: emailsWithAttachments,
+    }, null, 2);
   }
 
   if (name === "list_companies") {
