@@ -547,6 +547,13 @@
       "when": 1778612796694,
       "tag": "0077_confused_mole_man",
       "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1778683732548,
+      "tag": "0078_fuzzy_black_tarantula",
+      "breakpoints": true
     }
   ]
 }
