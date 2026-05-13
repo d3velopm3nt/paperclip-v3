@@ -16,18 +16,23 @@
 2. `email-processor.ts` resolves `triageAgentId` → queries `agents` table for `adapterType`
 3. `adapterType === "ea"` → skip `createTriageIssue`, call `heartbeat.enqueueWakeup(eaAgentId, { source: "assignment", reason: "email-triage", payload: { emailMessageId } })`
 4. EA wakes, calls `get_email_message(emailMessageId)`
-   - Returns: `fromAddr`, `subject`, `body`, `receivedAt`, `attachmentSummaries`, `threadHistory` (prior emails in thread), `existingIssueId: null`
-5. EA calls `search_memory(senderIdentifier=fromAddr)` for prior context
-6. EA scores 0–100 using existing importance scoring rubric
-7. **Score < 60** → `create_memory(passive)`, stop
-8. **Score ≥ 60**:
-   - `search_topics` → `create_topic` if no match
-   - `create_plan(emailMessageId, title, proposalText, assigneeAgentId)` → stores plan with `sourceEmailMessageId`, notifies operator on Telegram
-9. **Operator approves** → `executePlan()` runs:
-   - Creates issue, assigns to `assigneeAgentId`
-   - `UPDATE email_messages SET issue_id = <newIssueId> WHERE id = <emailMessageId>`
-   - `heartbeat.enqueueWakeup(assigneeAgentId, { source: "assignment", reason: "plan-approved", payload: { issueId } })`
-10. **Operator rejects** → plan marked rejected in DB, no issue created, no further action
+   - Returns: `fromAddr`, `subject`, `body`, `receivedAt`, `attachmentSummaries`, `threadHistory`, `existingIssueId: null`, `clientFolderPath` (if sender is known client with configured folder)
+5. EA calls `search_contacts(fromAddr)` + `search_clients(emailDomain)` to identify sender
+6. **Sender unknown** (no contact or client match) → classification flow BEFORE scoring:
+   - EA proposes to operator: *"New email from X — A) New client B) Vendor C) Partner of [client] D) Block domain E) Discard once"*
+   - Operator replies → EA calls `create_client` / `create_contact` / `block_sender_domain` / `discard_message` as appropriate
+   - If classified as client → continue to step 7; otherwise stop
+7. EA calls `search_memory(senderIdentifier=fromAddr)` for prior context
+8. EA scores 0–100 using existing importance scoring rubric
+9. **Score < 60** → `create_memory(passive)`, stop
+10. **Score ≥ 60**:
+    - `search_topics` → `create_topic` if no match
+    - `create_plan(emailMessageId, title, proposalText, assigneeAgentId)` → stores plan with `sourceEmailMessageId`, notifies operator on Telegram
+11. **Operator approves** → `executePlan()` runs:
+    - Creates issue, assigns to `assigneeAgentId`
+    - `UPDATE email_messages SET issue_id = <newIssueId> WHERE id = <emailMessageId>`
+    - `heartbeat.enqueueWakeup(assigneeAgentId, { source: "assignment", reason: "plan-approved", payload: { issueId } })`
+12. **Operator rejects** → plan marked rejected in DB, no issue created, no further action
 
 ### Reply email — existing thread issue found
 
@@ -56,6 +61,13 @@ In `routeInbound()`, after resolving `triageAgentId`:
 ```typescript
 const triageAgent = await db.select({ adapterType: agents.adapterType })
   .from(agents).where(eq(agents.id, triageAgentId)).limit(1);
+
+// Spam domain check — applies to all adapter types
+const domain = fromAddr.split("@")[1] ?? "";
+const blocked = domain && await db.select().from(blockedSenderDomains)
+  .where(and(eq(blockedSenderDomains.companyId, companyId), eq(blockedSenderDomains.domain, domain)))
+  .limit(1);
+if (blocked?.length) return; // silent discard
 
 if (triageAgent[0]?.adapterType === "ea") {
   // New path: skip triage issue, wake EA directly
@@ -86,6 +98,7 @@ if (triageAgent[0]?.adapterType === "ea") {
   attachmentSummaries: Array<{ filename: string; contentType: string; sizeBytes: number }>;
   threadHistory: Array<{ id: string; fromAddr: string; subject: string | null; body: string; receivedAt: string; issueId: string | null }>;
   existingIssueId: string | null; // set if any thread email has issue_id
+  clientFolderPath: string | null; // local path or drive:<folderId>, if sender is known client with configured folder
 }
 ```
 
@@ -173,9 +186,12 @@ When woken with payload { emailMessageId }:
    - Notify operator if thread_reply_received enabled in matrix
    - Stop — do NOT create new issue or plan
 3. If no existingIssueId:
-   - Use fromAddr as senderIdentifier for search_memory
-   - Score and classify as normal
-   - If score < 60: create_memory(passive), stop
+   - Call search_contacts(fromAddr) + search_clients(emailDomain) to identify sender
+   - If sender unknown (no match): ask operator A) New client B) Vendor C) Partner of [client] D) Block domain E) Discard once
+     - Wait for reply. Call create_client / create_contact / block_sender_domain / discard_message as instructed
+     - Only continue scoring if operator chose A (new client) or C (partner)
+   - Call search_memory(fromAddr) for prior context
+   - Score 0–100. If score < 60: create_memory(passive), stop
    - If score ≥ 60: search_topics → create_topic if needed → create_plan(emailMessageId, title, proposalText, assigneeAgentId)
 ```
 
