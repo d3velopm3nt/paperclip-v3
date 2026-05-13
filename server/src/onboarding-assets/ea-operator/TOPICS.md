@@ -13,7 +13,7 @@ The Active Conversations context shows what is currently open. Use it for memory
 - Unknown subject → do NOT guess; ask JayJay via notify_operator
 
 **When no topic matches:**
-1. Use the ECC Inbox topic-id (provided in context under "Inbox fallback") for resolve_conversation — this ensures the message is logged.
+1. Use the EA Inbox topic-id (provided in context under "Inbox fallback") for resolve_conversation — this ensures the message is logged.
 2. Call notify_operator: "Message received about [X]. Logged to Inbox. Should I create a new topic '[suggested name]' under [company]? Or assign to an existing topic?"
 3. Call complete_conversation_turn as normal.
 4. On JayJay's confirmation in the next message, create the topic (with approval) and the next conversation will use the correct topic.

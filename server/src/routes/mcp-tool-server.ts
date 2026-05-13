@@ -977,7 +977,7 @@ async function handleTool(
     }).returning({ id: approvals.id });
 
     try {
-      const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — ECC will call approve_plan.`;
+      const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — EA will call approve_plan.`;
       await notifyOperatorTelegram(db, planNotice);
     } catch { /* non-fatal */ }
 

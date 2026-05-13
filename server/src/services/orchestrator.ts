@@ -36,11 +36,11 @@ export interface OrchestratorInput {
 async function buildActiveConversationsContext(db: Db): Promise<{ context: string; inboxTopicId: string }> {
   const topicSvc = topicsService(db);
 
-  // Ensure ECC Inbox topic exists for unmatched messages
+  // Ensure EA Inbox topic exists for unmatched messages
   const allTopics = await topicSvc.list("active");
-  let inboxTopic = allTopics.find((t) => t.name === "ECC Inbox");
+  let inboxTopic = allTopics.find((t) => t.name === "EA Inbox");
   if (!inboxTopic) {
-    inboxTopic = await topicSvc.create({ name: "ECC Inbox", companyId: null });
+    inboxTopic = await topicSvc.create({ name: "EA Inbox", companyId: null });
   }
 
   // Build companyId → name map for human-readable topic context
@@ -50,7 +50,7 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
   const lines: string[] = [];
 
   // All available topics (for matching)
-  const topicsExceptInbox = allTopics.filter((t) => t.name !== "ECC Inbox");
+  const topicsExceptInbox = allTopics.filter((t) => t.name !== "EA Inbox");
   if (topicsExceptInbox.length > 0) {
     lines.push("\n## Available Topics");
     for (const t of topicsExceptInbox) {
@@ -107,7 +107,7 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
     // non-fatal
   }
 
-  lines.push(`\n## Inbox fallback\nIf no topic matches, use topic-id: ${inboxTopic.id} (ECC Inbox) for resolve_conversation, then notify_operator asking JayJay which topic to assign.`);
+  lines.push(`\n## Inbox fallback\nIf no topic matches, use topic-id: ${inboxTopic.id} (EA Inbox) for resolve_conversation, then notify_operator asking JayJay which topic to assign.`);
 
   // Recent issues across all companies (last 48h, non-closed) — lets ECC know what CCC handled
   try {
