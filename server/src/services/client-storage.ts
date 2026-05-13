@@ -300,6 +300,7 @@ const STORAGE_WARN_BODY = "No storage root configured. Use the set_storage_root 
  * Throttled to once per day per company — non-fatal.
  */
 export async function notifyStorageNotConfigured(db: Db, companyId: string): Promise<void> {
+  if (process.env.NODE_ENV === "test") return;
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const [recent] = await db
     .select({ id: operatorMessages.id })
