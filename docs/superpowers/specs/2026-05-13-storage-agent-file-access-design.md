@@ -77,9 +77,10 @@ Currently only email attachments are filed. Extend `fileAttachmentToClientFolder
 
 Same-domain matching (`resolveClientByEmail`) already works today — no router change needed for known-domain emails. The EA automatically calls `create_contact` for the specific email address without operator confirmation.
 
-For truly unknown domains (no client match at all), change `inbound-router.ts`:
-- Set `fromType = "client"`, `clientId = undefined` (not `"operator"`)
-- Pass `isNewSender: true` flag to orchestrator context
+For truly unknown domains (no client match at all):
+
+- In **non-EA email flows** (`adapterType !== "ea"`), change `inbound-router.ts`: set `fromType = "client"`, `clientId = undefined`, pass `isNewSender: true` flag to orchestrator context.
+- In **EA email flows** (`adapterType === "ea"`), the EA is woken directly by `email-processor.ts` and never hits `inbound-router.ts`. The EA detects unknown senders itself by calling `search_contacts(fromAddr)` + `search_clients(emailDomain)` at the start of its flow. If both return nothing → classification flow runs BEFORE scoring (see EA AGENTS.md update in intake gate spec).
 
 ### Spam domain blocking
 
@@ -94,7 +95,7 @@ created_at  timestamptz not null default now()
 unique(company_id, domain)
 ```
 
-Inbound router checks this table before routing. Match → silent discard, no issue created, no operator notification.
+Check happens in `email-processor.ts` BEFORE the EA wakeup branch (not in `inbound-router.ts`), so it applies to all incoming email regardless of adapter type. Match → silent discard, no issue created, no operator notification, no EA wakeup.
 
 ### Classification flow for unknown senders
 
@@ -140,6 +141,7 @@ Agents need to know WHERE the client folder is to read files natively via their 
 
 Add `clientFolderPath` to MCP tool responses where a client with a configured folder is involved:
 
+- `get_email_message` response (new tool in intake gate spec): include `clientFolderPath` when sender is a known client with a configured folder
 - `list_issues` response: each issue with a `clientId` includes `clientFolderPath` (local path or `drive:<folderId>`)
 - `create_issue` response: include `clientFolderPath` if client has folder configured
 - `get_client` response: include `localPath` and `driveFolderId` fields

@@ -223,6 +223,8 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     `From: ${input.fromAddr}`,
   ];
 
+  let operatorInboxTopicId: string | null = null;
+
   if (isOperator) {
     // Give ECC full company list in context so it doesn't need to discover them
     try {
@@ -235,7 +237,8 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
     }
 
     // Inject topics + active conversations + inbox fallback
-    const { context: convContext } = await buildActiveConversationsContext(db);
+    const { context: convContext, inboxTopicId } = await buildActiveConversationsContext(db);
+    operatorInboxTopicId = inboxTopicId;
     if (convContext) contextLines.push(convContext);
   } else {
     contextLines.push(`Company ID: ${companyId}`);
@@ -491,27 +494,35 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
             .where(eq(operatorMessages.id, input.inboundMessageId))
             .catch(() => {});
         }
-      } else if (input.inboundMessageId) {
-        // No topic matched — landed in inbox
-        const [wfRun] = activeEaAgent
-          ? await db
-              .select({ id: workflowRuns.id })
-              .from(workflowRuns)
-              .where(and(eq(workflowRuns.agentId, activeEaAgent.id), gte(workflowRuns.startedAt, spawnStart)))
-              .orderBy(desc(workflowRuns.startedAt))
-              .limit(1)
-          : [];
-        await db
-          .update(operatorMessages)
-          .set({
-            rawPayload: {
-              identifyStatus: "inbox",
-              workflowRunId: wfRun?.id ?? null,
-              eaAgentId: activeEaAgent?.id ?? null,
-            },
-          })
-          .where(eq(operatorMessages.id, input.inboundMessageId))
-          .catch(() => {});
+      } else {
+        // Claude didn't call resolve_conversation — store exchange in inbox so next turn has context
+        if (operatorInboxTopicId) {
+          const inboxConv = await convSvc.resolveActive(operatorInboxTopicId);
+          await convSvc.appendMessage(inboxConv.id, "user", input.body);
+          const assistantText = parseAssistantText(stdout);
+          if (assistantText) await convSvc.appendMessage(inboxConv.id, "assistant", assistantText);
+        }
+        if (input.inboundMessageId) {
+          const [wfRun] = activeEaAgent
+            ? await db
+                .select({ id: workflowRuns.id })
+                .from(workflowRuns)
+                .where(and(eq(workflowRuns.agentId, activeEaAgent.id), gte(workflowRuns.startedAt, spawnStart)))
+                .orderBy(desc(workflowRuns.startedAt))
+                .limit(1)
+            : [];
+          await db
+            .update(operatorMessages)
+            .set({
+              rawPayload: {
+                identifyStatus: "inbox",
+                workflowRunId: wfRun?.id ?? null,
+                eaAgentId: activeEaAgent?.id ?? null,
+              },
+            })
+            .where(eq(operatorMessages.id, input.inboundMessageId))
+            .catch(() => {});
+        }
       }
     } catch (e) {
       logger.warn({ err: e }, "orchestrator: failed to append conversation message");

@@ -1159,6 +1159,23 @@ async function handleTool(
       status: "passed",
       actuals: { message: notifyBody.slice(0, 300) },
     });
+    // Append notification to inbox conversation so operator replies have context.
+    // Without this, when JayJay replies to a notification, Claude sees an empty inbox history.
+    try {
+      const topicSvc = topicsService(db);
+      const convSvc = eaConversationsService(db);
+      const allTopics = await topicSvc.list("active");
+      const inboxTopic = allTopics.find((t) => t.name === "EA Inbox");
+      if (inboxTopic) {
+        const active = await convSvc.listAllActive();
+        const inboxConv = active.find((c) => c.topicId === inboxTopic.id);
+        if (inboxConv) {
+          await convSvc.appendMessage(inboxConv.id, "assistant", notifyBody);
+        }
+      }
+    } catch (err) {
+      logger.warn({ err }, "notify_operator: failed to append to inbox conversation");
+    }
     return `Operator notified.`;
   }
 
