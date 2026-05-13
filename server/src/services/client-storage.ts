@@ -6,8 +6,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { clients, projects, documentSources, companies, emailAttachments } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
+import { clients, projects, documentSources, companies, emailAttachments, emailMessages } from "@paperclipai/db";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { createDriveFolder, getAuthenticatedDriveClient } from "./gdrive-auth.js";
 import { logger } from "../middleware/logger.js";
 
@@ -44,6 +44,11 @@ export async function listCompaniesWithStorage(db: Db): Promise<Array<{ id: stri
     .select({ id: companies.id, name: companies.name, localPath: companies.storageLocalPath, driveFolderId: companies.storageDriveFolderId })
     .from(companies);
   return rows.filter((r) => r.localPath || r.driveFolderId);
+}
+
+export async function hasStorageRoot(db: Db, companyId: string): Promise<boolean> {
+  const root = await getCompanyStorageRoot(db, companyId);
+  return !!(root.localPath || root.driveFolderId);
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -253,5 +258,34 @@ export async function fileAttachmentToClientFolder(
     }
   } catch (err) {
     logger.warn({ err, clientId, filename }, "client-storage: attachment filing failed");
+  }
+}
+
+// ── Backfill ──────────────────────────────────────────────────────────────────
+
+/**
+ * Files all unfiled email attachments for a client into their storage folder.
+ * Fire-and-forget safe — caller should not await in hot paths.
+ */
+export async function backfillClientAttachments(db: Db, clientId: string): Promise<void> {
+  const [client] = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1);
+  if (!client || (!client.localPath && !client.driveFolderId)) return;
+
+  const emails = await db
+    .select({ id: emailMessages.id })
+    .from(emailMessages)
+    .where(eq(emailMessages.matchedClientId, clientId));
+
+  if (emails.length === 0) return;
+  const emailIds = emails.map((e) => e.id);
+
+  const unfiled = await db
+    .select()
+    .from(emailAttachments)
+    .where(and(inArray(emailAttachments.emailMessageId, emailIds), isNull(emailAttachments.filedAt)));
+
+  for (const att of unfiled) {
+    if (!att.storagePath) continue;
+    await fileAttachmentToClientFolder(db, att.storagePath, att.filename, clientId, "emails", att.id);
   }
 }
