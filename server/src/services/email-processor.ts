@@ -16,7 +16,7 @@ import {
   projects,
 } from "@paperclipai/db";
 import { saveAttachment } from "./attachment-storage.js";
-import { fileAttachmentToClientFolder } from "./client-storage.js";
+import { fileAttachmentToClientFolder, hasStorageRoot, notifyStorageNotConfigured } from "./client-storage.js";
 import { clientService } from "./clients.js";
 import { contactService } from "./contacts.js";
 import { issueService } from "./issues.js";
@@ -199,6 +199,11 @@ export function emailProcessorService(db: Db) {
               return { emailMessageId: inserted!.id, duplicated: false, attachmentCount };
             }
           }
+
+          // Fire-and-forget: warn operator once/day if no storage root configured.
+          void hasStorageRoot(db, emailAccount.companyId).then((has) => {
+            if (!has) void notifyStorageNotConfigured(db, emailAccount.companyId);
+          });
 
           // EA routing: if the account's triage agent is an EA, skip the
           // orchestrator and wake the EA directly with { emailMessageId }.

@@ -6,9 +6,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { clients, projects, documentSources, companies, emailAttachments, emailMessages } from "@paperclipai/db";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { clients, projects, documentSources, companies, emailAttachments, emailMessages, operatorMessages } from "@paperclipai/db";
+import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
 import { createDriveFolder, getAuthenticatedDriveClient } from "./gdrive-auth.js";
+import { notifyOperatorTelegram } from "./telegram-polling.js";
 import { logger } from "../middleware/logger.js";
 
 // ── Company storage root ──────────────────────────────────────────────────────
@@ -287,5 +288,41 @@ export async function backfillClientAttachments(db: Db, clientId: string): Promi
   for (const att of unfiled) {
     if (!att.storagePath) continue;
     await fileAttachmentToClientFolder(db, att.storagePath, att.filename, clientId, "emails", att.id);
+  }
+}
+
+// ── Storage warning ───────────────────────────────────────────────────────────
+
+const STORAGE_WARN_BODY = "No storage root configured. Use the set_storage_root MCP tool or reply with: set storage to <path>";
+
+/**
+ * Sends a Telegram notification to the operator if no storage root is configured.
+ * Throttled to once per day per company — non-fatal.
+ */
+export async function notifyStorageNotConfigured(db: Db, companyId: string): Promise<void> {
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const [recent] = await db
+    .select({ id: operatorMessages.id })
+    .from(operatorMessages)
+    .where(and(
+      eq(operatorMessages.companyId, companyId),
+      eq(operatorMessages.body, STORAGE_WARN_BODY),
+      gte(operatorMessages.createdAt, oneDayAgo),
+    ))
+    .orderBy(desc(operatorMessages.createdAt))
+    .limit(1);
+  if (recent) return;
+
+  try {
+    await notifyOperatorTelegram(db, STORAGE_WARN_BODY);
+    await db.insert(operatorMessages).values({
+      companyId,
+      direction: "outbound",
+      platform: "telegram",
+      source: "system",
+      body: STORAGE_WARN_BODY,
+    });
+  } catch {
+    // Non-fatal
   }
 }
