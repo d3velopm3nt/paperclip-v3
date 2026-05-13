@@ -629,6 +629,13 @@ const TOOLS = [
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
+function getClientFolderPath(client: { localPath: string | null; driveFolderId: string | null } | null | undefined): string | null {
+  if (!client) return null;
+  if (client.localPath) return client.localPath;
+  if (client.driveFolderId) return `drive:${client.driveFolderId}`;
+  return null;
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function appendStageToActiveRun(
@@ -689,13 +696,22 @@ async function handleTool(
         id: issues.id, identifier: issues.identifier, title: issues.title,
         status: issues.status, priority: issues.priority,
         assigneeAgentId: issues.assigneeAgentId, description: issues.description,
+        clientId: issues.clientId,
       })
       .from(issues)
       .where(and(...filters))
       .orderBy(desc(issues.updatedAt))
       .limit(limit);
 
-    return JSON.stringify(rows, null, 2);
+    const clientIds = [...new Set(rows.flatMap((r) => r.clientId ? [r.clientId] : []))];
+    const clientRows = clientIds.length > 0
+      ? await db.select({ id: clients.id, localPath: clients.localPath, driveFolderId: clients.driveFolderId })
+          .from(clients).where(inArray(clients.id, clientIds))
+      : [];
+    const folderMap = new Map(clientRows.map((c) => [c.id, getClientFolderPath(c)]));
+    const enriched = rows.map((r) => ({ ...r, clientFolderPath: r.clientId ? (folderMap.get(r.clientId) ?? null) : null }));
+
+    return JSON.stringify(enriched, null, 2);
   }
 
   if (name === "create_issue") {
@@ -724,7 +740,14 @@ async function handleTool(
       details: { title, via: "mcp-chat" },
     });
 
-    return JSON.stringify(created, null, 2);
+    let issueClientFolderPath: string | null = null;
+    if (args.clientId) {
+      const [cl] = await db
+        .select({ localPath: clients.localPath, driveFolderId: clients.driveFolderId })
+        .from(clients).where(eq(clients.id, String(args.clientId))).limit(1);
+      issueClientFolderPath = getClientFolderPath(cl ?? null);
+    }
+    return JSON.stringify({ ...created, clientFolderPath: issueClientFolderPath }, null, 2);
   }
 
   if (name === "update_issue") {
@@ -1214,7 +1237,7 @@ async function handleTool(
       .from(issues)
       .where(and(eq(issues.companyId, effectiveCompanyId), eq(issues.clientId, gcId)))
       .limit(10);
-    return JSON.stringify({ ...client, openIssues }, null, 2);
+    return JSON.stringify({ ...client, clientFolderPath: getClientFolderPath(client), openIssues }, null, 2);
   }
 
   if (name === "get_issue_plans") {
