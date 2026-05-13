@@ -7,6 +7,7 @@ import type { Db } from "@paperclipai/db";
 import {
   agents,
   agentWakeupRequests,
+  blockedSenderDomains,
   emailAccounts,
   emailMessages,
   emailAttachments,
@@ -176,6 +177,29 @@ export function emailProcessorService(db: Db) {
           }).where(eq(emailMessages.id, inserted!.id));
           logger.info({ emailMessageId: inserted!.id, fromAddr }, "email-processor: ignored self-loop email");
         } else {
+          // Spam check: silently discard emails from blocked sender domains.
+          const senderDomain = fromAddr.split("@")[1]?.toLowerCase() ?? "";
+          if (senderDomain) {
+            const [blocked] = await db
+              .select({ id: blockedSenderDomains.id })
+              .from(blockedSenderDomains)
+              .where(and(
+                eq(blockedSenderDomains.companyId, emailAccount.companyId),
+                eq(blockedSenderDomains.domain, senderDomain),
+              ))
+              .limit(1);
+            if (blocked) {
+              await db.update(emailMessages).set({
+                processingState: "ignored",
+                matchedCompanyId: emailAccount.companyId,
+                processedAt: new Date(),
+                errorText: `Blocked domain: ${senderDomain}`,
+              }).where(eq(emailMessages.id, inserted!.id));
+              logger.info({ emailMessageId: inserted!.id, senderDomain }, "email-processor: discarded email from blocked domain");
+              return { emailMessageId: inserted!.id, duplicated: false, attachmentCount };
+            }
+          }
+
           // EA routing: if the account's triage agent is an EA, skip the
           // orchestrator and wake the EA directly with { emailMessageId }.
           if (emailAccount.triageAgentId) {

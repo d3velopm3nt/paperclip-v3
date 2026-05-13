@@ -49,11 +49,11 @@ export async function routeInboundMessage(db: Db, msg: InboundChannelMessage): P
   } else if (platform === "telegram") {
     fromType = "operator";
   } else if (platform === "email") {
+    // All email senders are treated as clients — known senders get matched,
+    // unknown senders remain clientId=undefined for EA to classify.
+    fromType = "client";
     const resolved = await resolveClientByEmail(db, companyId, fromAddr);
-    if (resolved) {
-      fromType = "client";
-      clientId = resolved;
-    }
+    if (resolved) clientId = resolved;
   }
 
   logger.info(
