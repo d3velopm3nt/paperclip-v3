@@ -19,6 +19,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FolderSelector, type FolderSelection } from "../components/FolderSelector";
+import { StorageSetupBanner } from "../components/StorageSetupBanner";
 import {
   Inbox as InboxIcon,
   Link2,
@@ -227,6 +228,10 @@ export function EmailInbox() {
             className="h-8 text-sm"
           />
         </div>
+      </div>
+
+      <div className="px-6 pt-3">
+        <StorageSetupBanner companyId={companyId} />
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col sm:flex-row">
