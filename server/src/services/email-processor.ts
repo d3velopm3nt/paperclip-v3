@@ -154,11 +154,12 @@ export function emailProcessorService(db: Db) {
     // Failures here don't discard the email; the row stays at pending.
     try {
       const [emailAccount] = await db
-        .select({ companyId: emailAccounts.companyId })
+        .select({ companyId: emailAccounts.companyId, triageAgentId: emailAccounts.triageAgentId })
         .from(emailAccounts)
         .where(eq(emailAccounts.id, input.emailAccountId))
         .limit(1);
 
+      let eaRouted = false;
       if (emailAccount) {
         // Self-loop guard: skip emails from our own agent_voice accounts.
         const ownVoice = await db
@@ -175,15 +176,52 @@ export function emailProcessorService(db: Db) {
           }).where(eq(emailMessages.id, inserted!.id));
           logger.info({ emailMessageId: inserted!.id, fromAddr }, "email-processor: ignored self-loop email");
         } else {
-          await routeInboundMessage(db, {
-            companyId: emailAccount.companyId,
-            platform: "email",
-            fromAddr,
-            body: typeof body === "string" ? body : "",
-            subject,
-            threadKey: messageIdHeader,
-            attachmentSummaries: savedAttachmentNames,
-          });
+          // EA routing: if the account's triage agent is an EA, skip the
+          // orchestrator and wake the EA directly with { emailMessageId }.
+          if (emailAccount.triageAgentId) {
+            const [triageAgentRow] = await db
+              .select({ adapterType: agents.adapterType })
+              .from(agents)
+              .where(eq(agents.id, emailAccount.triageAgentId))
+              .limit(1);
+            if (triageAgentRow?.adapterType === "ea") {
+              // EA agents have companyId=null, so bypass heartbeatService budget
+              // check and insert the wakeup request directly with the email
+              // account's companyId so the EA knows which inbox triggered it.
+              await db.insert(agentWakeupRequests).values({
+                companyId: emailAccount.companyId,
+                agentId: emailAccount.triageAgentId,
+                source: "assignment",
+                triggerDetail: "system",
+                reason: "email-triage",
+                payload: { emailMessageId: inserted!.id },
+                status: "queued",
+                requestedByActorType: "system",
+                requestedByActorId: "email-processor",
+              });
+              await db.update(emailMessages).set({
+                matchedCompanyId: emailAccount.companyId,
+                matchedAgentId: emailAccount.triageAgentId,
+                processingState: "analyzing",
+              }).where(eq(emailMessages.id, inserted!.id));
+              logger.info(
+                { emailMessageId: inserted!.id, triageAgentId: emailAccount.triageAgentId },
+                "email-processor: EA triage — woke EA, skipped issue creation",
+              );
+              eaRouted = true;
+            }
+          }
+          if (!eaRouted) {
+            await routeInboundMessage(db, {
+              companyId: emailAccount.companyId,
+              platform: "email",
+              fromAddr,
+              body: typeof body === "string" ? body : "",
+              subject,
+              threadKey: messageIdHeader,
+              attachmentSummaries: savedAttachmentNames,
+            });
+          }
         }
       }
 
@@ -226,7 +264,7 @@ export function emailProcessorService(db: Db) {
         .innerJoin(emailMessages, eq(emailMessages.id, inserted!.id))
         .where(eq(emailAccounts.id, input.emailAccountId))
         .limit(1);
-      if (acctState?.role === "inbound" && acctState?.processingState !== "ignored") {
+      if (!eaRouted && acctState?.role === "inbound" && acctState?.processingState !== "ignored") {
         workflowEngine(db).runFireAndForget(inboundEmailWorkflow, inserted!.id);
       }
     } catch (err) {
