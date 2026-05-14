@@ -7,8 +7,8 @@ import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import type { Db } from "@paperclipai/db";
-import { approvals, companies, issues, operatorMessages, workflowRuns, workflowStageResults } from "@paperclipai/db";
-import { and, desc, eq, gte, notInArray } from "drizzle-orm";
+import { approvals, companies, issues, operatorMessages, topics, workflowRuns, workflowStageResults } from "@paperclipai/db";
+import { and, desc, eq, gte, isNotNull, notInArray } from "drizzle-orm";
 import { signMcpToken } from "./mcp-session-token.js";
 import { logger } from "../middleware/logger.js";
 import { eaConversationsService } from "./ea-conversations.js";
@@ -36,6 +36,33 @@ export interface OrchestratorInput {
 async function buildActiveConversationsContext(db: Db): Promise<{ context: string; inboxTopicId: string }> {
   const topicSvc = topicsService(db);
 
+  // Inject working context from most recently updated active topic that has one set.
+  // Agent sets this via set_working_context or switch_context in a prior turn.
+  let workingContextBlock = "";
+  try {
+    const [ctxRow] = await db
+      .select({ id: topics.id, workingContext: topics.workingContext })
+      .from(topics)
+      .where(and(eq(topics.status, "active"), isNotNull(topics.workingContext)))
+      .orderBy(desc(topics.updatedAt))
+      .limit(1);
+
+    if (ctxRow?.workingContext) {
+      const ctx = ctxRow.workingContext as import("./entity-search.js").WorkingContextShape;
+      const ctxLines: string[] = ["\n## Working Context"];
+      if (ctx.companyName) ctxLines.push(`Company:  ${ctx.companyName}${ctx.companyId ? ` (${ctx.companyId})` : ""}`);
+      if (ctx.clientName)  ctxLines.push(`Client:   ${ctx.clientName}${ctx.clientId ? ` (${ctx.clientId})` : ""}`);
+      if (ctx.projectName) ctxLines.push(`Project:  ${ctx.projectName}${ctx.projectId ? ` (${ctx.projectId})` : ""}`);
+      if (ctx.issueTitle)  ctxLines.push(`Issue:    ${ctx.issueIdentifier ? `${ctx.issueIdentifier} — ` : ""}${ctx.issueTitle}${ctx.issueId ? ` (${ctx.issueId})` : ""}`);
+      if (ctx.topicName)   ctxLines.push(`Topic:    ${ctx.topicName}${ctx.topicId ? ` (${ctx.topicId})` : ""}`);
+      if (ctx.notes)       ctxLines.push(`Notes:    ${ctx.notes}`);
+      ctxLines.push(`\nUse these IDs directly. Call search_entities or switch_context only when operator references something outside this context.`);
+      workingContextBlock = ctxLines.join("\n");
+    }
+  } catch {
+    // non-fatal — missing extension or no topics yet
+  }
+
   // Ensure EA Inbox topic exists for unmatched messages
   const allTopics = await topicSvc.list("active");
   let inboxTopic = allTopics.find((t) => t.name === "EA Inbox");
@@ -48,6 +75,7 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
   const companyNames = new Map(companyRows.map((c) => [c.id, c.name]));
 
   const lines: string[] = [];
+  if (workingContextBlock) lines.push(workingContextBlock);
 
   // All available topics (for matching)
   const topicsExceptInbox = allTopics.filter((t) => t.name !== "EA Inbox");
