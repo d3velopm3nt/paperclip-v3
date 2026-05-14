@@ -26,25 +26,25 @@ export interface TopicWithIssues extends Omit<Topic, "issueCount"> {
 
 export const topicsApi = {
   list: (status?: string) =>
-    api.get<Topic[]>(`/ecc/topics${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+    api.get<Topic[]>(`/ea/topics${status ? `?status=${encodeURIComponent(status)}` : ""}`),
 
   create: (data: { name: string; companyId?: string | null }) =>
-    api.post<Topic>("/ecc/topics", data),
+    api.post<Topic>("/ea/topics", data),
 
   getById: (id: string) =>
-    api.get<TopicWithIssues>(`/ecc/topics/${id}`),
+    api.get<TopicWithIssues>(`/ea/topics/${id}`),
 
   update: (
     id: string,
     data: Partial<Pick<Topic, "name" | "summary" | "currentState" | "status" | "companyId">>,
-  ) => api.patch<Topic>(`/ecc/topics/${id}`, data),
+  ) => api.patch<Topic>(`/ea/topics/${id}`, data),
 
   remove: (id: string) =>
-    api.delete<void>(`/ecc/topics/${id}`),
+    api.delete<void>(`/ea/topics/${id}`),
 
   linkIssue: (topicId: string, issueId: string) =>
-    api.post<{ ok: boolean }>(`/ecc/topics/${topicId}/issues`, { issueId }),
+    api.post<{ ok: boolean }>(`/ea/topics/${topicId}/issues`, { issueId }),
 
   unlinkIssue: (topicId: string, issueId: string) =>
-    api.delete<void>(`/ecc/topics/${topicId}/issues/${issueId}`),
+    api.delete<void>(`/ea/topics/${topicId}/issues/${issueId}`),
 };

@@ -368,3 +368,53 @@ export async function notifyOperatorTelegram(db: Db, message: string): Promise<v
   if (!chatId) return;
   await sendTelegramMessage(token, chatId, message);
 }
+
+// Multi-channel operator notification. Reads operatorNotifyChannels from instance_settings
+// and fans out to all enabled channels. Replaces direct notifyOperatorTelegram calls.
+export async function notifyOperator(db: Db, message: string): Promise<void> {
+  const [settings] = await db
+    .select({ general: instanceSettings.general })
+    .from(instanceSettings)
+    .where(eq(instanceSettings.singletonKey, "default"))
+    .limit(1);
+  const general = (settings?.general ?? {}) as Record<string, unknown>;
+
+  const channels = Array.isArray(general.operatorNotifyChannels)
+    ? (general.operatorNotifyChannels as string[])
+    : ["telegram"]; // default: telegram only (backwards compat)
+
+  const results = await Promise.allSettled([
+    channels.includes("telegram") ? notifyOperatorTelegram(db, message) : Promise.resolve(),
+    channels.includes("email") ? notifyOperatorEmail(db, general, message) : Promise.resolve(),
+  ]);
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      logger.warn({ err: result.reason }, "notifyOperator: channel delivery failed");
+    }
+  }
+}
+
+async function notifyOperatorEmail(db: Db, general: Record<string, unknown>, message: string): Promise<void> {
+  const toAddr = (general.operatorNotifyEmail as string | undefined) ?? "";
+  if (!toAddr) return;
+
+  // Find any active outbound email account to use as sender
+  const { emailAccounts } = await import("@paperclipai/db");
+  const { sendEmailFromAccount } = await import("./email-sender.js");
+  const [account] = await db
+    .select({ id: emailAccounts.id, companyId: emailAccounts.companyId })
+    .from(emailAccounts)
+    .limit(1);
+  if (!account) return;
+
+  const subject = message.split("\n")[0]?.slice(0, 100) ?? "Paperclip notification";
+  const htmlBody = `<pre style="font-family:sans-serif;white-space:pre-wrap">${message.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
+  await sendEmailFromAccount(db, {
+    accountId: account.id,
+    to: toAddr,
+    subject,
+    html: htmlBody,
+    text: message,
+  });
+}

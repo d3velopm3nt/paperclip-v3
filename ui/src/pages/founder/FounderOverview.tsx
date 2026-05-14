@@ -166,7 +166,7 @@ function EaAgentCard({ agent, onClick }: { agent: EaAgent; onClick: () => void }
 
   async function resetAgent(e: React.MouseEvent) {
     e.stopPropagation();
-    await api.post(`/ecc/agents/${agent.id}/reset`, {});
+    await api.post(`/ea/agents/${agent.id}/reset`, {});
     qc.invalidateQueries({ queryKey: ["ea-agents"] });
   }
 
@@ -315,7 +315,7 @@ export function FounderOverview() {
 
   const topicsQuery = useQuery({
     queryKey: ["topics", "active"],
-    queryFn: () => api.get<EaTopic[]>("/ecc/topics?status=active"),
+    queryFn: () => api.get<EaTopic[]>("/ea/topics?status=active"),
     staleTime: 30_000,
   });
 
@@ -330,13 +330,13 @@ export function FounderOverview() {
 
   const convsQuery = useQuery({
     queryKey: ["ea-conversations", "overview"],
-    queryFn: () => api.get<EaConversation[]>("/ecc/conversations?limit=8"),
+    queryFn: () => api.get<EaConversation[]>("/ea/conversations?limit=8"),
     refetchInterval: 15_000,
   });
 
   const eaAgentsQuery = useQuery({
     queryKey: ["ea-agents"],
-    queryFn: () => api.get<EaAgent[]>("/ecc/agents"),
+    queryFn: () => api.get<EaAgent[]>("/ea/agents"),
     refetchInterval: (query) =>
       query.state.data?.some((a) => a.status === "processing") ? 5_000 : 15_000,
   });
@@ -439,11 +439,11 @@ export function FounderOverview() {
       <div className="flex-[2] border-t lg:border-t-0 lg:border-l border-border pt-6 lg:pt-0 lg:pl-6 overflow-auto space-y-3 pb-6">
         <IncomingMessages
           onMessageClick={(msg: InboundMessage) => {
-            const { eccAgentId, workflowRunId } = msg.rawPayload ?? {};
-            if (eccAgentId && workflowRunId) {
-              navigate(`/agents/${eccAgentId}/runs/${workflowRunId}`);
-            } else if (eccAgentId) {
-              navigate(`/agents/${eccAgentId}`);
+            const { eaAgentId, workflowRunId } = msg.rawPayload ?? {};
+            if (eaAgentId && workflowRunId) {
+              navigate(`/agents/${eaAgentId}/runs/${workflowRunId}`);
+            } else if (eaAgentId) {
+              navigate(`/agents/${eaAgentId}`);
             }
           }}
         />

@@ -34,20 +34,20 @@ export function eaTopicRoutes(db: Db) {
   const router = Router();
   const svc = topicsService(db);
 
-  router.get("/ecc/topics", async (req, res) => {
+  router.get("/ea/topics", async (req, res) => {
     assertBoard(req);
     const status = typeof req.query.status === "string" ? req.query.status : undefined;
     const topics = await svc.list(status);
     res.json(topics);
   });
 
-  router.post("/ecc/topics", validate(createTopicSchema), async (req, res) => {
+  router.post("/ea/topics", validate(createTopicSchema), async (req, res) => {
     assertBoard(req);
     const topic = await svc.create(req.body);
     res.status(201).json(topic);
   });
 
-  router.get("/ecc/topics/:id", async (req, res) => {
+  router.get("/ea/topics/:id", async (req, res) => {
     assertBoard(req);
     const topic = await svc.getById(String(req.params.id));
     if (!topic) {
@@ -57,7 +57,7 @@ export function eaTopicRoutes(db: Db) {
     res.json(topic);
   });
 
-  router.patch("/ecc/topics/:id", validate(updateTopicSchema), async (req, res) => {
+  router.patch("/ea/topics/:id", validate(updateTopicSchema), async (req, res) => {
     assertBoard(req);
     const topic = await svc.update(String(req.params.id), req.body);
     if (!topic) {
@@ -67,7 +67,7 @@ export function eaTopicRoutes(db: Db) {
     res.json(topic);
   });
 
-  router.delete("/ecc/topics/:id", async (req, res) => {
+  router.delete("/ea/topics/:id", async (req, res) => {
     assertBoard(req);
     const ok = await svc.remove(String(req.params.id));
     if (!ok) {
@@ -77,13 +77,13 @@ export function eaTopicRoutes(db: Db) {
     res.status(204).send();
   });
 
-  router.post("/ecc/topics/:id/issues", validate(linkIssueSchema), async (req, res) => {
+  router.post("/ea/topics/:id/issues", validate(linkIssueSchema), async (req, res) => {
     assertBoard(req);
     await svc.linkIssue(String(req.params.id), req.body.issueId);
     res.status(201).json({ ok: true });
   });
 
-  router.delete("/ecc/topics/:id/issues/:issueId", async (req, res) => {
+  router.delete("/ea/topics/:id/issues/:issueId", async (req, res) => {
     assertBoard(req);
     await svc.unlinkIssue(String(req.params.id), String(req.params.issueId));
     res.status(204).send();
@@ -114,9 +114,9 @@ export function eaTopicRoutes(db: Db) {
     };
   }
 
-  // GET /ecc/conversations?all=true — cross-company conversations with topic info
+  // GET /ea/conversations?all=true — cross-company conversations with topic info
   // Default: active only. ?all=true: all statuses (including expired).
-  router.get("/ecc/conversations", async (req, res) => {
+  router.get("/ea/conversations", async (req, res) => {
     assertBoard(req);
     const convSvc = eaConversationsService(db);
     const showAll = req.query.all === "true";
@@ -126,8 +126,8 @@ export function eaTopicRoutes(db: Db) {
     res.json(enriched);
   });
 
-  // GET /ecc/conversations/:id — single conversation with topic info
-  router.get("/ecc/conversations/:id", async (req, res) => {
+  // GET /ea/conversations/:id — single conversation with topic info
+  router.get("/ea/conversations/:id", async (req, res) => {
     assertBoard(req);
     const convSvc = eaConversationsService(db);
     const conv = await convSvc.getById(String(req.params.id));
@@ -139,24 +139,24 @@ export function eaTopicRoutes(db: Db) {
     res.json(enriched);
   });
 
-  router.get("/ecc/agents", async (req, res) => {
+  router.get("/ea/agents", async (req, res) => {
     assertBoard(req);
     const agentSvc = eaAgentsService(db);
-    const eccAgents = await agentSvc.listEaAgents();
-    res.json(eccAgents);
+    const eaAgents = await agentSvc.listEaAgents();
+    res.json(eaAgents);
   });
 
-  // POST /ecc/agents/:id/reset — force agent back to idle and clear stale session (board-only)
-  router.post("/ecc/agents/:id/reset", async (req, res) => {
+  // POST /ea/agents/:id/reset — force agent back to idle and clear stale session (board-only)
+  router.post("/ea/agents/:id/reset", async (req, res) => {
     assertBoard(req);
     const agentSvc = eaAgentsService(db);
     await agentSvc.setIdle(req.params.id, { clearSession: true });
     res.json({ ok: true });
   });
 
-  // GET /ecc/workflow-runs?agentId=xxx&limit=50
-  // Board-only: list workflow runs for a null-companyId ECC agent across all companies.
-  router.get("/ecc/workflow-runs", async (req, res) => {
+  // GET /ea/workflow-runs?agentId=xxx&limit=50
+  // Board-only: list workflow runs for a null-companyId EA agent across all companies.
+  router.get("/ea/workflow-runs", async (req, res) => {
     assertBoard(req);
     const agentId = typeof req.query.agentId === "string" ? req.query.agentId : null;
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 50));
@@ -170,8 +170,8 @@ export function eaTopicRoutes(db: Db) {
     res.json(runs);
   });
 
-  // GET /ecc/workflow-runs/:id — full run with stages (board-only)
-  router.get("/ecc/workflow-runs/:id", async (req, res) => {
+  // GET /ea/workflow-runs/:id — full run with stages (board-only)
+  router.get("/ea/workflow-runs/:id", async (req, res) => {
     assertBoard(req);
     const { id } = req.params;
     const [run] = await db.select().from(workflowRuns).where(eq(workflowRuns.id, id)).limit(1);
@@ -184,8 +184,8 @@ export function eaTopicRoutes(db: Db) {
     res.json({ run, stages });
   });
 
-  // GET /ecc/inbound-messages?limit=30 — recent inbound messages with identify status (board-only)
-  router.get("/ecc/inbound-messages", async (req, res) => {
+  // GET /ea/inbound-messages?limit=30 — recent inbound messages with identify status (board-only)
+  router.get("/ea/inbound-messages", async (req, res) => {
     assertBoard(req);
     const limit = Math.min(Number(req.query.limit) || 30, 100);
     const rows = await db
@@ -205,8 +205,8 @@ export function eaTopicRoutes(db: Db) {
     res.json(visible);
   });
 
-  // PATCH /ecc/inbound-messages/:id/dismiss — soft-dismiss a message (board-only)
-  router.patch("/ecc/inbound-messages/:id/dismiss", async (req, res) => {
+  // PATCH /ea/inbound-messages/:id/dismiss — soft-dismiss a message (board-only)
+  router.patch("/ea/inbound-messages/:id/dismiss", async (req, res) => {
     assertBoard(req);
     const { id } = req.params;
     const [existing] = await db

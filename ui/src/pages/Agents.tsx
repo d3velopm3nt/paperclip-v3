@@ -84,9 +84,9 @@ export function Agents() {
     enabled: !!selectedCompanyId,
   });
 
-  const { data: eccAgents } = useQuery({
-    queryKey: ["ecc-agents"],
-    queryFn: () => agentsApi.listEcc(),
+  const { data: eaAgents } = useQuery({
+    queryKey: ["ea-agents"],
+    queryFn: () => agentsApi.listEa(),
     staleTime: 60_000,
   });
 
@@ -292,12 +292,12 @@ export function Agents() {
         </p>
       )}
 
-      {/* ECC agents — cross-company, always shown in list view */}
-      {effectiveView === "list" && eccAgents && eccAgents.length > 0 && (
+      {/* EA agents — cross-company, always shown in list view */}
+      {effectiveView === "list" && eaAgents && eaAgents.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs text-muted-foreground font-mono uppercase tracking-widest">ECC Agents</p>
+          <p className="text-xs text-muted-foreground font-mono uppercase tracking-widest">EA Agents</p>
           <div className="border border-border">
-            {eccAgents.map((agent) => (
+            {eaAgents.map((agent) => (
               <EntityRow
                 key={agent.id}
                 title={agent.name}
@@ -312,7 +312,7 @@ export function Agents() {
                 }
                 trailing={
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-muted-foreground font-mono w-14 text-right">ecc</span>
+                    <span className="text-xs text-muted-foreground font-mono w-14 text-right">ea</span>
                     <span className="w-20 flex justify-end">
                       <StatusBadge status={agent.status} />
                     </span>

@@ -9,7 +9,7 @@ import type { Db } from "@paperclipai/db";
 import { clients, projects, documentSources, companies, emailAttachments, emailMessages, operatorMessages } from "@paperclipai/db";
 import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
 import { createDriveFolder, getAuthenticatedDriveClient } from "./gdrive-auth.js";
-import { notifyOperatorTelegram } from "./telegram-polling.js";
+import { notifyOperator } from "./telegram-polling.js";
 import { logger } from "../middleware/logger.js";
 
 // ── Company storage root ──────────────────────────────────────────────────────
@@ -315,7 +315,7 @@ export async function notifyStorageNotConfigured(db: Db, companyId: string): Pro
   if (recent) return;
 
   try {
-    await notifyOperatorTelegram(db, STORAGE_WARN_BODY);
+    await notifyOperator(db, STORAGE_WARN_BODY);
     await db.insert(operatorMessages).values({
       companyId,
       direction: "outbound",

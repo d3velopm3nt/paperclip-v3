@@ -13,7 +13,7 @@ import { Activity, CheckCircle2, XCircle, Clock, MinusCircle, HelpCircle } from 
 
 const TYPE_LABELS: Record<string, string> = {
   inbound_email: "Email",
-  ecc_conversation: "ECC",
+  ea_conversation: "EA",
 };
 
 const STATUS_META: Record<string, { color: string; icon: React.ComponentType<{ className?: string }>; label: string }> = {
@@ -40,7 +40,7 @@ function TypeChip({ type }: { type: string }) {
   const label = TYPE_LABELS[type] ?? type;
   const colors: Record<string, string> = {
     inbound_email: "bg-blue-500/10 text-blue-700",
-    ecc_conversation: "bg-violet-500/10 text-violet-700",
+    ea_conversation: "bg-violet-500/10 text-violet-700",
   };
   return (
     <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${colors[type] ?? "bg-muted text-muted-foreground"}`}>

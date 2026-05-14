@@ -565,7 +565,7 @@ export function AgentDetail() {
     enabled: canFetchAgent,
   });
   const resolvedCompanyId = agent?.companyId ?? selectedCompanyId;
-  // ECC agents (companyId=null) have no company scope — use UUID as canonical ref
+  // EA agents (companyId=null) have no company scope — use UUID as canonical ref
   // to avoid slug-based redirect that would produce a failed URL-key lookup on the server.
   const canonicalAgentRef = agent ? (agent.companyId ? agentRouteRef(agent) : agent.id) : routeAgentRef;
   const agentLookupRef = agent?.id ?? routeAgentRef;
@@ -1704,20 +1704,20 @@ function PromptsTab({
     agent.adapterType === "hermes_local" ||
     agent.adapterType === "cursor";
 
-  const isEcc = agent.adapterType === "ecc";
-  const eccHasBundle = isEcc && !!(agent.adapterConfig as Record<string, unknown>)?.instructionsBundleMode;
-  const [eccDraft, setEccDraft] = useState<string | null>(null);
-  const eccPersistedPrompt =
+  const isEa = agent.adapterType === "ea";
+  const eaHasBundle = isEa && !!(agent.adapterConfig as Record<string, unknown>)?.instructionsBundleMode;
+  const [eaDraft, setEaDraft] = useState<string | null>(null);
+  const eaPersistedPrompt =
     typeof (agent.adapterConfig as Record<string, unknown>)?.systemPrompt === "string"
       ? ((agent.adapterConfig as Record<string, unknown>).systemPrompt as string)
       : "";
-  const eccCurrentPrompt = eccDraft ?? eccPersistedPrompt;
-  const eccDirty = eccDraft !== null && eccDraft !== eccPersistedPrompt;
+  const eaCurrentPrompt = eaDraft ?? eaPersistedPrompt;
+  const eaDirty = eaDraft !== null && eaDraft !== eaPersistedPrompt;
 
   const { data: bundle, isLoading: bundleLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsBundle(agent.id),
     queryFn: () => agentsApi.instructionsBundle(agent.id, companyId),
-    enabled: Boolean((companyId && isLocal) || eccHasBundle),
+    enabled: Boolean((companyId && isLocal) || eaHasBundle),
     staleTime: 30_000,
   });
 
@@ -1752,11 +1752,11 @@ function PromptsTab({
   const selectedFileExists = bundleMatchesDraft && fileOptions.includes(selectedOrEntryFile);
   const selectedFileSummary = bundle?.files.find((file) => file.path === selectedOrEntryFile) ?? null;
 
-  const eccFileQueryEnabled = eccHasBundle && bundle != null && fileOptions.includes(selectedOrEntryFile);
+  const eaFileQueryEnabled = eaHasBundle && bundle != null && fileOptions.includes(selectedOrEntryFile);
   const { data: selectedFileDetail, isLoading: fileLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsFile(agent.id, selectedOrEntryFile),
     queryFn: () => agentsApi.instructionsFile(agent.id, selectedOrEntryFile, companyId),
-    enabled: Boolean((companyId && isLocal && selectedFileExists) || eccFileQueryEnabled),
+    enabled: Boolean((companyId && isLocal && selectedFileExists) || eaFileQueryEnabled),
     staleTime: 0,
     gcTime: 0,
   });
@@ -1810,10 +1810,10 @@ function PromptsTab({
     },
   });
 
-  const saveEccMutation = useMutation({
+  const saveEaMutation = useMutation({
     mutationFn: (prompt: string) =>
       agentsApi.update(agent.id, { adapterConfig: { ...(agent.adapterConfig as Record<string, unknown> ?? {}), systemPrompt: prompt } }, companyId ?? undefined),
-    onSuccess: () => setEccDraft(null),
+    onSuccess: () => setEaDraft(null),
   });
 
   useEffect(() => {
@@ -1846,7 +1846,7 @@ function PromptsTab({
   }, [visibleFilePaths]);
 
   useEffect(() => {
-    const fileLoaded = (selectedFileExists || eccFileQueryEnabled) && selectedFileDetail;
+    const fileLoaded = (selectedFileExists || eaFileQueryEnabled) && selectedFileDetail;
     const versionKey = fileLoaded
       ? `${selectedFileDetail.path}:${selectedFileDetail.content}`
       : `draft:${currentMode}:${currentRootPath}:${selectedOrEntryFile}`;
@@ -1861,7 +1861,7 @@ function PromptsTab({
       setDraft(null);
       lastFileVersionRef.current = versionKey;
     }
-  }, [awaitingRefresh, currentMode, currentRootPath, eccFileQueryEnabled, selectedFileDetail, selectedFileExists, selectedOrEntryFile]);
+  }, [awaitingRefresh, currentMode, currentRootPath, eaFileQueryEnabled, selectedFileDetail, selectedFileExists, selectedOrEntryFile]);
 
   useEffect(() => {
     if (!bundle) return;
@@ -1884,7 +1884,7 @@ function PromptsTab({
     };
   }, [bundle, currentEntryFile, currentMode, currentRootPath, selectedOrEntryFile]);
 
-  const currentContent = (selectedFileExists || eccFileQueryEnabled) ? (selectedFileDetail?.content ?? "") : "";
+  const currentContent = (selectedFileExists || eaFileQueryEnabled) ? (selectedFileDetail?.content ?? "") : "";
   const displayValue = draft ?? currentContent;
   const bundleDirty = Boolean(
     bundleDraft &&
@@ -1950,20 +1950,20 @@ function PromptsTab({
   }, [bundle, isDirty, onCancelActionChange, persistedMode, persistedRootPath]);
 
   useEffect(() => {
-    if (!isEcc) return;
-    onDirtyChange(eccDirty);
-    onSavingChange(saveEccMutation.isPending);
-  }, [isEcc, eccDirty, saveEccMutation.isPending, onDirtyChange, onSavingChange]);
+    if (!isEa) return;
+    onDirtyChange(eaDirty);
+    onSavingChange(saveEaMutation.isPending);
+  }, [isEa, eaDirty, saveEaMutation.isPending, onDirtyChange, onSavingChange]);
 
   useEffect(() => {
-    if (!isEcc) return;
-    onSaveActionChange(eccDirty ? () => { saveEccMutation.mutate(eccCurrentPrompt); } : null);
-  }, [isEcc, eccDirty, eccCurrentPrompt, onSaveActionChange, saveEccMutation]);
+    if (!isEa) return;
+    onSaveActionChange(eaDirty ? () => { saveEaMutation.mutate(eaCurrentPrompt); } : null);
+  }, [isEa, eaDirty, eaCurrentPrompt, onSaveActionChange, saveEaMutation]);
 
   useEffect(() => {
-    if (!isEcc) return;
-    onCancelActionChange(eccDirty ? () => { setEccDraft(null); } : null);
-  }, [isEcc, eccDirty, onCancelActionChange]);
+    if (!isEa) return;
+    onCancelActionChange(eaDirty ? () => { setEaDraft(null); } : null);
+  }, [isEa, eaDirty, onCancelActionChange]);
 
   const handleSeparatorDrag = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
@@ -1986,8 +1986,8 @@ function PromptsTab({
     document.body.style.userSelect = "none";
   }, [filePanelWidth]);
 
-  if (!isLocal && !eccHasBundle) {
-    if (isEcc) {
+  if (!isLocal && !eaHasBundle) {
+    if (isEa) {
       return (
         <div className="max-w-3xl space-y-4">
           <div>
@@ -1995,12 +1995,12 @@ function PromptsTab({
             <p className="text-xs text-muted-foreground mb-3">Saved to agent config. Orchestrator reads this on next spawn.</p>
             <textarea
               className="w-full min-h-[520px] rounded-md border border-border bg-muted/30 px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
-              value={eccCurrentPrompt}
-              onChange={(e) => setEccDraft(e.target.value)}
+              value={eaCurrentPrompt}
+              onChange={(e) => setEaDraft(e.target.value)}
               spellCheck={false}
             />
           </div>
-          {eccDirty && (
+          {eaDirty && (
             <p className="text-xs text-amber-500">Unsaved changes — use the Save button above to apply.</p>
           )}
         </div>
@@ -2335,7 +2335,7 @@ function PromptsTab({
               <div className="min-w-0">
                 <h4 className="text-sm font-medium font-mono truncate">{selectedOrEntryFile}</h4>
                 <p className="text-xs text-muted-foreground">
-                  {(selectedFileExists || eccFileQueryEnabled)
+                  {(selectedFileExists || eaFileQueryEnabled)
                     ? selectedFileSummary?.deprecated
                       ? "Deprecated virtual file"
                       : `${selectedFileDetail?.language ?? "text"} file`
@@ -2343,7 +2343,7 @@ function PromptsTab({
                 </p>
               </div>
             </div>
-            {(selectedFileExists || eccFileQueryEnabled) && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
+            {(selectedFileExists || eaFileQueryEnabled) && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
               <Button
                 type="button"
                 size="sm"
@@ -2365,7 +2365,7 @@ function PromptsTab({
             )}
           </div>
 
-          {(selectedFileExists || eccFileQueryEnabled) && fileLoading && !selectedFileDetail ? (
+          {(selectedFileExists || eaFileQueryEnabled) && fileLoading && !selectedFileDetail ? (
             <PromptEditorSkeleton />
           ) : isMarkdown(selectedOrEntryFile) ? (
             <MarkdownEditor
@@ -2866,16 +2866,16 @@ function AgentSkillsTab({
   );
 }
 
-/* ---- ECC Runs Tab (workflow_runs, not heartbeat_runs) ---- */
+/* ---- EA Runs Tab (workflow_runs, not heartbeat_runs) ---- */
 
-const ECC_STATUS_ICONS: Record<string, { icon: typeof CheckCircle2; color: string }> = {
+const EA_STATUS_ICONS: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   passed: { icon: CheckCircle2, color: "text-emerald-600 dark:text-emerald-400" },
   failed: { icon: XCircle, color: "text-red-600 dark:text-red-400" },
   running: { icon: Loader2, color: "text-blue-600 dark:text-blue-400" },
   partial: { icon: Clock, color: "text-amber-600 dark:text-amber-400" },
 };
 
-const ECC_STAGE_LABELS: Record<string, string> = {
+const EA_STAGE_LABELS: Record<string, string> = {
   message_received: "Message received",
   topic_matched: "Topic matched",
   conversation_resolved: "Conversation resolved",
@@ -2887,9 +2887,9 @@ const ECC_STAGE_LABELS: Record<string, string> = {
 };
 
 function EccStageRow({ stage }: { stage: WorkflowStageResult }) {
-  const meta = ECC_STATUS_ICONS[stage.status] ?? { icon: Clock, color: "text-muted-foreground" };
+  const meta = EA_STATUS_ICONS[stage.status] ?? { icon: Clock, color: "text-muted-foreground" };
   const Icon = meta.icon;
-  const label = ECC_STAGE_LABELS[stage.stageId] ?? stage.label;
+  const label = EA_STAGE_LABELS[stage.stageId] ?? stage.label;
   const actuals = stage.actuals as Record<string, unknown>;
   const detail = actuals.actionSummary ?? actuals.message ?? actuals.messagePreview ?? actuals.topicName
     ?? actuals.stderr ?? actuals.error ?? null;
@@ -2915,14 +2915,14 @@ function EccRunsTab({ agentId, initialRunId }: { agentId: string; initialRunId?:
   const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId ?? null);
 
   const runsQuery = useQuery({
-    queryKey: ["ecc-workflow-runs", agentId],
+    queryKey: ["ea-workflow-runs", agentId],
     queryFn: () => workflowRunsApi.listByAgent(agentId, 50),
     refetchInterval: 15_000,
   });
 
   const detailQuery = useQuery({
-    queryKey: ["ecc-workflow-runs", "detail", selectedRunId],
-    queryFn: () => workflowRunsApi.getEcc(selectedRunId!),
+    queryKey: ["ea-workflow-runs", "detail", selectedRunId],
+    queryFn: () => workflowRunsApi.getEa(selectedRunId!),
     enabled: !!selectedRunId,
     staleTime: 30_000,
   });
@@ -2949,7 +2949,7 @@ function EccRunsTab({ agentId, initialRunId }: { agentId: string; initialRunId?:
       {/* Left: run list */}
       <div className="w-64 shrink-0 border border-border overflow-y-auto">
         {runs.map((run) => {
-          const meta = ECC_STATUS_ICONS[run.overallStatus] ?? { icon: Clock, color: "text-muted-foreground" };
+          const meta = EA_STATUS_ICONS[run.overallStatus] ?? { icon: Clock, color: "text-muted-foreground" };
           const Icon = meta.icon;
           const isActive = run.id === effectiveRunId;
           return (

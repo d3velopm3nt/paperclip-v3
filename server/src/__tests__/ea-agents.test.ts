@@ -11,7 +11,7 @@ const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : 
 
 if (!embeddedPostgresSupport.supported) {
   console.warn(
-    `Skipping ecc-agents tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
+    `Skipping ea-agents tests on this host: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`,
   );
 }
 
@@ -21,7 +21,7 @@ describeEmbeddedPostgres("eaAgentsService", () => {
   let svc!: ReturnType<typeof eaAgentsService>;
 
   beforeAll(async () => {
-    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-ecc-agents-");
+    tempDb = await startEmbeddedPostgresTestDatabase("paperclip-ea-agents-");
     db = createDb(tempDb.connectionString);
     svc = eaAgentsService(db);
   });
@@ -30,7 +30,7 @@ describeEmbeddedPostgres("eaAgentsService", () => {
     await tempDb?.cleanup();
   });
 
-  it("seeds two ECC agents if none exist", async () => {
+  it("seeds two EA agents if none exist", async () => {
     await svc.seedEaAgents();
     const agents = await svc.listEaAgents();
     expect(agents).toHaveLength(2);

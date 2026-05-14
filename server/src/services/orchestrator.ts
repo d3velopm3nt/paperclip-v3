@@ -14,7 +14,7 @@ import { logger } from "../middleware/logger.js";
 import { eaConversationsService } from "./ea-conversations.js";
 import { topicsService } from "./topics.js";
 import { eaAgentsService } from "./ea-agents.js";
-import { notifyOperatorTelegram } from "./telegram-polling.js";
+import { notifyOperator } from "./telegram-polling.js";
 import type { ConversationMessage } from "./ea-conversations.js";
 import type { EaAgentMetadata } from "./ea-agents.js";
 
@@ -109,7 +109,7 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
 
   lines.push(`\n## Inbox fallback\nIf no topic matches, use topic-id: ${inboxTopic.id} (EA Inbox) for resolve_conversation, then notify_operator asking JayJay which topic to assign.`);
 
-  // Recent issues across all companies (last 48h, non-closed) — lets ECC know what CCC handled
+  // Recent issues across all companies (last 48h, non-closed) — lets EA know what CCC handled
   try {
     const cutoff = new Date(Date.now() - 48 * 3_600_000);
     const recentIssues = await db
@@ -141,7 +141,7 @@ async function buildActiveConversationsContext(db: Db): Promise<{ context: strin
     // non-fatal
   }
 
-  // Pending plan approvals — ECC needs to know what's waiting for JayJay's decision
+  // Pending plan approvals — EA needs to know what's waiting for JayJay's decision
   try {
     const pendingPlans = await db
       .select({
@@ -226,7 +226,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
   let operatorInboxTopicId: string | null = null;
 
   if (isOperator) {
-    // Give ECC full company list in context so it doesn't need to discover them
+    // Give EA full company list in context so it doesn't need to discover them
     try {
       const allCompanies = await db.select({ id: companies.id, name: companies.name }).from(companies);
       if (allCompanies.length) {
@@ -260,8 +260,8 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
       const [stubRun] = await db.insert(workflowRuns).values({
         companyId,
         agentId: activeEaAgent.id,
-        workflowType: "ecc_message",
-        sourceTable: input.inboundMessageId ? "operator_messages" : "ecc_conversations",
+        workflowType: "ea_message",
+        sourceTable: input.inboundMessageId ? "operator_messages" : "ea_conversations",
         sourceId,
         overallStatus: "running",
         startedAt: new Date(),
@@ -451,7 +451,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
         errorText: errMsg.slice(0, 300), ord: 99, computedAt: now,
       }).catch(() => {});
     }
-    await notifyOperatorTelegram(db, `⚠️ Orchestrator error on ${input.platform} message:\n\n${errMsg.slice(0, 300)}\n\nOriginal message: "${input.body.slice(0, 100)}"`)
+    await notifyOperator(db, `⚠️ Orchestrator error on ${input.platform} message:\n\n${errMsg.slice(0, 300)}\n\nOriginal message: "${input.body.slice(0, 100)}"`)
       .catch(() => {});
   } finally {
     // Always reset to idle — even if spawn or anything above throws

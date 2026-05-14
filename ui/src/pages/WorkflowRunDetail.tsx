@@ -1,4 +1,4 @@
-// v3: generic workflow run detail — works for any workflowType (ecc_conversation, etc.)
+// v3: generic workflow run detail — works for any workflowType (ea_conversation, etc.)
 import { useEffect, useState, useMemo } from "react";
 import { useParams, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
@@ -41,7 +41,7 @@ function relativeTime(iso: string): string {
 
 const TYPE_LABELS: Record<string, string> = {
   inbound_email: "Inbound Email",
-  ecc_conversation: "ECC Conversation",
+  ea_conversation: "EA Conversation",
 };
 
 function RunPicker({

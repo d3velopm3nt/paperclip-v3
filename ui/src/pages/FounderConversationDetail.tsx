@@ -1,4 +1,4 @@
-// v3: messages list for a single ECC conversation — one row per workflow run (message turn).
+// v3: messages list for a single EA conversation — one row per workflow run (message turn).
 import { useParams, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { ArrowLeft, CheckCircle2, XCircle, Clock, Activity, MessageSquare } from "lucide-react";
 
-interface EccConversationDetail {
+interface EaConversationDetail {
   id: string;
   topicId: string;
   topicName: string | null;
@@ -115,13 +115,13 @@ export function FounderConversationDetail() {
   const convId = params.convId!;
 
   const convQuery = useQuery({
-    queryKey: ["ecc-conversations", convId],
-    queryFn: () => api.get<EccConversationDetail>(`/ecc/conversations/${convId}`),
+    queryKey: ["ea-conversations", convId],
+    queryFn: () => api.get<EaConversationDetail>(`/ea/conversations/${convId}`),
   });
 
   const runsQuery = useQuery({
-    queryKey: ["workflow-runs", "by-source", "ecc_conversation", convId],
-    queryFn: () => workflowRunsApi.listBySource("ecc_conversation", convId, 50),
+    queryKey: ["workflow-runs", "by-source", "ea_conversation", convId],
+    queryFn: () => workflowRunsApi.listBySource("ea_conversation", convId, 50),
     refetchInterval: 10_000,
   });
 

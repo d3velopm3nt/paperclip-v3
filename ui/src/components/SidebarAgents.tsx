@@ -32,9 +32,9 @@ export function SidebarAgents() {
     enabled: !!selectedCompanyId,
   });
 
-  const { data: eccAgents } = useQuery({
-    queryKey: ["ecc-agents"],
-    queryFn: () => agentsApi.listEcc(),
+  const { data: eaAgents } = useQuery({
+    queryKey: ["ea-agents"],
+    queryFn: () => agentsApi.listEa(),
     staleTime: 60_000,
   });
   const { data: session } = useQuery({
@@ -144,18 +144,18 @@ export function SidebarAgents() {
               </NavLink>
             );
           })}
-          {eccAgents && eccAgents.length > 0 && (
+          {eaAgents && eaAgents.length > 0 && (
             <>
               {orderedAgents.length > 0 && (
                 <div className="mx-3 my-1 border-t border-border/50" />
               )}
-              {eccAgents.map((agent: Agent) => {
-                const eccUrl = `/agents/${agent.id}`;
+              {eaAgents.map((agent: Agent) => {
+                const eaUrl = `/agents/${agent.id}`;
                 const isActive = activeAgentId === agent.id;
                 return (
                   <NavLink
                     key={agent.id}
-                    to={activeTab ? `${eccUrl}/${activeTab}` : eccUrl}
+                    to={activeTab ? `${eaUrl}/${activeTab}` : eaUrl}
                     onClick={() => {
                       if (isMobile) setSidebarOpen(false);
                     }}

@@ -64,7 +64,7 @@ export function agentMemoryRoutes(db: Db) {
   router.get("/agents/:agentId/memories", async (req, res) => {
     const { agentId } = req.params;
     const companyId = await getAgentCompanyId(agentId);
-    // ECC agents have null companyId — board-only access
+    // EA agents have null companyId — board-only access
     if (!companyId) {
       assertBoard(req);
     } else {
@@ -96,7 +96,7 @@ export function agentMemoryRoutes(db: Db) {
       return;
     }
 
-    // ECC agents have null companyId — caller must supply one in the body
+    // EA agents have null companyId — caller must supply one in the body
     const resolvedCompanyId = companyId ?? bodyCompanyId;
     if (!resolvedCompanyId) {
       res.status(400).json({ error: "companyId required for cross-company agents" });

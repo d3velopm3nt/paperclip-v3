@@ -14,7 +14,7 @@ import { planGateService } from "../services/plan-gate.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
 import { sendTelegramMessage } from "../services/telegram-adapter.js";
-import { notifyOperatorTelegram } from "../services/telegram-polling.js";
+import { notifyOperator } from "../services/telegram-polling.js";
 import { sendWhatsAppMessage } from "../services/whatsapp-adapter.js";
 import { readInstanceToken } from "../services/instance-token-store.js";
 import {
@@ -25,6 +25,8 @@ import {
 } from "../services/client-storage.js";
 import { clientService } from "../services/clients.js";
 import { contactService } from "../services/contacts.js";
+import { routineService } from "../services/routines.js";
+import { sendEmailFromAccount } from "../services/email-sender.js";
 
 // ── JSON-RPC helpers ──────────────────────────────────────────────────────────
 
@@ -121,10 +123,11 @@ const TOOLS = [
   },
   {
     name: "search_emails",
-    description: "Search inbound emails received by this company. Filter by sender, subject keyword, processing state, or date. Returns message summaries with attachment counts.",
+    description: "Search inbound emails across all companies (operator) or this company (agent). Filter by sender, subject keyword, processing state, or date. Optionally pass companyId to narrow to one company.",
     inputSchema: {
       type: "object",
       properties: {
+        companyId: { type: "string", description: "UUID of a specific company to narrow results to. Omit to search all companies (operator only)." },
         from: { type: "string", description: "Filter by sender address (partial match)" },
         subject: { type: "string", description: "Filter by subject line (partial match)" },
         state: { type: "string", description: "Filter by processing state: pending|analyzing|plan_proposed|clarifying|approved|declined|executed|ignored|error" },
@@ -135,22 +138,24 @@ const TOOLS = [
   },
   {
     name: "get_email",
-    description: "Get full details of a single email: body, headers, processing state, matched agent/client, and attachment list.",
+    description: "Get full details of a single email: body, headers, processing state, matched agent/client, and attachment list. Pass companyId to access email from a specific company (operator only).",
     inputSchema: {
       type: "object",
       required: ["emailId"],
       properties: {
+        companyId: { type: "string", description: "UUID of the company this email belongs to. Required when accessing email from a company other than the default." },
         emailId: { type: "string", description: "UUID of the email message" },
       },
     },
   },
   {
     name: "list_email_attachments",
-    description: "List all attachments for an email message, including filename, MIME type, size in bytes, and whether it is inline.",
+    description: "List all attachments for an email message, including filename, MIME type, size in bytes, storage paths, and whether it is inline. Pass companyId to access email from a specific company (operator only).",
     inputSchema: {
       type: "object",
       required: ["emailId"],
       properties: {
+        companyId: { type: "string", description: "UUID of the company this email belongs to. Required when accessing email from a company other than the default." },
         emailId: { type: "string", description: "UUID of the email message" },
       },
     },
@@ -245,6 +250,19 @@ const TOOLS = [
       properties: {
         body: { type: "string", description: "Message text to send to operator" },
         issueId: { type: "string", description: "Optional — attaches message to this issue thread" },
+      },
+    },
+  },
+  {
+    name: "send_operator_email",
+    description: "Send an HTML email to the operator (company owner). Use for daily briefs, reports, and routine outputs that should be delivered as a nicely formatted email. The email is sent immediately — no approval required.",
+    inputSchema: {
+      type: "object",
+      required: ["subject", "html"],
+      properties: {
+        subject: { type: "string", description: "Email subject line" },
+        html: { type: "string", description: "Full HTML body of the email" },
+        text: { type: "string", description: "Optional plain-text fallback body" },
       },
     },
   },
@@ -349,7 +367,7 @@ const TOOLS = [
   },
   {
     name: "list_topics",
-    description: "List all ECC topics (memory boxes). Use to see active workstreams across companies.",
+    description: "List all EA topics (memory boxes). Use to see active workstreams across companies.",
     inputSchema: {
       type: "object",
       properties: {
@@ -359,7 +377,7 @@ const TOOLS = [
   },
   {
     name: "create_topic",
-    description: "Create a new ECC topic. REQUIRES prior operator approval — always call notify_operator first, wait for JayJay's confirmation in a subsequent message before calling this.",
+    description: "Create a new EA topic. REQUIRES prior operator approval — always call notify_operator first, wait for JayJay's confirmation in a subsequent message before calling this.",
     inputSchema: {
       type: "object",
       required: ["name"],
@@ -384,7 +402,7 @@ const TOOLS = [
   },
   {
     name: "link_issue_to_topic",
-    description: "Link an existing issue to an ECC topic so it appears in the topic's context panel.",
+    description: "Link an existing issue to an EA topic so it appears in the topic's context panel.",
     inputSchema: {
       type: "object",
       required: ["topicId", "issueId"],
@@ -397,7 +415,7 @@ const TOOLS = [
   {
     name: "resolve_conversation",
     description:
-      "REQUIRED on every ECC message. After matching a topic, call this to resolve or create the active conversation for that topic. Returns conversationId, runId, topic memory, and expiry info. Pass the returned runId to complete_conversation_turn at the end.",
+      "REQUIRED on every EA message. After matching a topic, call this to resolve or create the active conversation for that topic. Returns conversationId, runId, topic memory, and expiry info. Pass the returned runId to complete_conversation_turn at the end.",
     inputSchema: {
       type: "object",
       required: ["topicId"],
@@ -422,7 +440,7 @@ const TOOLS = [
   {
     name: "complete_conversation_turn",
     description:
-      "REQUIRED at the end of every ECC message. Records final workflow stages and marks the run as passed.",
+      "REQUIRED at the end of every EA message. Records final workflow stages and marks the run as passed.",
     inputSchema: {
       type: "object",
       required: ["runId"],
@@ -614,6 +632,46 @@ const TOOLS = [
     },
   },
   {
+    name: "list_routines",
+    description: "List routines (scheduled recurring tasks) for a company. Returns each routine with its triggers (cron schedules), assignee agent, and last run status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        companyId: { type: "string", description: "UUID of the company to query. Required when querying a company other than the default." },
+      },
+    },
+  },
+  {
+    name: "create_routine",
+    description: "Create a new routine (recurring scheduled task) assigned to an agent. Optionally attach a cron schedule trigger so it runs automatically.",
+    inputSchema: {
+      type: "object",
+      required: ["projectId", "title", "assigneeAgentId"],
+      properties: {
+        companyId: { type: "string", description: "UUID of the company. Defaults to agent's company." },
+        projectId: { type: "string", description: "UUID of the project this routine belongs to." },
+        title: { type: "string", description: "Short title for the routine (max 200 chars)." },
+        description: { type: "string", description: "What the agent should do when this routine fires." },
+        assigneeAgentId: { type: "string", description: "UUID of the agent that will execute this routine." },
+        priority: { type: "string", description: "low | medium | high | urgent (default: medium)" },
+        cronExpression: { type: "string", description: "Cron expression for automatic scheduling (e.g. '0 8 * * 1-5' for weekdays at 8am). Omit for manual-only." },
+        timezone: { type: "string", description: "IANA timezone for the cron schedule (e.g. Africa/Johannesburg). Default: UTC." },
+      },
+    },
+  },
+  {
+    name: "run_routine",
+    description: "Manually trigger a routine to run immediately.",
+    inputSchema: {
+      type: "object",
+      required: ["routineId"],
+      properties: {
+        routineId: { type: "string", description: "UUID of the routine to run." },
+        payload: { type: "object", description: "Optional JSON payload passed to the agent." },
+      },
+    },
+  },
+  {
     name: "discard_message",
     description: "Mark a specific operator message as discarded. One-off action — does not block the sender's domain. Use for single irrelevant messages.",
     inputSchema: {
@@ -680,7 +738,7 @@ async function handleTool(
 ): Promise<string> {
   // Only pass callerAgentId to DB columns that are UUID FKs if it's a real UUID
   const callerAgentId = callerAgentIdRaw && UUID_RE.test(callerAgentIdRaw) ? callerAgentIdRaw : null;
-  // Operator can override companyId per tool call (cross-company ECC access)
+  // Operator can override companyId per tool call (cross-company EA access)
   const effectiveCompanyId =
     isOperator && typeof args.companyId === "string" && UUID_RE.test(args.companyId)
       ? args.companyId
@@ -777,7 +835,7 @@ async function handleTool(
 
     // Notify operator when agent sets status to blocked
     if (patch.status === "blocked") {
-      await notifyOperatorTelegram(db, `🚫 Issue blocked: *${updated.title ?? issueId}*\n\nID: \`${updated.identifier ?? issueId}\``).catch(() => {});
+      await notifyOperator(db, `🚫 Issue blocked: *${updated.title ?? issueId}*\n\nID: \`${updated.identifier ?? issueId}\``).catch(() => {});
     }
 
     return JSON.stringify(updated, null, 2);
@@ -827,7 +885,14 @@ async function handleTool(
 
   if (name === "search_emails") {
     const limit = Math.min(Number(args.limit ?? 20), 50);
-    const filters: ReturnType<typeof eq>[] = [eq(emailAccounts.companyId, companyId)];
+    // Operators see all companies by default; passing companyId narrows to one.
+    // Non-operators are always scoped to their token company.
+    const filters: ReturnType<typeof eq>[] = [];
+    if (!isOperator) {
+      filters.push(eq(emailAccounts.companyId, companyId));
+    } else if (effectiveCompanyId !== companyId) {
+      filters.push(eq(emailAccounts.companyId, effectiveCompanyId));
+    }
     if (args.from) filters.push(ilike(emailMessages.fromAddr, `%${String(args.from)}%`));
     if (args.subject) filters.push(ilike(emailMessages.subject, `%${String(args.subject)}%`));
     if (args.state) filters.push(eq(emailMessages.processingState, String(args.state)));
@@ -851,7 +916,8 @@ async function handleTool(
       })
       .from(emailMessages)
       .innerJoin(emailAccounts, eq(emailMessages.emailAccountId, emailAccounts.id))
-      .where(and(...filters))
+      .$dynamic()
+      .where(filters.length > 0 ? and(...filters) : undefined)
       .orderBy(desc(emailMessages.receivedAt))
       .limit(limit);
 
@@ -903,7 +969,7 @@ async function handleTool(
       })
       .from(emailMessages)
       .innerJoin(emailAccounts, eq(emailMessages.emailAccountId, emailAccounts.id))
-      .where(and(eq(emailMessages.id, emailId), eq(emailAccounts.companyId, companyId)))
+      .where(and(eq(emailMessages.id, emailId), eq(emailAccounts.companyId, effectiveCompanyId)))
       .limit(1);
 
     if (!row) return "Error: email not found or access denied";
@@ -932,7 +998,7 @@ async function handleTool(
       .select({ id: emailMessages.id })
       .from(emailMessages)
       .innerJoin(emailAccounts, eq(emailMessages.emailAccountId, emailAccounts.id))
-      .where(and(eq(emailMessages.id, emailId), eq(emailAccounts.companyId, companyId)))
+      .where(and(eq(emailMessages.id, emailId), eq(emailAccounts.companyId, effectiveCompanyId)))
       .limit(1);
 
     if (!msg) return "Error: email not found or access denied";
@@ -1079,7 +1145,7 @@ async function handleTool(
       });
       try {
         const planNotice = `📋 *New lead — approval required*\n\n${title ? `**${title}**\n\n` : ""}${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nPlan ID: \`${planId}\``;
-        await notifyOperatorTelegram(db, planNotice);
+        await notifyOperator(db, planNotice);
       } catch { /* non-fatal */ }
       return JSON.stringify({ planId, approvalId });
     }
@@ -1098,7 +1164,7 @@ async function handleTool(
 
     try {
       const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — EA will call approve_plan.`;
-      await notifyOperatorTelegram(db, planNotice);
+      await notifyOperator(db, planNotice);
     } catch { /* non-fatal */ }
 
     return `Plan created. Approval ID: ${approval!.id}. Awaiting operator approval.`;
@@ -1119,7 +1185,7 @@ async function handleTool(
     {
       const issueRef = existing.identifier ?? issueId.slice(0, 8);
       const preview = commentBody.replace(/#+\s*/g, "").slice(0, 400);
-      await notifyOperatorTelegram(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`).catch(() => {});
+      await notifyOperator(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`).catch(() => {});
     }
 
     return `Comment added to issue ${issueId}.`;
@@ -1141,7 +1207,7 @@ async function handleTool(
 
   if (name === "notify_operator") {
     const { body: notifyBody, issueId: notifyIssueId } = args as { body: string; issueId?: string };
-    await notifyOperatorTelegram(db, notifyBody).catch((err) => {
+    await notifyOperator(db, notifyBody).catch((err) => {
       logger.warn({ err }, "notify_operator: telegram send failed");
     });
     await db.insert(operatorMessages).values({
@@ -1177,6 +1243,52 @@ async function handleTool(
       logger.warn({ err }, "notify_operator: failed to append to inbox conversation");
     }
     return `Operator notified.`;
+  }
+
+  if (name === "send_operator_email") {
+    const { subject: emailSubject, html: emailHtml, text: emailText } = args as { subject: string; html: string; text?: string };
+
+    const [company] = await db
+      .select({ ownerEmail: companies.ownerEmail })
+      .from(companies)
+      .where(eq(companies.id, effectiveCompanyId))
+      .limit(1);
+    const toAddr = company?.ownerEmail;
+    if (!toAddr) throw new Error("Company has no ownerEmail configured — cannot send operator email.");
+
+    const [account] = await db
+      .select({ id: emailAccounts.id })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.companyId, effectiveCompanyId))
+      .limit(1);
+    if (!account) throw new Error("No email account configured for this company — cannot send operator email.");
+
+    await sendEmailFromAccount(db, {
+      accountId: account.id,
+      to: toAddr,
+      subject: emailSubject,
+      html: emailHtml,
+      text: emailText,
+    });
+
+    await db.insert(operatorMessages).values({
+      companyId: effectiveCompanyId,
+      issueId: null,
+      direction: "outbound",
+      platform: "email",
+      source: "orchestrator",
+      body: `[HTML email] ${emailSubject}`,
+      rawPayload: null,
+    });
+
+    await appendStageToActiveRun(db, callerAgentId, {
+      stageId: "operator_email_sent",
+      label: "Operator email sent",
+      status: "passed",
+      actuals: { subject: emailSubject, to: toAddr },
+    });
+
+    return `Email sent to ${toAddr}: "${emailSubject}"`;
   }
 
   if (name === "send_client_reply") {
@@ -1237,7 +1349,7 @@ async function handleTool(
       body: `🚫 **Blocked:** ${reason}`,
       authorAgentId: null,
     });
-    await notifyOperatorTelegram(db, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
+    await notifyOperator(db, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
     return `Issue marked as blocked. Operator notified.`;
   }
 
@@ -1490,7 +1602,7 @@ async function handleTool(
       if (existing) {
         run = existing;
         // Update sourceId to point at the conversation now that we know it
-        await db.update(workflowRuns).set({ sourceTable: "ecc_conversations", sourceId: conversation.id }).where(eq(workflowRuns.id, existing.id));
+        await db.update(workflowRuns).set({ sourceTable: "ea_conversations", sourceId: conversation.id }).where(eq(workflowRuns.id, existing.id));
       }
     }
     if (!run) {
@@ -1499,8 +1611,8 @@ async function handleTool(
         .values({
           companyId: runCompanyId,
           agentId: callerAgentId ?? undefined,
-          workflowType: "ecc_conversation",
-          sourceTable: "ecc_conversations",
+          workflowType: "ea_conversation",
+          sourceTable: "ea_conversations",
           sourceId: conversation.id,
           overallStatus: "running",
           startedAt: now,
@@ -1530,7 +1642,7 @@ async function handleTool(
         stageId: "topic_matched",
         label: "Topic matched",
         status: "passed",
-        expectations: ["ECC identified topic from message context"],
+        expectations: ["EA identified topic from message context"],
         actuals: { topicId, topicName: topic.name },
         errorText: null,
         ord: 1,
@@ -1607,7 +1719,7 @@ async function handleTool(
         stageId: "action_taken",
         label: "Action taken",
         status: "passed",
-        expectations: ["ECC completed turn with response"],
+        expectations: ["EA completed turn with response"],
         actuals: { ...(actionSummary ? { actionSummary } : {}), issuesLinked },
         errorText: null,
         ord: nextOrd + 1,
@@ -1634,7 +1746,7 @@ async function handleTool(
         ),
       ));
     if (notifyStages.length === 0 && actionSummary) {
-      await notifyOperatorTelegram(db, actionSummary).catch((err) => {
+      await notifyOperator(db, actionSummary).catch((err) => {
         logger.warn({ err }, "complete_conversation_turn: auto-notify fallback failed");
       });
       await db.insert(workflowStageResults).values({
@@ -1913,6 +2025,65 @@ async function handleTool(
       .set({ discardedAt: new Date() })
       .where(and(eq(operatorMessages.id, messageId), eq(operatorMessages.companyId, effectiveCompanyId)));
     return `Message ${messageId} discarded.`;
+  }
+
+  if (name === "list_routines") {
+    const svc = routineService(db);
+    const routines = await svc.list(effectiveCompanyId);
+    return JSON.stringify(routines, null, 2);
+  }
+
+  if (name === "create_routine") {
+    const svc = routineService(db);
+    const { projectId, title, description, assigneeAgentId, priority, cronExpression, timezone } =
+      args as {
+        projectId: string;
+        title: string;
+        description?: string;
+        assigneeAgentId: string;
+        priority?: string;
+        cronExpression?: string;
+        timezone?: string;
+      };
+    if (!projectId) return "Error: projectId is required";
+    if (!title) return "Error: title is required";
+    if (!assigneeAgentId) return "Error: assigneeAgentId is required";
+
+    const routine = await svc.create(
+      effectiveCompanyId,
+      {
+        projectId,
+        title,
+        description: description ?? null,
+        assigneeAgentId,
+        priority: (priority as "low" | "medium" | "high" | "critical") ?? "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      { agentId: callerAgentId },
+    );
+
+    if (cronExpression) {
+      await svc.createTrigger(
+        routine.id,
+        { kind: "schedule", cronExpression, timezone: timezone ?? "UTC", enabled: true },
+        { agentId: callerAgentId },
+      );
+    }
+
+    return JSON.stringify({ routineId: routine.id, title: routine.title }, null, 2);
+  }
+
+  if (name === "run_routine") {
+    const svc = routineService(db);
+    const { routineId, payload } = args as { routineId: string; payload?: Record<string, unknown> };
+    if (!routineId) return "Error: routineId is required";
+    const run = await svc.runRoutine(routineId, {
+      source: "api",
+      payload: payload ?? null,
+    });
+    return JSON.stringify({ runId: run.id, status: run.status }, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;

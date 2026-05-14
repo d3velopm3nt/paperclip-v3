@@ -1,4 +1,4 @@
-// v3: cross-company ECC conversation list on founder profile.
+// v3: cross-company EA conversation list on founder profile.
 import { useState } from "react";
 import { useNavigate } from "@/lib/router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,7 +13,7 @@ interface LinkedIssue {
   status: string;
 }
 
-interface EccConversation {
+interface EaConversation {
   id: string;
   topicId: string;
   topicName: string | null;
@@ -39,7 +39,7 @@ export interface InboundMessage {
     topicId?: string;
     topicName?: string | null;
     workflowRunId?: string | null;
-    eccAgentId?: string | null;
+    eaAgentId?: string | null;
   } | null;
   createdAt: string;
 }
@@ -118,8 +118,8 @@ function InboundStatusBadge({ msg }: { msg: InboundMessage }) {
 export function IncomingMessages({ onMessageClick }: { onMessageClick?: (msg: InboundMessage) => void } = {}) {
   const qc = useQueryClient();
   const inboundQuery = useQuery({
-    queryKey: ["ecc-inbound-messages"],
-    queryFn: () => api.get<InboundMessage[]>("/ecc/inbound-messages?limit=10"),
+    queryKey: ["ea-inbound-messages"],
+    queryFn: () => api.get<InboundMessage[]>("/ea/inbound-messages?limit=10"),
     refetchInterval: 3_000,
   });
 
@@ -133,8 +133,8 @@ export function IncomingMessages({ onMessageClick }: { onMessageClick?: (msg: In
 
   async function dismiss(e: React.MouseEvent, id: string) {
     e.stopPropagation();
-    await api.patch(`/ecc/inbound-messages/${id}/dismiss`, {});
-    qc.invalidateQueries({ queryKey: ["ecc-inbound-messages"] });
+    await api.patch(`/ea/inbound-messages/${id}/dismiss`, {});
+    qc.invalidateQueries({ queryKey: ["ea-inbound-messages"] });
   }
 
   return (
@@ -176,8 +176,8 @@ export function FounderConversations() {
   const [showAll, setShowAll] = useState(false);
 
   const convsQuery = useQuery({
-    queryKey: ["ecc-conversations", showAll],
-    queryFn: () => api.get<EccConversation[]>(`/ecc/conversations${showAll ? "?all=true" : ""}`),
+    queryKey: ["ea-conversations", showAll],
+    queryFn: () => api.get<EaConversation[]>(`/ea/conversations${showAll ? "?all=true" : ""}`),
     refetchInterval: 15_000,
   });
 
@@ -187,11 +187,11 @@ export function FounderConversations() {
     <div className="space-y-3">
       <IncomingMessages
         onMessageClick={(msg) => {
-          const { eccAgentId, workflowRunId } = msg.rawPayload ?? {};
-          if (eccAgentId && workflowRunId) {
-            navigate(`/agents/${eccAgentId}/runs/${workflowRunId}`);
-          } else if (eccAgentId) {
-            navigate(`/agents/${eccAgentId}`);
+          const { eaAgentId, workflowRunId } = msg.rawPayload ?? {};
+          if (eaAgentId && workflowRunId) {
+            navigate(`/agents/${eaAgentId}/runs/${workflowRunId}`);
+          } else if (eaAgentId) {
+            navigate(`/agents/${eaAgentId}`);
           }
         }}
       />

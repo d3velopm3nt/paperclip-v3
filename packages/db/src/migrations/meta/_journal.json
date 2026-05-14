@@ -554,6 +554,13 @@
       "when": 1778683732548,
       "tag": "0078_fuzzy_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1778702344443,
+      "tag": "0079_nosy_scream",
+      "breakpoints": true
     }
   ]
 }
