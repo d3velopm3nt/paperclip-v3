@@ -280,7 +280,7 @@ export async function searchEntities(
           })
           .from(contacts)
           .leftJoin(companies, eq(companies.id, contacts.companyId))
-          .where(or(sql`(${contacts.firstName} || ' ' || ${contacts.lastName}) % ${q}`, ilike(contacts.email, likeQ)))
+          .where(or(sql`(COALESCE(${contacts.firstName}, '') || ' ' || COALESCE(${contacts.lastName}, '')) % ${q}`, ilike(contacts.email, likeQ)))
           .orderBy(sql`similarity(COALESCE(${contacts.firstName} || ' ' || ${contacts.lastName}, ''), ${q}) DESC`)
           .limit(MAX_PER_TYPE),
       () =>
@@ -294,7 +294,10 @@ export async function searchEntities(
           })
           .from(contacts)
           .leftJoin(companies, eq(companies.id, contacts.companyId))
-          .where(or(ilike(contacts.firstName, likeQ), ilike(contacts.lastName, likeQ), ilike(contacts.email, likeQ)))
+          .where(or(
+            sql`(COALESCE(${contacts.firstName}, '') || ' ' || COALESCE(${contacts.lastName}, '')) ILIKE ${likeQ}`,
+            ilike(contacts.email, likeQ)
+          ))
           .limit(MAX_PER_TYPE),
     );
     for (const r of rows) {
@@ -364,10 +367,19 @@ export async function switchContext(
     updatedAt: new Date().toISOString(),
   };
 
-  await db
+  const updated = await db
     .update(topics)
     .set({ workingContext: ctx as Record<string, unknown>, updatedAt: new Date() })
-    .where(eq(topics.id, topicId));
+    .where(eq(topics.id, topicId))
+    .returning({ id: topics.id });
+
+  if (updated.length === 0) {
+    return {
+      switched: false,
+      context: null,
+      message: `Topic ${topicId} not found — context not saved. Verify topicId is correct.`,
+    };
+  }
 
   const parts = [
     ctx.companyName,
