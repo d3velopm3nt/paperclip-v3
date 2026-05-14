@@ -835,7 +835,7 @@ async function handleTool(
 
     // Notify operator when agent sets status to blocked
     if (patch.status === "blocked") {
-      await notifyOperator(db, `🚫 Issue blocked: *${updated.title ?? issueId}*\n\nID: \`${updated.identifier ?? issueId}\``).catch(() => {});
+      await notifyOperator(db, `🚫 Issue blocked: *${updated.title ?? issueId}*\n\nID: \`${updated.identifier ?? issueId}\``, "agent_blocked").catch(() => {});
     }
 
     return JSON.stringify(updated, null, 2);
@@ -1145,7 +1145,7 @@ async function handleTool(
       });
       try {
         const planNotice = `📋 *New lead — approval required*\n\n${title ? `**${title}**\n\n` : ""}${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nPlan ID: \`${planId}\``;
-        await notifyOperator(db, planNotice);
+        await notifyOperator(db, planNotice, "new_lead_created");
       } catch { /* non-fatal */ }
       return JSON.stringify({ planId, approvalId });
     }
@@ -1164,7 +1164,7 @@ async function handleTool(
 
     try {
       const planNotice = `📋 *Plan awaiting approval*\n\n${fullProposal.slice(0, 600)}${fullProposal.length > 600 ? "…" : ""}\n\nApproval ID: \`${approval!.id}\`\n\nReply "approve" or "decline" — EA will call approve_plan.`;
-      await notifyOperator(db, planNotice);
+      await notifyOperator(db, planNotice, "approval_required");
     } catch { /* non-fatal */ }
 
     return `Plan created. Approval ID: ${approval!.id}. Awaiting operator approval.`;
@@ -1185,7 +1185,7 @@ async function handleTool(
     {
       const issueRef = existing.identifier ?? issueId.slice(0, 8);
       const preview = commentBody.replace(/#+\s*/g, "").slice(0, 400);
-      await notifyOperator(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`).catch(() => {});
+      await notifyOperator(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`, "urgent_item_detected").catch(() => {});
     }
 
     return `Comment added to issue ${issueId}.`;
@@ -1207,7 +1207,7 @@ async function handleTool(
 
   if (name === "notify_operator") {
     const { body: notifyBody, issueId: notifyIssueId } = args as { body: string; issueId?: string };
-    await notifyOperator(db, notifyBody).catch((err) => {
+    await notifyOperator(db, notifyBody, "urgent_item_detected").catch((err) => {
       logger.warn({ err }, "notify_operator: telegram send failed");
     });
     await db.insert(operatorMessages).values({
@@ -1349,7 +1349,7 @@ async function handleTool(
       body: `🚫 **Blocked:** ${reason}`,
       authorAgentId: null,
     });
-    await notifyOperator(db, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``).catch(() => {});
+    await notifyOperator(db, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``, "agent_blocked").catch(() => {});
     return `Issue marked as blocked. Operator notified.`;
   }
 
@@ -1746,7 +1746,7 @@ async function handleTool(
         ),
       ));
     if (notifyStages.length === 0 && actionSummary) {
-      await notifyOperator(db, actionSummary).catch((err) => {
+      await notifyOperator(db, actionSummary, "thread_reply_received").catch((err) => {
         logger.warn({ err }, "complete_conversation_turn: auto-notify fallback failed");
       });
       await db.insert(workflowStageResults).values({

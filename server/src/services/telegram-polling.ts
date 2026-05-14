@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { Db } from "@paperclipai/db";
 import { companies, instanceSettings } from "@paperclipai/db";
 import { eq, sql } from "drizzle-orm";
+import type { EaNotificationEvent, EaNotificationMatrix } from "@paperclipai/shared";
 import { sendTelegramMessage, sendTelegramChatAction } from "./telegram-adapter.js";
 import { logActivity } from "./activity-log.js";
 import { readInstanceToken } from "./instance-token-store.js";
@@ -369,23 +370,26 @@ export async function notifyOperatorTelegram(db: Db, message: string): Promise<v
   await sendTelegramMessage(token, chatId, message);
 }
 
-// Multi-channel operator notification. Reads operatorNotifyChannels from instance_settings
-// and fans out to all enabled channels. Replaces direct notifyOperatorTelegram calls.
-export async function notifyOperator(db: Db, message: string): Promise<void> {
+// Multi-channel operator notification. Checks eaNotificationMatrix in instance_settings
+// for per-event per-channel routing. Pass eventType to gate on matrix; omit to send to all channels.
+export async function notifyOperator(db: Db, message: string, eventType?: EaNotificationEvent): Promise<void> {
   const [settings] = await db
     .select({ general: instanceSettings.general })
     .from(instanceSettings)
     .where(eq(instanceSettings.singletonKey, "default"))
     .limit(1);
   const general = (settings?.general ?? {}) as Record<string, unknown>;
+  const matrix = (general.eaNotificationMatrix ?? null) as EaNotificationMatrix | null;
 
-  const channels = Array.isArray(general.operatorNotifyChannels)
-    ? (general.operatorNotifyChannels as string[])
-    : ["telegram"]; // default: telegram only (backwards compat)
+  function channelEnabled(channel: "telegram" | "email"): boolean {
+    if (!matrix) return channel === "telegram"; // default: telegram only
+    if (!eventType) return true; // no event type = always send
+    return matrix[channel]?.[eventType] ?? false;
+  }
 
   const results = await Promise.allSettled([
-    channels.includes("telegram") ? notifyOperatorTelegram(db, message) : Promise.resolve(),
-    channels.includes("email") ? notifyOperatorEmail(db, general, message) : Promise.resolve(),
+    channelEnabled("telegram") ? notifyOperatorTelegram(db, message) : Promise.resolve(),
+    channelEnabled("email") ? notifyOperatorEmail(db, general, message) : Promise.resolve(),
   ]);
 
   for (const result of results) {

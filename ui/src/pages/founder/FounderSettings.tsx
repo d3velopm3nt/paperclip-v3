@@ -9,6 +9,7 @@ import type { FounderProfile } from "@paperclipai/shared";
 interface GeneralSettings {
   founderProfile?: FounderProfile;
   eaNotificationMatrix?: EaNotificationMatrix;
+  operatorNotifyEmail?: string;
   [key: string]: unknown;
 }
 
@@ -26,7 +27,20 @@ interface EaNotificationChannelConfig {
 
 interface EaNotificationMatrix {
   telegram: EaNotificationChannelConfig;
+  email: EaNotificationChannelConfig;
 }
+
+const EA_CHANNEL_CONFIG_DEFAULTS: EaNotificationChannelConfig = {
+  high_risk_detected: false,
+  approval_required: false,
+  new_lead_created: false,
+  proposal_request_detected: false,
+  agent_blocked: false,
+  topic_created: false,
+  issue_created: false,
+  urgent_item_detected: false,
+  thread_reply_received: false,
+};
 
 const EA_NOTIFICATION_DEFAULTS: EaNotificationMatrix = {
   telegram: {
@@ -40,6 +54,7 @@ const EA_NOTIFICATION_DEFAULTS: EaNotificationMatrix = {
     urgent_item_detected: true,
     thread_reply_received: false,
   },
+  email: EA_CHANNEL_CONFIG_DEFAULTS,
 };
 
 const EA_NOTIFICATION_LABELS: Record<keyof EaNotificationChannelConfig, string> = {
@@ -68,12 +83,17 @@ export function FounderSettings() {
   const [name, setName] = useState("");
   const [personalCompanyId, setPersonalCompanyId] = useState<string>("");
   const [saved, setSaved] = useState(false);
+  const [operatorNotifyEmail, setOperatorNotifyEmail] = useState("");
+  const [emailSaved, setEmailSaved] = useState(false);
 
   useEffect(() => {
     const profile = settingsQuery.data?.founderProfile;
     if (profile) {
       setName(profile.name ?? "");
       setPersonalCompanyId(profile.personalCompanyId ?? "");
+    }
+    if (settingsQuery.data?.operatorNotifyEmail !== undefined) {
+      setOperatorNotifyEmail(settingsQuery.data.operatorNotifyEmail ?? "");
     }
   }, [settingsQuery.data]);
 
@@ -93,9 +113,11 @@ export function FounderSettings() {
     },
   });
 
-  const matrix: EaNotificationMatrix =
-    (settingsQuery.data?.eaNotificationMatrix as EaNotificationMatrix | undefined) ??
-    EA_NOTIFICATION_DEFAULTS;
+  const rawMatrix = settingsQuery.data?.eaNotificationMatrix as EaNotificationMatrix | undefined;
+  const matrix: EaNotificationMatrix = {
+    telegram: { ...EA_NOTIFICATION_DEFAULTS.telegram, ...(rawMatrix?.telegram ?? {}) },
+    email: { ...EA_CHANNEL_CONFIG_DEFAULTS, ...(rawMatrix?.email ?? {}) },
+  };
 
   const updateMatrixMutation = useMutation({
     mutationFn: (newMatrix: EaNotificationMatrix) =>
@@ -103,6 +125,18 @@ export function FounderSettings() {
         eaNotificationMatrix: newMatrix,
       }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["instance-settings-general"] }),
+  });
+
+  const saveEmailMutation = useMutation({
+    mutationFn: (email: string) =>
+      api.patch<GeneralSettings>("/instance/settings/general", {
+        operatorNotifyEmail: email || undefined,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["instance-settings-general"] });
+      setEmailSaved(true);
+      setTimeout(() => setEmailSaved(false), 2000);
+    },
   });
 
   function toggleMatrixEvent(
@@ -183,7 +217,7 @@ export function FounderSettings() {
         <div className="space-y-1">
           <h2 className="text-base font-semibold">EA Notification Matrix</h2>
           <p className="text-sm text-muted-foreground">
-            Control which events trigger a Telegram notification from the Executive Agent.
+            Control which events trigger notifications per channel from the Executive Agent.
           </p>
         </div>
         <div className="rounded-lg border border-border bg-card">
@@ -192,33 +226,61 @@ export function FounderSettings() {
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-4 font-medium text-muted-foreground">Event</th>
                 <th className="text-center py-2 px-4 w-24 font-medium text-muted-foreground">Telegram</th>
+                <th className="text-center py-2 px-4 w-24 font-medium text-muted-foreground">Email</th>
               </tr>
             </thead>
             <tbody>
               {(Object.keys(EA_NOTIFICATION_LABELS) as Array<keyof EaNotificationChannelConfig>).map((event) => (
                 <tr key={event} className="border-b border-border last:border-0">
                   <td className="py-2 px-4 text-sm">{EA_NOTIFICATION_LABELS[event]}</td>
-                  <td className="py-2 px-4 text-center">
-                    <button
-                      type="button"
-                      onClick={() => toggleMatrixEvent("telegram", event)}
-                      disabled={updateMatrixMutation.isPending}
-                      aria-label={`Toggle ${EA_NOTIFICATION_LABELS[event]} for Telegram`}
-                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
-                        matrix.telegram[event] ? "bg-primary" : "bg-muted"
-                      }`}
-                    >
-                      <span
-                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
-                          matrix.telegram[event] ? "translate-x-4" : "translate-x-1"
+                  {(["telegram", "email"] as const).map((channel) => (
+                    <td key={channel} className="py-2 px-4 text-center">
+                      <button
+                        type="button"
+                        onClick={() => toggleMatrixEvent(channel, event)}
+                        disabled={updateMatrixMutation.isPending}
+                        aria-label={`Toggle ${EA_NOTIFICATION_LABELS[event]} for ${channel}`}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${
+                          matrix[channel][event] ? "bg-primary" : "bg-muted"
                         }`}
-                      />
-                    </button>
-                  </td>
+                      >
+                        <span
+                          className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                            matrix[channel][event] ? "translate-x-4" : "translate-x-1"
+                          }`}
+                        />
+                      </button>
+                    </td>
+                  ))}
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+
+        <div className="space-y-1.5 pt-1">
+          <label className="text-sm font-medium">Notification email address</label>
+          <p className="text-xs text-muted-foreground">
+            Required for email channel notifications. Leave blank to disable email.
+          </p>
+          <div className="flex items-center gap-2">
+            <Input
+              type="email"
+              value={operatorNotifyEmail}
+              onChange={(e) => setOperatorNotifyEmail(e.target.value)}
+              placeholder="operator@example.com"
+              className="max-w-xs"
+            />
+            <Button
+              size="sm"
+              onClick={() => saveEmailMutation.mutate(operatorNotifyEmail)}
+              disabled={saveEmailMutation.isPending}
+            >
+              {saveEmailMutation.isPending ? "Saving…" : "Save"}
+            </Button>
+            {emailSaved && <span className="text-sm text-muted-foreground">Saved!</span>}
+            {saveEmailMutation.isError && <span className="text-sm text-destructive">Save failed</span>}
+          </div>
         </div>
       </div>
     </div>

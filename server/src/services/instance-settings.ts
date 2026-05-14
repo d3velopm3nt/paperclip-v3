@@ -14,14 +14,21 @@ import { eq } from "drizzle-orm";
 const DEFAULT_SINGLETON_KEY = "default";
 
 function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
-  const parsed = instanceGeneralSettingsSchema.safeParse(raw ?? {});
+  const r = (raw ?? {}) as Record<string, unknown>;
+  // Use passthrough so unknown JSONB fields (telegramOperatorChatId, etc.) don't cause safeParse failure
+  const parsed = instanceGeneralSettingsSchema.strip().safeParse(r);
   if (parsed.success) {
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
+      ...(parsed.data.eaNotificationMatrix !== undefined && { eaNotificationMatrix: parsed.data.eaNotificationMatrix }),
+      ...(parsed.data.operatorNotifyEmail !== undefined && { operatorNotifyEmail: parsed.data.operatorNotifyEmail }),
     };
   }
+  // Fallback: manual extraction
   return {
-    censorUsernameInLogs: false,
+    censorUsernameInLogs: typeof r.censorUsernameInLogs === "boolean" ? r.censorUsernameInLogs : false,
+    ...(r.eaNotificationMatrix !== undefined && { eaNotificationMatrix: r.eaNotificationMatrix as InstanceGeneralSettings["eaNotificationMatrix"] }),
+    ...(r.operatorNotifyEmail !== undefined && { operatorNotifyEmail: r.operatorNotifyEmail as string }),
   };
 }
 
@@ -94,15 +101,16 @@ export function instanceSettingsService(db: Db) {
 
     updateGeneral: async (patch: PatchInstanceGeneralSettings): Promise<InstanceSettings> => {
       const current = await getOrCreateRow();
-      const nextGeneral = normalizeGeneralSettings({
-        ...normalizeGeneralSettings(current.general),
+      // Raw-merge preserves unknown JSONB fields (e.g. telegramOperatorChatId, founderProfile)
+      const rawMerged = {
+        ...((current.general as Record<string, unknown>) ?? {}),
         ...patch,
-      });
+      };
       const now = new Date();
       const [updated] = await db
         .update(instanceSettings)
         .set({
-          general: { ...nextGeneral },
+          general: rawMerged,
           updatedAt: now,
         })
         .where(eq(instanceSettings.id, current.id))

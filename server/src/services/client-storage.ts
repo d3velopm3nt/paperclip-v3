@@ -315,7 +315,7 @@ export async function notifyStorageNotConfigured(db: Db, companyId: string): Pro
   if (recent) return;
 
   try {
-    await notifyOperator(db, STORAGE_WARN_BODY);
+    await notifyOperator(db, STORAGE_WARN_BODY, "high_risk_detected");
     await db.insert(operatorMessages).values({
       companyId,
       direction: "outbound",

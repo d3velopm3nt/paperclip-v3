@@ -430,8 +430,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
 
     await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
 
-    // Save the session ID so the next message can resume the conversation (skip if we're about to clear it)
-    if (activeEaAgent && !shouldClearSession) {
+    // Save the session ID so the next message can resume the conversation.
+    // Use exitCode === 0 rather than !shouldClearSession: shouldClearSession is true on stale-session
+    // retry but the fresh retry still produces a valid new session ID that must be persisted.
+    if (activeEaAgent && exitCode === 0) {
       const newSessionId = parseSessionId(stdout);
       if (newSessionId) {
         await eaSvc.saveSessionId(activeEaAgent.id, newSessionId).catch(() => {});
@@ -451,7 +453,7 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
         errorText: errMsg.slice(0, 300), ord: 99, computedAt: now,
       }).catch(() => {});
     }
-    await notifyOperator(db, `⚠️ Orchestrator error on ${input.platform} message:\n\n${errMsg.slice(0, 300)}\n\nOriginal message: "${input.body.slice(0, 100)}"`)
+    await notifyOperator(db, `⚠️ Orchestrator error on ${input.platform} message:\n\n${errMsg.slice(0, 300)}\n\nOriginal message: "${input.body.slice(0, 100)}"`, "high_risk_detected")
       .catch(() => {});
   } finally {
     // Always reset to idle — even if spawn or anything above throws
