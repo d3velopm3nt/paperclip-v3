@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { topicIssues, topics, issues } from "@paperclipai/db";
+import type { WorkingContextShape } from "./entity-search.js";
 
 export interface TopicRow {
   id: string;
@@ -12,6 +13,7 @@ export interface TopicRow {
   createdAt: Date;
   updatedAt: Date;
   issueCount: number;
+  workingContext: unknown | null;
 }
 
 export interface LinkedIssue {
@@ -38,6 +40,7 @@ export function topicsService(db: Db) {
         status: topics.status,
         createdAt: topics.createdAt,
         updatedAt: topics.updatedAt,
+        workingContext: topics.workingContext,
         issueCount: sql<number>`count(${topicIssues.id})::int`,
       })
       .from(topics)
@@ -124,5 +127,12 @@ export function topicsService(db: Db) {
       .where(and(eq(topicIssues.topicId, topicId), eq(topicIssues.issueId, issueId)));
   }
 
-  return { list, getById, create, update, remove, linkIssue, unlinkIssue };
+  async function setWorkingContext(topicId: string, context: WorkingContextShape): Promise<void> {
+    await db
+      .update(topics)
+      .set({ workingContext: context as Record<string, unknown>, updatedAt: new Date() })
+      .where(eq(topics.id, topicId));
+  }
+
+  return { list, getById, create, update, remove, linkIssue, unlinkIssue, setWorkingContext };
 }
