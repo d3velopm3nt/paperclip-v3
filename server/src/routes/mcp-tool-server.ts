@@ -6,6 +6,7 @@ import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
 import { issueService } from "../services/issues.js";
+import { projectService } from "../services/projects.js";
 import { topicsService } from "../services/topics.js";
 import { eaConversationsService } from "../services/ea-conversations.js";
 import type { ConversationMessage } from "../services/ea-conversations.js";
@@ -27,6 +28,8 @@ import { clientService } from "../services/clients.js";
 import { contactService } from "../services/contacts.js";
 import { routineService } from "../services/routines.js";
 import { sendEmailFromAccount } from "../services/email-sender.js";
+import { searchEntities, switchContext as switchContextSvc } from "../services/entity-search.js";
+import type { EntityType } from "../services/entity-search.js";
 
 // ── JSON-RPC helpers ──────────────────────────────────────────────────────────
 
@@ -683,6 +686,56 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "search_entities",
+    description: "Fuzzy search across companies, clients, projects, issues, topics, and contacts. Use to resolve partial or casual names to exact IDs before acting. Returns ranked matches with full FK chain (project → client → company). Operator only.",
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "Name to search (partial match, typo-tolerant)" },
+        types: {
+          type: "array",
+          items: { type: "string", enum: ["company", "client", "project", "issue", "topic", "contact"] },
+          description: "Entity types to include. Default: all types.",
+        },
+      },
+    },
+  },
+  {
+    name: "set_working_context",
+    description: "Persist the current working context (company/client/project/issue/topic) on a topic. Context is automatically injected into your prompt on the next operator message — act directly without re-searching. Pass null to clear a field.",
+    inputSchema: {
+      type: "object",
+      required: ["topicId"],
+      properties: {
+        topicId: { type: "string", description: "UUID of the EA topic to store context on" },
+        companyId: { type: "string" },
+        companyName: { type: "string" },
+        clientId: { type: "string" },
+        clientName: { type: "string" },
+        projectId: { type: "string" },
+        projectName: { type: "string" },
+        issueId: { type: "string" },
+        issueIdentifier: { type: "string", description: "e.g. DEV-12" },
+        issueTitle: { type: "string" },
+        topicName: { type: "string" },
+        notes: { type: "string", description: "Free-form notes about current focus" },
+      },
+    },
+  },
+  {
+    name: "switch_context",
+    description: "Atomic: search by query → auto-pick best match per type → persist working context → return confirmation. Use for 'switch to X' or 'now working on Y' commands. Operator only.",
+    inputSchema: {
+      type: "object",
+      required: ["query", "topicId"],
+      properties: {
+        query: { type: "string", description: "Entity name to switch to (e.g. 'Rockdog', 'Innotrack')" },
+        topicId: { type: "string", description: "UUID of the current EA topic to store context on" },
+      },
+    },
+  },
 ];
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -776,26 +829,23 @@ async function handleTool(
     const title = String(args.title ?? "").trim();
     if (!title) return "Error: title is required";
 
-    const [created] = await db
-      .insert(issues)
-      .values({
-        companyId: effectiveCompanyId,
-        title,
-        description: args.description ? String(args.description) : null,
-        priority: (args.priority as string) ?? "medium",
-        status: (args.status as string) ?? "backlog",
-        projectId: args.projectId ? String(args.projectId) : null,
-        assigneeAgentId: args.assigneeAgentId ? String(args.assigneeAgentId) : null,
-        createdByAgentId: callerAgentId,
-        originKind: "chat",
-      })
-      .returning();
+    const svc = issueService(db);
+    const created = await svc.create(effectiveCompanyId, {
+      title,
+      description: args.description ? String(args.description) : null,
+      priority: (args.priority as string) ?? "medium",
+      status: (args.status as string) ?? "backlog",
+      projectId: args.projectId ? String(args.projectId) : null,
+      assigneeAgentId: args.assigneeAgentId ? String(args.assigneeAgentId) : null,
+      createdByAgentId: callerAgentId,
+      originKind: "chat",
+    });
 
     void logActivity(db, {
       companyId, actorType: "agent", actorId: callerAgentId ?? "chat",
-      action: "issue.created", entityType: "issue", entityId: created!.id,
+      action: "issue.created", entityType: "issue", entityId: created.id,
       agentId: callerAgentId,
-      details: { title, via: "mcp-chat" },
+      details: { title, identifier: created.identifier, via: "mcp-chat" },
     });
 
     let issueClientFolderPath: string | null = null;
@@ -812,19 +862,18 @@ async function handleTool(
     const issueId = String(args.issueId ?? "").trim();
     if (!issueId) return "Error: issueId is required";
 
-    const patch: Record<string, unknown> = { updatedAt: new Date() };
-    if (args.status !== undefined) patch.status = String(args.status);
-    if (args.priority !== undefined) patch.priority = String(args.priority);
+    const patch: Partial<typeof issues.$inferInsert> = {};
+    if (args.status !== undefined) patch.status = String(args.status) as typeof patch.status;
+    if (args.priority !== undefined) patch.priority = String(args.priority) as typeof patch.priority;
     if (args.title !== undefined) patch.title = String(args.title);
     if (args.description !== undefined) patch.description = String(args.description);
     if ("assigneeAgentId" in args) patch.assigneeAgentId = args.assigneeAgentId ? String(args.assigneeAgentId) : null;
 
-    const [updated] = await db
-      .update(issues)
-      .set(patch)
-      .where(and(eq(issues.id, issueId), eq(issues.companyId, companyId)))
-      .returning();
+    const svc = issueService(db);
+    const existing = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1).then(r => r[0]);
+    if (!existing || existing.companyId !== companyId) return "Error: issue not found or access denied";
 
+    const updated = await svc.update(issueId, patch);
     if (!updated) return "Error: issue not found or access denied";
 
     void logActivity(db, {
@@ -832,11 +881,6 @@ async function handleTool(
       action: "issue.updated", entityType: "issue", entityId: issueId,
       agentId: callerAgentId, details: { patch, via: "mcp-chat" },
     });
-
-    // Notify operator when agent sets status to blocked
-    if (patch.status === "blocked") {
-      await notifyOperator(db, `🚫 Issue blocked: *${updated.title ?? issueId}*\n\nID: \`${updated.identifier ?? issueId}\``, "agent_blocked").catch(() => {});
-    }
 
     return JSON.stringify(updated, null, 2);
   }
@@ -1195,14 +1239,14 @@ async function handleTool(
     const { name: projectName, description, clientId, status } = args as {
       name: string; description?: string; clientId?: string; status?: string;
     };
-    const [project] = await db.insert(projects).values({
-      companyId: effectiveCompanyId,
+    const svc = projectService(db);
+    const project = await svc.create(effectiveCompanyId, {
       name: projectName,
       description: description ?? null,
       clientId: clientId ?? null,
-      status: status ?? "backlog",
-    }).returning({ id: projects.id, name: projects.name });
-    return `Project created: "${project!.name}" (ID: ${project!.id})`;
+      status: (status ?? "backlog") as typeof projects.$inferInsert.status,
+    });
+    return `Project created: "${project.name}" (ID: ${project.id})`;
   }
 
   if (name === "notify_operator") {
@@ -1342,14 +1386,15 @@ async function handleTool(
     const { issueId: blockedId, reason } = args as { issueId: string; reason: string };
     const [existing] = await db.select({ companyId: issues.companyId, title: issues.title }).from(issues).where(eq(issues.id, blockedId)).limit(1);
     if (!existing) return `Issue ${blockedId} not found`;
-    await db.update(issues).set({ status: "blocked", updatedAt: new Date() }).where(eq(issues.id, blockedId));
+    // Use service so status side-effects and notifications fire correctly
+    const svc = issueService(db);
+    await svc.update(blockedId, { status: "blocked" });
     await db.insert(issueComments).values({
       issueId: blockedId,
       companyId: existing.companyId,
       body: `🚫 **Blocked:** ${reason}`,
       authorAgentId: null,
     });
-    await notifyOperator(db, `🚫 Issue blocked: *${existing.title ?? blockedId}*\n\nReason: ${reason}\n\nIssue ID: \`${blockedId}\``, "agent_blocked").catch(() => {});
     return `Issue marked as blocked. Operator notified.`;
   }
 
@@ -1850,7 +1895,7 @@ async function handleTool(
 
       if (resolvedIssue) {
         if (["backlog", "todo"].includes(resolvedIssue.status)) {
-          await db.update(issues).set({ status: "in_progress", updatedAt: new Date() }).where(eq(issues.id, resolvedIssue.id));
+          await issueService(db).update(resolvedIssue.id, { status: "in_progress" });
         }
         if (resolvedIssue.assigneeAgentId) {
           const hb = heartbeatService(db);
@@ -2084,6 +2129,48 @@ async function handleTool(
       payload: payload ?? null,
     });
     return JSON.stringify({ runId: run.id, status: run.status }, null, 2);
+  }
+
+  if (name === "search_entities") {
+    if (!isOperator) return JSON.stringify({ error: "search_entities is only available to the operator agent" });
+    const q = String(args.query ?? "").trim();
+    if (!q) return JSON.stringify({ error: "query is required" });
+    const types = Array.isArray(args.types) ? (args.types as EntityType[]) : undefined;
+    const results = await searchEntities(db, q, types);
+    return JSON.stringify(results, null, 2);
+  }
+
+  if (name === "set_working_context") {
+    if (!isOperator) return JSON.stringify({ error: "set_working_context is only available to the operator agent" });
+    const topicId = String(args.topicId ?? "").trim();
+    if (!topicId) return JSON.stringify({ error: "topicId is required" });
+    const topicSvc = topicsService(db);
+    await topicSvc.setWorkingContext(topicId, {
+      companyId: args.companyId != null ? String(args.companyId) : null,
+      companyName: args.companyName != null ? String(args.companyName) : null,
+      clientId: args.clientId != null ? String(args.clientId) : null,
+      clientName: args.clientName != null ? String(args.clientName) : null,
+      projectId: args.projectId != null ? String(args.projectId) : null,
+      projectName: args.projectName != null ? String(args.projectName) : null,
+      issueId: args.issueId != null ? String(args.issueId) : null,
+      issueIdentifier: args.issueIdentifier != null ? String(args.issueIdentifier) : null,
+      issueTitle: args.issueTitle != null ? String(args.issueTitle) : null,
+      topicId,
+      topicName: args.topicName != null ? String(args.topicName) : null,
+      notes: args.notes != null ? String(args.notes) : null,
+      updatedAt: new Date().toISOString(),
+    });
+    return JSON.stringify({ ok: true, topicId });
+  }
+
+  if (name === "switch_context") {
+    if (!isOperator) return JSON.stringify({ error: "switch_context is only available to the operator agent" });
+    const q = String(args.query ?? "").trim();
+    const topicId = String(args.topicId ?? "").trim();
+    if (!q) return JSON.stringify({ error: "query is required" });
+    if (!topicId) return JSON.stringify({ error: "topicId is required" });
+    const result = await switchContextSvc(db, q, topicId);
+    return JSON.stringify(result, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;
