@@ -13,7 +13,7 @@ export const topics = pgTable(
     status: text("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    workingContext: jsonb("working_context"),
+    workingContext: jsonb("working_context").$type<Record<string, unknown>>(),
   },
   (table) => ({
     statusIdx: index("topics_status_idx").on(table.status),
