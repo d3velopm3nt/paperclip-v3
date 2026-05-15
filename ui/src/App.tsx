@@ -362,6 +362,7 @@ export function App() {
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="storage" element={<InstanceStorageSettings />} /> {/* v3: document storage */}
+            <Route path="operator" element={<FounderSettings />} />
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
           </Route>
@@ -371,7 +372,7 @@ export function App() {
               <Route index element={<FounderOverview />} />
               <Route path="topics" element={<TopicsList />} />
               <Route path="conversations" element={<FounderConversations />} />
-              <Route path="settings" element={<FounderSettings />} />
+              <Route path="settings" element={<Navigate to="/instance/settings/operator" replace />} />
             </Route>
             <Route path="topics/:topicId" element={<TopicDetail />} />
             <Route path="conversations/:convId" element={<FounderConversationDetail />} />

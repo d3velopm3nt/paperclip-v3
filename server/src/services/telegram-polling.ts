@@ -9,7 +9,7 @@ import { eq, sql } from "drizzle-orm";
 import type { EaNotificationEvent, EaNotificationMatrix } from "@paperclipai/shared";
 import { sendTelegramMessage, sendTelegramChatAction } from "./telegram-adapter.js";
 import { logActivity } from "./activity-log.js";
-import { readInstanceToken } from "./instance-token-store.js";
+import { readInstanceToken, writeInstanceToken } from "./instance-token-store.js";
 import { logger } from "../middleware/logger.js";
 import { routeInboundMessage } from "./inbound-router.js";
 
@@ -175,6 +175,8 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
         },
       })
       .catch(() => {});
+    // Also persist in token store — survives general settings overwrites
+    writeInstanceToken(db, "telegramOperatorChatId", chatId).catch(() => {});
 
     const rawText = msg.text ?? msg.caption ?? "";
 
@@ -364,7 +366,8 @@ export async function notifyOperatorTelegram(db: Db, message: string): Promise<v
     .from(instanceSettings)
     .where(eq(instanceSettings.singletonKey, "default"))
     .limit(1);
-  const chatId = ((settings?.general as Record<string, unknown> | null)?.telegramOperatorChatId as string | undefined)
+  const chatId = await readInstanceToken(db, "telegramOperatorChatId").catch(() => null)
+    ?? ((settings?.general as Record<string, unknown> | null)?.telegramOperatorChatId as string | undefined)
     ?? process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
   if (!chatId) return;
   await sendTelegramMessage(token, chatId, message);

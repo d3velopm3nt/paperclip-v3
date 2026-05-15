@@ -10,4 +10,4 @@ CREATE INDEX IF NOT EXISTS idx_issues_title_trgm ON "issues" USING GIN (title gi
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS idx_topics_name_trgm ON "topics" USING GIN (name gin_trgm_ops);
 --> statement-breakpoint
-ALTER TABLE "topics" ADD COLUMN "working_context" jsonb;
+ALTER TABLE "topics" ADD COLUMN IF NOT EXISTS "working_context" jsonb;

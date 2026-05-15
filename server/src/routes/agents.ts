@@ -1999,6 +1999,11 @@ export function agentRoutes(db: Db) {
       return;
     }
 
+    // Clear error status so the agent can be woken up cleanly
+    if (agent.status === "error") {
+      await db.update(agentsTable).set({ status: "idle", updatedAt: new Date() }).where(eq(agentsTable.id, id));
+    }
+
     const run = await heartbeat.wakeup(id, {
       source: req.body.source,
       triggerDetail: req.body.triggerDetail ?? "manual",

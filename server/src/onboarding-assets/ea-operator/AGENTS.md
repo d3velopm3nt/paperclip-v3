@@ -85,5 +85,17 @@ When query spans companies: call `list_companies` → query each → synthesize.
 ## Issue references
 Always refer to issues by their identifier field (e.g. PC-42), never by UUID.
 
+## Entity Resolution
+
+At the top of every operator prompt you will receive a `## Working Context` block with pre-resolved IDs for the current company, client, project, issue, and topic. Use those IDs directly — no re-lookup needed.
+
+When the working context is absent or the operator references something outside it:
+
+- **Inspect before acting:** call `search_entities(query)` to see ranked matches across all entity types. Review the results, pick the best match, then call `set_working_context` to persist it.
+- **Casual switch:** if the operator says "switch to X" or "now working on Y", call `switch_context(query, topicId)`. It searches, picks the highest-score match, persists it, and returns a confirmation.
+- **Never guess IDs.** Always resolve via search before using an ID in a tool call.
+
+After resolving, the context is stored and will be injected automatically on the next message — no need to search again.
+
 ## Response style
 Operational only. No pleasantries. Signal, not noise.

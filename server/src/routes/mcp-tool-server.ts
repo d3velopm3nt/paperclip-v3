@@ -1,7 +1,7 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, agentMemories, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains } from "@paperclipai/db";
+import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
@@ -27,6 +27,8 @@ import {
 import { clientService } from "../services/clients.js";
 import { contactService } from "../services/contacts.js";
 import { routineService } from "../services/routines.js";
+import { goalService } from "../services/goals.js";
+import { approvalService } from "../services/approvals.js";
 import { sendEmailFromAccount } from "../services/email-sender.js";
 import { searchEntities, switchContext as switchContextSvc } from "../services/entity-search.js";
 import type { EntityType } from "../services/entity-search.js";
@@ -78,7 +80,7 @@ const TOOLS = [
   },
   {
     name: "update_issue",
-    description: "Update an existing issue's status, priority, or assignee.",
+    description: "Update an existing issue's status, priority, or assignee. When work is complete, set status to 'in_review' — NOT 'done'. Only the operator can mark an issue done after confirming the work.",
     inputSchema: {
       type: "object",
       required: ["issueId"],
@@ -219,7 +221,7 @@ const TOOLS = [
   },
   {
     name: "add_issue_comment",
-    description: "Add a comment to an issue. Use for progress updates, agent questions, or blocking reasons.",
+    description: "Add a comment to an issue. Use for progress updates, agent questions, or blocking reasons. Include @operator in the comment body to send an immediate notification to the operator.",
     inputSchema: {
       type: "object",
       required: ["issueId", "body"],
@@ -736,6 +738,126 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "list_approvals",
+    description: "List pending (or all) approvals for a company. Returns plan approvals, client reply approvals, and hire requests. Use to see what needs operator decisions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        companyId: { type: "string", description: "UUID of the company to query. Defaults to current company." },
+        status: { type: "string", description: "Filter by status: pending|approved|rejected|declined. Omit for all." },
+        type: { type: "string", description: "Filter by type: plan|client_reply|hire_agent. Omit for all." },
+        limit: { type: "number", description: "Max results (default 20, max 50)" },
+      },
+    },
+  },
+  {
+    name: "get_issue",
+    description: "Get full details of a single issue by UUID or identifier (e.g. PAP-042).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        issueId: { type: "string", description: "UUID of the issue" },
+        identifier: { type: "string", description: "Issue identifier e.g. PAP-042 (use if no UUID)" },
+      },
+    },
+  },
+  {
+    name: "get_project",
+    description: "Get full details of a single project including goals and linked workspace.",
+    inputSchema: {
+      type: "object",
+      required: ["projectId"],
+      properties: {
+        projectId: { type: "string", description: "UUID of the project" },
+      },
+    },
+  },
+  {
+    name: "update_project",
+    description: "Update a project's name, description, status, or client.",
+    inputSchema: {
+      type: "object",
+      required: ["projectId"],
+      properties: {
+        projectId: { type: "string", description: "UUID of the project to update" },
+        name: { type: "string", description: "New project name" },
+        description: { type: "string", description: "New project description" },
+        status: { type: "string", description: "New status: backlog|active|done|cancelled" },
+        clientId: { type: "string", description: "UUID of client to associate (or null to remove)" },
+      },
+    },
+  },
+  {
+    name: "list_goals",
+    description: "List goals for a company.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        companyId: { type: "string", description: "UUID of the company to query. Defaults to current company." },
+      },
+    },
+  },
+  {
+    name: "create_goal",
+    description: "Create a new goal for a company.",
+    inputSchema: {
+      type: "object",
+      required: ["title"],
+      properties: {
+        companyId: { type: "string", description: "UUID of the company. Defaults to current company." },
+        title: { type: "string", description: "Goal title" },
+        description: { type: "string", description: "Goal description" },
+        level: { type: "string", description: "objective|key_result|task (default: task)" },
+        status: { type: "string", description: "planned|in_progress|done|cancelled (default: planned)" },
+        ownerAgentId: { type: "string", description: "UUID of the agent responsible for this goal" },
+        parentId: { type: "string", description: "UUID of parent goal (for nested goals)" },
+      },
+    },
+  },
+  {
+    name: "update_goal",
+    description: "Update a goal's title, status, or description.",
+    inputSchema: {
+      type: "object",
+      required: ["goalId"],
+      properties: {
+        goalId: { type: "string", description: "UUID of the goal to update" },
+        title: { type: "string", description: "New title" },
+        description: { type: "string", description: "New description" },
+        status: { type: "string", description: "New status: planned|in_progress|done|cancelled" },
+        ownerAgentId: { type: "string", description: "UUID of the new owner agent" },
+      },
+    },
+  },
+  {
+    name: "restart_agent",
+    description: "Restart an agent that is in error state. Clears the error status and enqueues a fresh wakeup. Use when an agent has crashed or is stuck.",
+    inputSchema: {
+      type: "object",
+      required: ["agentId"],
+      properties: {
+        agentId: { type: "string", description: "UUID of the agent to restart" },
+        reason: { type: "string", description: "Optional reason for the restart (for logs)" },
+      },
+    },
+  },
+  {
+    name: "update_routine",
+    description: "Update a routine's title, description, priority, status, or assignee.",
+    inputSchema: {
+      type: "object",
+      required: ["routineId"],
+      properties: {
+        routineId: { type: "string", description: "UUID of the routine to update" },
+        title: { type: "string", description: "New title" },
+        description: { type: "string", description: "New description" },
+        priority: { type: "string", description: "low|medium|high|critical" },
+        status: { type: "string", description: "active|paused|archived" },
+        assigneeAgentId: { type: "string", description: "UUID of the new assignee agent" },
+      },
+    },
+  },
 ];
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -838,7 +960,7 @@ async function handleTool(
       projectId: args.projectId ? String(args.projectId) : null,
       assigneeAgentId: args.assigneeAgentId ? String(args.assigneeAgentId) : null,
       createdByAgentId: callerAgentId,
-      originKind: "chat",
+      originKind: "manual",
     });
 
     void logActivity(db, {
@@ -863,7 +985,12 @@ async function handleTool(
     if (!issueId) return "Error: issueId is required";
 
     const patch: Partial<typeof issues.$inferInsert> = {};
-    if (args.status !== undefined) patch.status = String(args.status) as typeof patch.status;
+    if (args.status !== undefined) {
+      const requestedStatus = String(args.status);
+      // Agents cannot mark issues done — only the operator can confirm completion.
+      // Redirect "done" → "in_review" so the operator is prompted to verify.
+      patch.status = (!isOperator && requestedStatus === "done" ? "in_review" : requestedStatus) as typeof patch.status;
+    }
     if (args.priority !== undefined) patch.priority = String(args.priority) as typeof patch.priority;
     if (args.title !== undefined) patch.title = String(args.title);
     if (args.description !== undefined) patch.description = String(args.description);
@@ -1225,11 +1352,11 @@ async function handleTool(
       authorAgentId: null,
     });
 
-    // Notify operator whenever an agent adds a comment
-    {
+    // Notify operator only when comment explicitly mentions @operator
+    if (/@operator\b/i.test(commentBody)) {
       const issueRef = existing.identifier ?? issueId.slice(0, 8);
-      const preview = commentBody.replace(/#+\s*/g, "").slice(0, 400);
-      await notifyOperator(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`, "urgent_item_detected").catch(() => {});
+      const preview = commentBody.replace(/@operator\b/gi, "").replace(/#+\s*/g, "").trim().slice(0, 400);
+      await notifyOperator(db, `📋 *${issueRef}:* ${existing.title ?? ""}\n\n${preview}`).catch(() => {});
     }
 
     return `Comment added to issue ${issueId}.`;
@@ -1251,7 +1378,7 @@ async function handleTool(
 
   if (name === "notify_operator") {
     const { body: notifyBody, issueId: notifyIssueId } = args as { body: string; issueId?: string };
-    await notifyOperator(db, notifyBody, "urgent_item_detected").catch((err) => {
+    await notifyOperator(db, notifyBody).catch((err) => {
       logger.warn({ err }, "notify_operator: telegram send failed");
     });
     await db.insert(operatorMessages).values({
@@ -1886,7 +2013,7 @@ async function handleTool(
           description: description || null,
           status: "todo",
           priority: "medium",
-          originKind: "chat",
+          originKind: "manual",
         });
 
         resolvedIssue = created ? { id: created.id, assigneeAgentId: created.assigneeAgentId ?? null, status: created.status } : null;
@@ -2171,6 +2298,186 @@ async function handleTool(
     if (!topicId) return JSON.stringify({ error: "topicId is required" });
     const result = await switchContextSvc(db, q, topicId);
     return JSON.stringify(result, null, 2);
+  }
+
+  if (name === "restart_agent") {
+    const { agentId: restartAgentId, reason: restartReason } = args as { agentId: string; reason?: string };
+    if (!restartAgentId) return "Error: agentId is required";
+    const [agentRow] = await db
+      .select({ id: agents.id, status: agents.status, companyId: agents.companyId })
+      .from(agents)
+      .where(and(eq(agents.id, restartAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .limit(1);
+    if (!agentRow) return "Error: agent not found or access denied";
+    if (agentRow.status !== "error") return `Agent is not in error state (current status: ${agentRow.status}). Use notify_operator or run heartbeat instead.`;
+    await db.update(agents).set({ status: "idle", updatedAt: new Date() }).where(eq(agents.id, restartAgentId));
+    const hb = heartbeatService(db);
+    await hb.wakeup(restartAgentId, {
+      source: "automation",
+      triggerDetail: "manual",
+      reason: restartReason ?? "restart_after_error",
+      payload: null,
+      requestedByActorType: "system",
+      requestedByActorId: "ea",
+      contextSnapshot: { source: "mcp.restart_agent" },
+    }).catch(() => null);
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "agent.restarted", entityType: "agent", entityId: restartAgentId,
+      agentId: callerAgentId, details: { reason: restartReason ?? "restart_after_error", via: "mcp-chat" },
+    });
+    return `Agent ${restartAgentId} restarted. Status reset to idle and wakeup enqueued.`;
+  }
+
+  if (name === "list_approvals") {
+    const limit = Math.min(Number(args.limit ?? 20), 50);
+    const conditions = [eq(approvals.companyId, effectiveCompanyId)];
+    if (args.status) conditions.push(eq(approvals.status, String(args.status)));
+    if (args.type) conditions.push(eq(approvals.type, String(args.type)));
+    const rows = await db
+      .select({
+        id: approvals.id,
+        type: approvals.type,
+        status: approvals.status,
+        payload: approvals.payload,
+        decisionNote: approvals.decisionNote,
+        createdAt: approvals.createdAt,
+        decidedAt: approvals.decidedAt,
+      })
+      .from(approvals)
+      .where(and(...conditions))
+      .orderBy(desc(approvals.createdAt))
+      .limit(limit);
+    if (!rows.length) return "No approvals found.";
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "get_issue") {
+    const issueId = args.issueId ? String(args.issueId).trim() : null;
+    const identifier = args.identifier ? String(args.identifier).trim() : null;
+    if (!issueId && !identifier) return "Error: provide issueId or identifier";
+    const condition = issueId ? eq(issues.id, issueId) : eq(issues.identifier, identifier!);
+    const [row] = await db
+      .select({
+        id: issues.id, identifier: issues.identifier, title: issues.title,
+        description: issues.description, status: issues.status, priority: issues.priority,
+        assigneeAgentId: issues.assigneeAgentId, projectId: issues.projectId,
+        clientId: issues.clientId, originKind: issues.originKind,
+        createdAt: issues.createdAt, updatedAt: issues.updatedAt,
+      })
+      .from(issues)
+      .where(and(condition, eq(issues.companyId, effectiveCompanyId)))
+      .limit(1);
+    if (!row) return "Error: issue not found or access denied";
+    return JSON.stringify(row, null, 2);
+  }
+
+  if (name === "get_project") {
+    const { projectId } = args as { projectId: string };
+    if (!projectId) return "Error: projectId is required";
+    const svc = projectService(db);
+    const project = await svc.getById(projectId);
+    if (!project || project.companyId !== effectiveCompanyId) return "Error: project not found or access denied";
+    return JSON.stringify(project, null, 2);
+  }
+
+  if (name === "update_project") {
+    const { projectId, name: projectName, description, status, clientId } = args as {
+      projectId: string; name?: string; description?: string; status?: string; clientId?: string | null;
+    };
+    if (!projectId) return "Error: projectId is required";
+    const svc = projectService(db);
+    const patch: Partial<typeof projects.$inferInsert> = {};
+    if (projectName !== undefined) patch.name = projectName;
+    if (description !== undefined) patch.description = description;
+    if (status !== undefined) patch.status = status as typeof patch.status;
+    if ("clientId" in args) patch.clientId = clientId ?? null;
+    const updated = await svc.update(projectId, patch);
+    if (!updated) return "Error: project not found or access denied";
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "project.updated", entityType: "project", entityId: projectId,
+      agentId: callerAgentId, details: { patch, via: "mcp-chat" },
+    });
+    return JSON.stringify(updated, null, 2);
+  }
+
+  if (name === "list_goals") {
+    const svc = goalService(db);
+    const rows = await svc.list(effectiveCompanyId);
+    if (!rows.length) return "No goals found.";
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "create_goal") {
+    const { title, description, level, status: goalStatus, ownerAgentId, parentId } = args as {
+      title: string; description?: string; level?: string; status?: string; ownerAgentId?: string; parentId?: string;
+    };
+    if (!title) return "Error: title is required";
+    const svc = goalService(db);
+    const created = await svc.create(effectiveCompanyId, {
+      title,
+      description: description ?? null,
+      level: (level ?? "task") as typeof goals.$inferInsert.level,
+      status: (goalStatus ?? "planned") as typeof goals.$inferInsert.status,
+      ownerAgentId: ownerAgentId ?? null,
+      parentId: parentId ?? null,
+    });
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "goal.created", entityType: "goal", entityId: created!.id,
+      agentId: callerAgentId, details: { title, via: "mcp-chat" },
+    });
+    return JSON.stringify(created, null, 2);
+  }
+
+  if (name === "update_goal") {
+    const { goalId, title, description, status: goalStatus, ownerAgentId } = args as {
+      goalId: string; title?: string; description?: string; status?: string; ownerAgentId?: string;
+    };
+    if (!goalId) return "Error: goalId is required";
+    const [existing] = await db.select({ companyId: goals.companyId }).from(goals).where(eq(goals.id, goalId)).limit(1);
+    if (!existing || existing.companyId !== effectiveCompanyId) return "Error: goal not found or access denied";
+    const svc = goalService(db);
+    const patch: Partial<typeof goals.$inferInsert> = {};
+    if (title !== undefined) patch.title = title;
+    if (description !== undefined) patch.description = description;
+    if (goalStatus !== undefined) patch.status = goalStatus as typeof patch.status;
+    if (ownerAgentId !== undefined) patch.ownerAgentId = ownerAgentId ?? null;
+    const updated = await svc.update(goalId, patch);
+    if (!updated) return "Error: goal not found";
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "goal.updated", entityType: "goal", entityId: goalId,
+      agentId: callerAgentId, details: { patch, via: "mcp-chat" },
+    });
+    return JSON.stringify(updated, null, 2);
+  }
+
+  if (name === "update_routine") {
+    const { routineId, title, description, priority, status: routineStatus, assigneeAgentId } = args as {
+      routineId: string; title?: string; description?: string; priority?: string; status?: string; assigneeAgentId?: string;
+    };
+    if (!routineId) return "Error: routineId is required";
+    const svc = routineService(db);
+    const updated = await svc.update(
+      routineId,
+      {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(priority !== undefined && { priority: priority as "low" | "medium" | "high" | "critical" }),
+        ...(routineStatus !== undefined && { status: routineStatus as "active" | "paused" | "archived" }),
+        ...(assigneeAgentId !== undefined && { assigneeAgentId }),
+      },
+      { agentId: callerAgentId },
+    );
+    if (!updated) return "Error: routine not found or access denied";
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "routine.updated", entityType: "routine", entityId: routineId,
+      agentId: callerAgentId, details: { via: "mcp-chat" },
+    });
+    return JSON.stringify({ routineId: updated.id, title: updated.title, status: updated.status }, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;

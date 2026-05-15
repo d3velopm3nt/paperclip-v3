@@ -683,13 +683,14 @@ export function AgentDetail() {
   }, [agent?.companyId, selectedCompanyId, setSelectedCompanyId]);
 
   const agentAction = useMutation({
-    mutationFn: async (action: "invoke" | "pause" | "resume" | "terminate") => {
+    mutationFn: async (action: "invoke" | "pause" | "resume" | "terminate" | "restart") => {
       if (!agentLookupRef) return Promise.reject(new Error("No agent reference"));
       switch (action) {
         case "invoke": return agentsApi.invoke(agentLookupRef, resolvedCompanyId ?? undefined);
         case "pause": return agentsApi.pause(agentLookupRef, resolvedCompanyId ?? undefined);
         case "resume": return agentsApi.resume(agentLookupRef, resolvedCompanyId ?? undefined);
         case "terminate": return agentsApi.terminate(agentLookupRef, resolvedCompanyId ?? undefined);
+        case "restart": return agentsApi.wakeup(agentLookupRef, { source: "on_demand", reason: "restart_after_error" }, resolvedCompanyId ?? undefined);
       }
     },
     onSuccess: (data, action) => {
@@ -857,6 +858,17 @@ export function AgentDetail() {
             disabled={agentAction.isPending || isPendingApproval}
             label="Run Heartbeat"
           />
+          {agent.status === "error" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => agentAction.mutate("restart")}
+              disabled={agentAction.isPending}
+              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+            >
+              {agentAction.isPending ? "Restarting…" : "Restart Agent"}
+            </Button>
+          )}
           <PauseResumeButton
             isPaused={agent.status === "paused"}
             onPause={() => agentAction.mutate("pause")}
