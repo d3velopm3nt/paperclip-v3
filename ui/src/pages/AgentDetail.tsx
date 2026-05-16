@@ -74,6 +74,7 @@ import {
   ArrowLeft,
   HelpCircle,
   FolderOpen,
+  LayoutTemplate,
 } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -117,7 +118,6 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { LayoutTemplate } from "lucide-react";
 
 const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   succeeded: { icon: CheckCircle2, color: "text-green-600 dark:text-green-400" },
@@ -989,7 +989,10 @@ export function AgentDetail() {
       </div>
 
       {/* Save as Template Modal */}
-      <Dialog open={saveAsTemplateOpen} onOpenChange={setSaveAsTemplateOpen}>
+      <Dialog open={saveAsTemplateOpen} onOpenChange={(open) => {
+        setSaveAsTemplateOpen(open);
+        if (!open) saveAsTemplateMutation.reset();
+      }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Save as Template</DialogTitle>
@@ -1088,6 +1091,13 @@ export function AgentDetail() {
                 </SelectContent>
               </Select>
             </div>
+            {saveAsTemplateMutation.isError && (
+              <p className="text-xs text-destructive">
+                {saveAsTemplateMutation.error instanceof Error
+                  ? saveAsTemplateMutation.error.message
+                  : "Failed to save template"}
+              </p>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button
                 type="button"
