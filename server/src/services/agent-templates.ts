@@ -129,8 +129,8 @@ export function agentTemplatesService(db: Db) {
       .limit(1);
     if (!template) throw new Error(`Template ${templateId} not found`);
 
-    const defs = template.agentDefinitions as AgentTemplateDefinition[];
-    const structure = template.teamStructure as TeamStructureEntry[];
+    const defs = template.agentDefinitions as unknown as AgentTemplateDefinition[];
+    const structure = template.teamStructure as unknown as TeamStructureEntry[];
 
     return await db.transaction(async (tx) => {
       const tempIdToRealId = new Map<string, string>();
