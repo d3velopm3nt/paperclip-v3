@@ -20,6 +20,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   if (parsed.success) {
     return {
       censorUsernameInLogs: parsed.data.censorUsernameInLogs ?? false,
+      ...(parsed.data.founderProfile !== undefined && { founderProfile: parsed.data.founderProfile }),
       ...(parsed.data.eaNotificationMatrix !== undefined && { eaNotificationMatrix: parsed.data.eaNotificationMatrix }),
       ...(parsed.data.operatorNotifyEmail !== undefined && { operatorNotifyEmail: parsed.data.operatorNotifyEmail }),
     };
@@ -27,6 +28,7 @@ function normalizeGeneralSettings(raw: unknown): InstanceGeneralSettings {
   // Fallback: manual extraction
   return {
     censorUsernameInLogs: typeof r.censorUsernameInLogs === "boolean" ? r.censorUsernameInLogs : false,
+    ...(r.founderProfile !== undefined && { founderProfile: r.founderProfile as InstanceGeneralSettings["founderProfile"] }),
     ...(r.eaNotificationMatrix !== undefined && { eaNotificationMatrix: r.eaNotificationMatrix as InstanceGeneralSettings["eaNotificationMatrix"] }),
     ...(r.operatorNotifyEmail !== undefined && { operatorNotifyEmail: r.operatorNotifyEmail as string }),
   };

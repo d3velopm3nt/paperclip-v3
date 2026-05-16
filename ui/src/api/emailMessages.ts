@@ -61,8 +61,14 @@ export const emailMessagesApi = {
       `/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/file`,
       opts,
     ),
+  checkFiledPath: (messageId: string, attachmentId: string) =>
+    api.get<{ exists: boolean; path: string | null; type: "local" | "drive" | null; filedAt: string | null; driveFileId: string | null; legacy: boolean }>(
+      `/email-messages/${encodeURIComponent(messageId)}/attachments/${encodeURIComponent(attachmentId)}/filed-check`,
+    ),
   reprocess: (id: string) =>
     api.post<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}/reprocess`, {}),
+  bulkReprocess: (ids: string[]) =>
+    api.post<{ reprocessed: number; failed: number; errors: string[] }>(`/email-messages/bulk-reprocess`, { ids }),
   remove: (id: string) =>
     api.delete<{
       deletedPlans: number;

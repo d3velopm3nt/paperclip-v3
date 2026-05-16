@@ -16,17 +16,39 @@
  */
 
 export const DEFAULT_ALLOWED_TYPES: readonly string[] = [
+  // Images
   "image/png",
   "image/jpeg",
   "image/jpg",
   "image/webp",
   "image/gif",
+  "image/svg+xml",
+  "image/tiff",
+  // Documents
   "application/pdf",
   "text/markdown",
   "text/plain",
   "application/json",
   "text/csv",
   "text/html",
+  // Office Open XML (docx, xlsx, pptx)
+  "application/vnd.openxmlformats-officedocument.*",
+  // Legacy Office (doc, xls, ppt)
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+  // OpenDocument (LibreOffice)
+  "application/vnd.oasis.opendocument.*",
+  // Archives
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/x-rar-compressed",
+  "application/x-7z-compressed",
+  // Audio / video (from WhatsApp / Telegram)
+  "audio/*",
+  "video/*",
+  // Generic binary fallback for unknown office formats
+  "application/octet-stream",
 ];
 
 /**

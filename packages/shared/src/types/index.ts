@@ -1,5 +1,5 @@
 export type { Company } from "./company.js";
-export type { EaNotificationChannelConfig, EaNotificationEvent, EaNotificationMatrix, InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
+export type { EaNotificationChannelConfig, EaNotificationEvent, EaNotificationMatrix, FounderProfileSettings, InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
 export type {
   CompanySkillSourceType,
   CompanySkillTrustLevel,

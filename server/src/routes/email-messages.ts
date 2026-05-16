@@ -315,6 +315,104 @@ export function emailMessageRoutes(db: Db) {
     res.json(updated);
   });
 
+  // POST /api/email-messages/bulk-reprocess — reprocess multiple emails by ID.
+  router.post("/email-messages/bulk-reprocess", async (req, res) => {
+    const ids: unknown = req.body?.ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw badRequest("ids must be a non-empty array");
+    }
+    if (ids.length > 200) throw badRequest("Max 200 emails per bulk reprocess");
+
+    const processor = emailProcessorService(db);
+    let reprocessed = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const id of ids as string[]) {
+      try {
+        const [msg] = await db.select({ emailAccountId: emailMessages.emailAccountId })
+          .from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+        if (!msg) { failed++; continue; }
+        const [account] = await db.select({ companyId: emailAccounts.companyId })
+          .from(emailAccounts).where(eq(emailAccounts.id, msg.emailAccountId)).limit(1);
+        if (!account) { failed++; continue; }
+        assertCompanyAccess(req, account.companyId);
+        await processor.reprocess(id);
+        reprocessed++;
+      } catch {
+        failed++;
+        errors.push(id);
+      }
+    }
+
+    res.json({ reprocessed, failed, errors });
+  });
+
+  // GET /api/email-messages/:id/attachments/:attachmentId/filed-check
+  // Returns whether the filed path actually exists on disk or Drive.
+  router.get("/email-messages/:id/attachments/:attachmentId/filed-check", async (req, res) => {
+    const { id, attachmentId } = req.params;
+    const [msg] = await db.select({ emailAccountId: emailMessages.emailAccountId }).from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    const [att] = await db
+      .select({ filedPath: emailAttachments.filedPath, filedAt: emailAttachments.filedAt, filename: emailAttachments.filename })
+      .from(emailAttachments)
+      .where(and(eq(emailAttachments.id, attachmentId), eq(emailAttachments.emailMessageId, id)))
+      .limit(1);
+    if (!att) throw notFound("Attachment not found");
+
+    if (!att.filedPath) {
+      res.json({ exists: false, path: null, type: null, filedAt: null });
+      return;
+    }
+
+    // Two Drive path formats exist:
+    //   "drive:<fileId>"                  — new format, bare Drive file ID (verifiable)
+    //   "google-drive://user@.../name/…"  — old path-style using folder names not IDs (unverifiable)
+    const isDrive = att.filedPath.startsWith("drive:") || att.filedPath.startsWith("google-drive://");
+    const isLegacyDrivePath = att.filedPath.startsWith("google-drive://");
+    let exists = false;
+    let driveFileId: string | null = null;
+    let legacy = false;
+
+    if (isLegacyDrivePath) {
+      // Old format stores folder names in the path, not Drive IDs.
+      // Cannot verify existence reliably — file was likely never uploaded.
+      // User should reprocess to re-file with the fixed uploader.
+      legacy = true;
+      exists = false;
+    } else if (isDrive) {
+      driveFileId = att.filedPath.replace(/^drive:/, "").split("/")[0];
+      try {
+        const { getAuthenticatedDriveClient } = await import("../services/gdrive-auth.js");
+        const drive = await getAuthenticatedDriveClient(db);
+        if (drive) {
+          const result = await drive.files.get({ fileId: driveFileId, fields: "id,trashed", supportsAllDrives: true }).catch(() => null);
+          exists = !!(result?.data?.id && !result.data.trashed);
+        }
+      } catch { exists = false; }
+    } else {
+      exists = existsSync(att.filedPath);
+    }
+
+    res.json({
+      exists,
+      path: att.filedPath,
+      type: isDrive ? "drive" : "local",
+      filedAt: att.filedAt?.toISOString() ?? null,
+      driveFileId,
+      legacy,
+    });
+  });
+
   // POST /api/email-messages/:id/attachments/:attachmentId/file
   // Manually file an attachment to a chosen folder (Drive folder ID or local path).
   router.post("/email-messages/:id/attachments/:attachmentId/file", async (req, res) => {
@@ -362,6 +460,7 @@ export function emailMessageRoutes(db: Db) {
         requestBody: { name: att.filename, parents: [driveFolderId] },
         media: { body: Buffer.from(content) },
         fields: "id",
+        supportsAllDrives: true,
       });
       const filedPath = result.data.id ? `drive:${result.data.id}` : `drive:${driveFolderId}/${att.filename}`;
       await db.update(emailAttachments).set({ filedAt: new Date(), filedPath }).where(eq(emailAttachments.id, att.id));

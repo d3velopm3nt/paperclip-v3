@@ -17,8 +17,14 @@ export interface EaNotificationMatrix {
 
 export type EaNotificationEvent = keyof EaNotificationChannelConfig;
 
+export interface FounderProfileSettings {
+  name: string;
+  personalCompanyId: string | null;
+}
+
 export interface InstanceGeneralSettings {
   censorUsernameInLogs: boolean;
+  founderProfile?: FounderProfileSettings;
   eaNotificationMatrix?: EaNotificationMatrix;
   operatorNotifyEmail?: string;
 }

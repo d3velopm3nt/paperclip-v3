@@ -187,6 +187,7 @@ export async function createDriveFolder(
       parents: [parentId],
     },
     fields: "id",
+    supportsAllDrives: true,
   });
   const id = res.data.id;
   if (!id) throw new Error("Drive folder creation returned no ID");

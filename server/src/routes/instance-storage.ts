@@ -86,6 +86,8 @@ export function instanceStorageRoutes(db: Db): Router {
       fields: "files(id, name)",
       orderBy: "name",
       pageSize: 200,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
     });
     res.json({ folders: result.data.files ?? [], parentId });
   });

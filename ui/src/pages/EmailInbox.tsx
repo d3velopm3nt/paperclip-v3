@@ -39,7 +39,13 @@ import {
   Download,
   FileText,
   FolderOpen,
+  RotateCcw,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
+import { EmailProcessingLog } from "../components/EmailProcessingLog";
+import { FiledCheckDialog } from "../components/EmailProcessingLog";
+
 
 type MailboxTab = "inbound" | "agent_voice";
 
@@ -85,6 +91,59 @@ function formatBytes(n: number): string {
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function BulkActionPanel({
+  checkedIds,
+  messages,
+  companyId,
+  companyName,
+  isPending,
+  onReprocess,
+  onClear,
+}: {
+  checkedIds: Set<string>;
+  messages: EmailMessageSummary[];
+  companyId: string;
+  companyName?: string;
+  isPending: boolean;
+  onReprocess: () => void;
+  onClear: () => void;
+}) {
+  const [logsOpen, setLogsOpen] = useState(false);
+  const selected = messages.filter((m) => checkedIds.has(m.id));
+
+  return (
+    <div className="border-b border-border">
+      <div className="flex items-center gap-3 px-6 py-2 bg-accent/40">
+        <span className="text-sm font-medium">{checkedIds.size} selected</span>
+        <Button size="sm" onClick={onReprocess} disabled={isPending}>
+          <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+          {isPending ? "Reprocessing…" : `Reprocess ${checkedIds.size}`}
+        </Button>
+        <button
+          onClick={() => setLogsOpen((v) => !v)}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          {logsOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          Logs
+        </button>
+        <button
+          onClick={onClear}
+          className="text-xs text-muted-foreground hover:text-foreground transition-colors ml-auto"
+        >
+          Clear selection
+        </button>
+      </div>
+      {logsOpen && (
+        <div className="max-h-80 overflow-y-auto px-6 py-3 space-y-2 bg-background/60">
+          {selected.map((m) => (
+            <EmailProcessingLog key={m.id} message={m} companyId={companyId} companyName={companyName} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function EmailInbox() {
   const { selectedCompanyId, selectedCompany } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -93,6 +152,7 @@ export function EmailInbox() {
   const [stateFilter, setStateFilter] = useState<string>("__all__");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Email Inbox" }]);
@@ -121,13 +181,45 @@ export function EmailInbox() {
   const confirm = useConfirm();
   const reprocessMutation = useMutation({
     mutationFn: (id: string) => emailMessagesApi.reprocess(id),
+    onMutate: (id) => {
+      // Optimistically show "analyzing" so user sees something changed
+      qc.setQueryData(queryKeys.emailMessages.detail(id), (old: unknown) => {
+        if (!old || typeof old !== "object") return old;
+        return { ...old as object, processingState: "analyzing", processedAt: null };
+      });
+    },
     onSuccess: (_data, id) => {
       pushToast({ tone: "success", title: "Email reprocessed" });
+      // Invalidate detail, list, and any filed-check queries for this email
       qc.invalidateQueries({ queryKey: queryKeys.emailMessages.detail(id) });
       qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId, stateFilter) });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId, undefined) });
+      qc.invalidateQueries({ queryKey: ["filed-check", id] });
+    },
+    onError: (_err, id) => {
+      // Roll back optimistic update
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.detail(id) });
+      pushToast({ tone: "warn", title: "Reprocess failed" });
+    },
+  });
+
+  const bulkReprocessMutation = useMutation({
+    mutationFn: (ids: string[]) => emailMessagesApi.bulkReprocess(ids),
+    onSuccess: (data) => {
+      pushToast({
+        tone: data.failed > 0 ? "warn" : "success",
+        title: `Reprocessed ${data.reprocessed} email${data.reprocessed !== 1 ? "s" : ""}`,
+        body: data.failed > 0 ? `${data.failed} failed` : undefined,
+      });
+      setCheckedIds(new Set());
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId, stateFilter) });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId, undefined) });
+      // Invalidate all detail queries so processing logs refresh
+      qc.invalidateQueries({ queryKey: ["email-messages", "detail"] });
+      qc.invalidateQueries({ queryKey: ["filed-check"] });
     },
     onError: (err: Error) =>
-      pushToast({ tone: "warn", title: "Reprocess failed", body: err.message }),
+      pushToast({ tone: "warn", title: "Bulk reprocess failed", body: err.message }),
   });
 
   const deleteMutation = useMutation({
@@ -220,15 +312,27 @@ export function EmailInbox() {
             {f.label}
           </button>
         ))}
-        <div className="ml-auto w-64">
+        <div className="ml-auto">
           <Input
             placeholder="Search subject, sender, body…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="h-8 text-sm"
+            className="h-8 text-sm w-64"
           />
         </div>
       </div>
+
+      {checkedIds.size > 0 && (
+        <BulkActionPanel
+          checkedIds={checkedIds}
+          messages={messages}
+          companyId={companyId}
+          companyName={selectedCompany?.name}
+          isPending={bulkReprocessMutation.isPending}
+          onReprocess={() => bulkReprocessMutation.mutate(Array.from(checkedIds))}
+          onClear={() => setCheckedIds(new Set())}
+        />
+      )}
 
       <div className="px-6 pt-3">
         <StorageSetupBanner companyId={companyId} />
@@ -243,11 +347,39 @@ export function EmailInbox() {
             </div>
           ) : (
             <ul className="divide-y divide-border">
+              <li className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border sticky top-0 z-10">
+                <input
+                  type="checkbox"
+                  checked={messages.length > 0 && messages.every((m) => checkedIds.has(m.id))}
+                  ref={(el) => {
+                    if (el) el.indeterminate = checkedIds.size > 0 && !messages.every((m) => checkedIds.has(m.id));
+                  }}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setCheckedIds(new Set(messages.map((m) => m.id)));
+                    } else {
+                      setCheckedIds(new Set());
+                    }
+                  }}
+                  className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                />
+                <span className="text-xs text-muted-foreground">
+                  {checkedIds.size > 0 ? `${checkedIds.size} of ${messages.length} selected` : `${messages.length} email${messages.length !== 1 ? "s" : ""}`}
+                </span>
+              </li>
               {messages.map((m) => (
                 <MessageRow
                   key={m.id}
                   message={m}
                   selected={m.id === selectedId}
+                  checked={checkedIds.has(m.id)}
+                  onCheck={(id, on) => {
+                    setCheckedIds((prev) => {
+                      const next = new Set(prev);
+                      on ? next.add(id) : next.delete(id);
+                      return next;
+                    });
+                  }}
                   onClick={() => setSelectedId(m.id)}
                 />
               ))}
@@ -288,6 +420,7 @@ export function EmailInbox() {
               }}
               deleting={deleteMutation.isPending}
               companyId={companyId}
+              companyName={selectedCompany?.name}
             />
           </div>
         )}
@@ -299,40 +432,57 @@ export function EmailInbox() {
 function MessageRow({
   message,
   selected,
+  checked,
+  onCheck,
   onClick,
 }: {
   message: EmailMessageSummary;
   selected: boolean;
+  checked: boolean;
+  onCheck: (id: string, on: boolean) => void;
   onClick: () => void;
 }) {
   const hasAttachment = !!message.attachmentsPath;
   return (
     <li>
-      <button
-        onClick={onClick}
-        className={`w-full text-left p-4 hover:bg-accent/40 transition-colors ${selected ? "bg-accent/60" : ""}`}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium truncate">{message.fromAddr || "(no sender)"}</span>
-          <span className="text-xs text-muted-foreground shrink-0">{relativeTime(message.receivedAt)}</span>
-        </div>
-        <div className="text-sm truncate mt-0.5">{message.subject || "(no subject)"}</div>
-        <div className="text-xs text-muted-foreground truncate mt-0.5">
-          {message.body.replace(/\s+/g, " ").slice(0, 140)}
-        </div>
-        <div className="flex items-center gap-2 mt-2">
-          <span
-            className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_COLORS[message.processingState] ?? "bg-muted text-muted-foreground"}`}
-          >
-            {message.processingState}
-          </span>
-          {message.accountLabel && (
-            <span className="text-[11px] text-muted-foreground">via {message.accountLabel}</span>
-          )}
-          {hasAttachment && <Paperclip className="h-3 w-3 text-muted-foreground" />}
-          {message.errorText && <AlertCircle className="h-3 w-3 text-destructive" />}
-        </div>
-      </button>
+      <div className={`flex items-stretch hover:bg-accent/40 transition-colors ${selected ? "bg-accent/60" : ""}`}>
+        <label
+          className="flex items-center px-3 cursor-pointer shrink-0"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => onCheck(message.id, e.target.checked)}
+            className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+          />
+        </label>
+        <button
+          onClick={onClick}
+          className="flex-1 min-w-0 text-left py-4 pr-4"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-sm font-medium truncate">{message.fromAddr || "(no sender)"}</span>
+            <span className="text-xs text-muted-foreground shrink-0">{relativeTime(message.receivedAt)}</span>
+          </div>
+          <div className="text-sm truncate mt-0.5">{message.subject || "(no subject)"}</div>
+          <div className="text-xs text-muted-foreground truncate mt-0.5">
+            {message.body.replace(/\s+/g, " ").slice(0, 140)}
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <span
+              className={`text-[11px] px-2 py-0.5 rounded-full ${STATE_COLORS[message.processingState] ?? "bg-muted text-muted-foreground"}`}
+            >
+              {message.processingState}
+            </span>
+            {message.accountLabel && (
+              <span className="text-[11px] text-muted-foreground">via {message.accountLabel}</span>
+            )}
+            {hasAttachment && <Paperclip className="h-3 w-3 text-muted-foreground" />}
+            {message.errorText && <AlertCircle className="h-3 w-3 text-destructive" />}
+          </div>
+        </button>
+      </div>
     </li>
   );
 }
@@ -344,6 +494,7 @@ function AttachmentRow({ messageId, att, companyId }: {
 }) {
   const [open, setOpen] = useState(false);
   const [fileOpen, setFileOpen] = useState(false);
+  const [checkOpen, setCheckOpen] = useState(false);
   const qc = useQueryClient();
   const isImage = att.contentType.startsWith("image/");
   const isPdf = att.contentType === "application/pdf";
@@ -379,9 +530,13 @@ function AttachmentRow({ messageId, att, companyId }: {
         <span className="text-xs text-muted-foreground shrink-0">{formatBytes(att.sizeBytes)}</span>
         {/* Filed indicator */}
         {att.filedAt ? (
-          <span className="flex items-center gap-1 text-[11px] text-green-400 shrink-0" title={`Filed ${new Date(att.filedAt).toLocaleString()}${att.filedPath ? ` → ${att.filedPath}` : ""}`}>
+          <button
+            className="flex items-center gap-1 text-[11px] text-green-400 hover:text-green-300 shrink-0 transition-colors"
+            onClick={() => setCheckOpen(true)}
+            title="Click to verify filed location"
+          >
             <CheckCircle2 className="h-3.5 w-3.5" />Filed
-          </span>
+          </button>
         ) : (
           <button
             className="text-[11px] text-muted-foreground/60 hover:text-foreground shrink-0 flex items-center gap-1 transition-colors"
@@ -459,6 +614,16 @@ function AttachmentRow({ messageId, att, companyId }: {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Filed-check dialog */}
+      {checkOpen && (
+        <FiledCheckDialog
+          messageId={messageId}
+          attachmentId={att.id}
+          filename={att.filename}
+          onClose={() => setCheckOpen(false)}
+        />
+      )}
     </>
   );
 }
@@ -525,6 +690,7 @@ function MessageDetail({
   onDelete,
   deleting,
   companyId,
+  companyName,
 }: {
   detail: EmailMessageDetail | null;
   loading: boolean;
@@ -534,6 +700,7 @@ function MessageDetail({
   onDelete: (id: string) => void;
   deleting: boolean;
   companyId: string;
+  companyName?: string;
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -628,6 +795,8 @@ function MessageDetail({
           </span>
         </div>
       </div>
+
+      <EmailProcessingLog message={detail} companyId={companyId} companyName={companyName} />
 
       <div>
         <h2 className="text-lg font-semibold leading-tight">{detail.subject || "(no subject)"}</h2>
