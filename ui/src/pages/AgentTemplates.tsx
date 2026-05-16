@@ -863,10 +863,6 @@ export function AgentTemplates() {
 
   if (isLoading) return <PageSkeleton />;
 
-  if (!templates || templates.length === 0) {
-    return <EmptyState icon={LayoutTemplate} message="No agent templates found." />;
-  }
-
   return (
     <div className="flex h-full min-h-0 gap-0">
       {/* Left pane */}
@@ -891,7 +887,7 @@ export function AgentTemplates() {
           </Button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-1.5">
-          {templates.map((t) => (
+          {(templates ?? []).map((t) => (
             <TemplateCard
               key={t.id}
               template={t}
@@ -938,8 +934,12 @@ export function AgentTemplates() {
             setEditorSlugError(null);
           }} />
         ) : (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-sm text-muted-foreground">Select a template to view details.</p>
+          <div className="flex-1 flex flex-col items-center justify-center gap-3">
+            {(!templates || templates.length === 0) ? (
+              <EmptyState icon={LayoutTemplate} message="No templates yet. Create one to get started." />
+            ) : (
+              <p className="text-sm text-muted-foreground">Select a template to view details.</p>
+            )}
           </div>
         )}
       </div>
