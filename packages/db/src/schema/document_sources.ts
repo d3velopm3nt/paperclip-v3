@@ -9,10 +9,13 @@ export const documentSources = pgTable(
     // v3: optional scope — null = company-wide, set = scoped to client/project
     clientId: uuid("client_id"),
     projectId: uuid("project_id"),
-    type: text("type").notNull(), // "local" | "gdrive"
+    type: text("type").notNull(), // "local" | "gdrive" | "github"
     name: text("name").notNull(),
     localPath: text("local_path"),
     driveFolderId: text("drive_folder_id"),
+    githubRepoUrl: text("github_repo_url"),
+    githubBranch: text("github_branch").default("main"),
+    githubToken: text("github_token"),
     lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
     lastSyncError: text("last_sync_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

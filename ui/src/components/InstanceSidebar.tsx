@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Bell, Clock3, FlaskConical, FolderOpen, Puzzle, Settings, SlidersHorizontal } from "lucide-react";
+import { Bell, Clock3, FlaskConical, FolderOpen, Github, Puzzle, Settings, SlidersHorizontal } from "lucide-react";
 import { NavLink } from "@/lib/router";
 import { pluginsApi } from "@/api/plugins";
 import { queryKeys } from "@/lib/queryKeys";
@@ -26,6 +26,7 @@ export function InstanceSidebar() {
           <SidebarNavItem to="/instance/settings/heartbeats" label="Heartbeats" icon={Clock3} end />
           <SidebarNavItem to="/instance/settings/experimental" label="Experimental" icon={FlaskConical} />
           <SidebarNavItem to="/instance/settings/storage" label="Storage" icon={FolderOpen} end />
+          <SidebarNavItem to="/instance/settings/github" label="GitHub" icon={Github} end />
           <SidebarNavItem to="/instance/settings/operator" label="Operator" icon={Bell} end />
           <SidebarNavItem to="/instance/settings/plugins" label="Plugins" icon={Puzzle} />
           {(plugins ?? []).length > 0 ? (

@@ -68,6 +68,8 @@ export function buildTree(
             name: "Google Drive",
             localPath: null,
             driveFolderId: null,
+            githubRepoUrl: null,
+            githubBranch: null,
             lastSyncedAt: null,
             lastSyncError: null,
             createdAt: "",

@@ -1,4 +1,4 @@
-export type DocumentSourceType = "local" | "gdrive" | "upload";
+export type DocumentSourceType = "local" | "gdrive" | "github" | "upload";
 export type DocumentScope = "company" | "project";
 
 export interface ReferenceDocument {
@@ -28,20 +28,25 @@ export interface DocumentSource {
   companyId: string;
   clientId: string | null;
   projectId: string | null;
-  type: "local" | "gdrive";
+  type: "local" | "gdrive" | "github";
   name: string;
   localPath: string | null;
   driveFolderId: string | null;
+  githubRepoUrl: string | null;
+  githubBranch: string | null;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
   createdAt: string;
 }
 
 export interface CreateDocumentSourceInput {
-  type: "local" | "gdrive";
+  type: "local" | "gdrive" | "github";
   name: string;
   localPath?: string;
   driveFolderId?: string;
+  githubRepoUrl?: string;
+  githubBranch?: string;
+  githubToken?: string;
   clientId?: string;
   projectId?: string;
 }

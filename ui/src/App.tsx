@@ -61,6 +61,7 @@ import { NotFoundPage } from "./pages/NotFound";
 import { Chat } from "./pages/Chat"; // v3: chat
 import { DocumentLibrary } from "./pages/DocumentLibrary"; // v3: document storage
 import { InstanceStorageSettings } from "./pages/InstanceStorageSettings"; // v3: document storage
+import { GitHubSettings } from "./pages/GitHubSettings";
 import { FounderView } from "./pages/FounderView"; // v3: founder overview
 import { FounderOverview } from "./pages/founder/FounderOverview"; // v3: founder overview
 import { TopicsList } from "./pages/founder/TopicsList"; // v3: founder topics
@@ -362,6 +363,7 @@ export function App() {
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="storage" element={<InstanceStorageSettings />} /> {/* v3: document storage */}
+            <Route path="github" element={<GitHubSettings />} />
             <Route path="operator" element={<FounderSettings />} />
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />

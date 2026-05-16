@@ -1,5 +1,5 @@
 // v3: inbox view of processed inbound email for the selected company.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@/lib/router";
 import { useToast } from "../context/ToastContext";
@@ -23,6 +23,7 @@ import { StorageSetupBanner } from "../components/StorageSetupBanner";
 import {
   Inbox as InboxIcon,
   Link2,
+  List,
   Mail,
   Paperclip,
   RefreshCw,
@@ -153,6 +154,11 @@ export function EmailInbox() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const [viewMode, setViewMode] = useState<"list" | "by_sender">("list");
+  const [selectedSender, setSelectedSender] = useState<string | null>(null);
+  const listPane = useResizable(380, 220, 700);
+  const senderPane = useResizable(240, 160, 480);
+  const senderEmailPane = useResizable(320, 200, 600);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Email Inbox" }]);
@@ -247,6 +253,28 @@ export function EmailInbox() {
     );
   });
 
+  const senderGroups = useMemo<SenderGroup[]>(() => {
+    const map = new Map<string, SenderGroup>();
+    for (const m of messages) {
+      const key = m.fromAddr || "(no sender)";
+      if (!map.has(key)) {
+        map.set(key, { addr: key, emails: [], lastDate: m.receivedAt, hasPending: false, hasError: false });
+      }
+      const g = map.get(key)!;
+      g.emails.push(m);
+      if (new Date(m.receivedAt) > new Date(g.lastDate)) g.lastDate = m.receivedAt;
+      if (m.processingState === "pending" || m.processingState === "analyzing") g.hasPending = true;
+      if (m.processingState === "error") g.hasError = true;
+    }
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.lastDate).getTime() - new Date(a.lastDate).getTime(),
+    );
+  }, [messages]);
+
+  const senderMessages = selectedSender
+    ? messages.filter((m) => (m.fromAddr || "(no sender)") === selectedSender)
+    : [];
+
   if (!companyId) return <div className="p-6 text-sm text-muted-foreground">Select a company.</div>;
   if (listQuery.isLoading) return <PageSkeleton />;
 
@@ -270,7 +298,7 @@ export function EmailInbox() {
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg border border-border overflow-hidden text-sm">
             <button
-              onClick={() => { setMailbox("inbound"); setSelectedId(null); setStateFilter("__all__"); }}
+              onClick={() => { setMailbox("inbound"); setSelectedId(null); setStateFilter("__all__"); setSelectedSender(null); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
                 mailbox === "inbound"
                   ? "bg-foreground/10 text-foreground font-medium"
@@ -281,7 +309,7 @@ export function EmailInbox() {
               Client Mail
             </button>
             <button
-              onClick={() => { setMailbox("agent_voice"); setSelectedId(null); setStateFilter("__all__"); }}
+              onClick={() => { setMailbox("agent_voice"); setSelectedId(null); setStateFilter("__all__"); setSelectedSender(null); }}
               className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-border transition-colors ${
                 mailbox === "agent_voice"
                   ? "bg-foreground/10 text-foreground font-medium"
@@ -290,6 +318,32 @@ export function EmailInbox() {
             >
               <Bot className="h-3.5 w-3.5" />
               Agent Mail
+            </button>
+          </div>
+          <div className="flex rounded-lg border border-border overflow-hidden text-sm">
+            <button
+              onClick={() => { setViewMode("list"); setSelectedSender(null); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                viewMode === "list"
+                  ? "bg-foreground/10 text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+              }`}
+              title="List view"
+            >
+              <List className="h-3.5 w-3.5" />
+              List
+            </button>
+            <button
+              onClick={() => { setViewMode("by_sender"); setSelectedId(null); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 border-l border-border transition-colors ${
+                viewMode === "by_sender"
+                  ? "bg-foreground/10 text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+              }`}
+              title="By sender"
+            >
+              <Users className="h-3.5 w-3.5" />
+              By Sender
             </button>
           </div>
           <Button variant="outline" size="sm" onClick={() => listQuery.refetch()}>
@@ -338,94 +392,331 @@ export function EmailInbox() {
         <StorageSetupBanner companyId={companyId} />
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col sm:flex-row">
-        <div className={`flex-1 min-h-0 overflow-y-auto ${selectedId ? "hidden sm:block sm:max-w-md sm:border-r sm:border-border" : ""}`}>
-          {messages.length === 0 ? (
-            <div className="p-8 text-center text-sm text-muted-foreground">
-              <Mail className="h-10 w-10 mx-auto mb-3 opacity-40" />
-              No messages {stateFilter !== "__all__" ? `in ${stateFilter}` : ""}.
-            </div>
-          ) : (
-            <ul className="divide-y divide-border">
-              <li className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border sticky top-0 z-10">
-                <input
-                  type="checkbox"
-                  checked={messages.length > 0 && messages.every((m) => checkedIds.has(m.id))}
-                  ref={(el) => {
-                    if (el) el.indeterminate = checkedIds.size > 0 && !messages.every((m) => checkedIds.has(m.id));
-                  }}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      setCheckedIds(new Set(messages.map((m) => m.id)));
-                    } else {
-                      setCheckedIds(new Set());
-                    }
-                  }}
-                  className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
-                />
-                <span className="text-xs text-muted-foreground">
-                  {checkedIds.size > 0 ? `${checkedIds.size} of ${messages.length} selected` : `${messages.length} email${messages.length !== 1 ? "s" : ""}`}
-                </span>
-              </li>
-              {messages.map((m) => (
-                <MessageRow
-                  key={m.id}
-                  message={m}
-                  selected={m.id === selectedId}
-                  checked={checkedIds.has(m.id)}
-                  onCheck={(id, on) => {
-                    setCheckedIds((prev) => {
-                      const next = new Set(prev);
-                      on ? next.add(id) : next.delete(id);
-                      return next;
+      {viewMode === "list" ? (
+        /* ── LIST VIEW ─────────────────────────────────────────────────── */
+        <div className="flex-1 min-h-0 flex flex-col sm:flex-row">
+          <div
+            className={`min-h-0 overflow-y-auto ${selectedId ? "hidden sm:block shrink-0 border-r border-border" : "flex-1"}`}
+            style={selectedId ? { width: listPane.width } : undefined}
+          >
+            {messages.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                <Mail className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                No messages {stateFilter !== "__all__" ? `in ${stateFilter}` : ""}.
+              </div>
+            ) : (
+              <ul className="divide-y divide-border">
+                <li className="flex items-center gap-2 px-3 py-2 bg-muted/30 border-b border-border sticky top-0 z-10">
+                  <input
+                    type="checkbox"
+                    checked={messages.length > 0 && messages.every((m) => checkedIds.has(m.id))}
+                    ref={(el) => {
+                      if (el) el.indeterminate = checkedIds.size > 0 && !messages.every((m) => checkedIds.has(m.id));
+                    }}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setCheckedIds(new Set(messages.map((m) => m.id)));
+                      } else {
+                        setCheckedIds(new Set());
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-border accent-primary cursor-pointer"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {checkedIds.size > 0 ? `${checkedIds.size} of ${messages.length} selected` : `${messages.length} email${messages.length !== 1 ? "s" : ""}`}
+                  </span>
+                </li>
+                {messages.map((m) => (
+                  <MessageRow
+                    key={m.id}
+                    message={m}
+                    selected={m.id === selectedId}
+                    checked={checkedIds.has(m.id)}
+                    onCheck={(id, on) => {
+                      setCheckedIds((prev) => {
+                        const next = new Set(prev);
+                        on ? next.add(id) : next.delete(id);
+                        return next;
+                      });
+                    }}
+                    onClick={() => setSelectedId(m.id)}
+                  />
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {selectedId && (
+            <>
+              <ResizeHandle onMouseDown={listPane.onMouseDown} />
+              <div className="flex-1 min-h-0 overflow-y-auto bg-muted/20">
+                <MessageDetail
+                  detail={detailQuery.data ?? null}
+                  loading={detailQuery.isLoading}
+                  onBack={() => setSelectedId(null)}
+                  onReprocess={(id) => reprocessMutation.mutate(id)}
+                  reprocessing={reprocessMutation.isPending}
+                  onDelete={async (id) => {
+                    const ok = await confirm({
+                      title: "Delete email + history?",
+                      body: (
+                        <div className="space-y-2 text-sm">
+                          <p>This permanently removes the email and everything derived from it:</p>
+                          <ul className="list-disc pl-5 space-y-0.5 text-muted-foreground">
+                            <li>Plans, approvals, decision tokens</li>
+                            <li>Workflow runs + stage results</li>
+                            <li>Wakeup requests for the triage agent</li>
+                            <li>Linked triage issue + its comments (if no other email points to it)</li>
+                            <li>Email attachments on disk</li>
+                          </ul>
+                          <p className="text-destructive">This cannot be undone.</p>
+                        </div>
+                      ),
+                      confirmLabel: "Delete email",
+                      danger: true,
                     });
+                    if (ok) deleteMutation.mutate(id);
                   }}
-                  onClick={() => setSelectedId(m.id)}
+                  deleting={deleteMutation.isPending}
+                  companyId={companyId}
+                  companyName={selectedCompany?.name}
                 />
-              ))}
-            </ul>
+              </div>
+            </>
           )}
         </div>
-
-        {selectedId && (
-          <div className="flex-1 min-h-0 overflow-y-auto bg-muted/20">
-            <MessageDetail
-              detail={detailQuery.data ?? null}
-              loading={detailQuery.isLoading}
-              onBack={() => setSelectedId(null)}
-              onReprocess={(id) => reprocessMutation.mutate(id)}
-              reprocessing={reprocessMutation.isPending}
-              onDelete={async (id) => {
-                const ok = await confirm({
-                  title: "Delete email + history?",
-                  body: (
-                    <div className="space-y-2 text-sm">
-                      <p>
-                        This permanently removes the email and everything derived from it:
-                      </p>
-                      <ul className="list-disc pl-5 space-y-0.5 text-muted-foreground">
-                        <li>Plans, approvals, decision tokens</li>
-                        <li>Workflow runs + stage results</li>
-                        <li>Wakeup requests for the triage agent</li>
-                        <li>Linked triage issue + its comments (if no other email points to it)</li>
-                        <li>Email attachments on disk</li>
-                      </ul>
-                      <p className="text-destructive">This cannot be undone.</p>
-                    </div>
-                  ),
-                  confirmLabel: "Delete email",
-                  danger: true,
-                });
-                if (ok) deleteMutation.mutate(id);
-              }}
-              deleting={deleteMutation.isPending}
-              companyId={companyId}
-              companyName={selectedCompany?.name}
-            />
+      ) : (
+        /* ── BY SENDER VIEW ─────────────────────────────────────────────── */
+        <div className="flex-1 min-h-0 flex flex-row">
+          {/* Sender list */}
+          <div
+            className={`min-h-0 overflow-y-auto ${selectedSender ? "hidden sm:flex sm:flex-col shrink-0" : "flex-1 sm:flex-none shrink-0"}`}
+            style={selectedSender ? { width: senderPane.width } : undefined}
+          >
+            {senderGroups.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                <Users className="h-10 w-10 mx-auto mb-3 opacity-40" />
+                No senders {stateFilter !== "__all__" ? `in ${stateFilter}` : ""}.
+              </div>
+            ) : (
+              <>
+                <div className="px-3 py-2 bg-muted/30 border-b border-border sticky top-0 z-10">
+                  <span className="text-xs text-muted-foreground">{senderGroups.length} sender{senderGroups.length !== 1 ? "s" : ""}</span>
+                </div>
+                <ul className="divide-y divide-border">
+                  {senderGroups.map((g) => (
+                    <SenderRow
+                      key={g.addr}
+                      group={g}
+                      selected={g.addr === selectedSender}
+                      onClick={() => { setSelectedSender(g.addr); setSelectedId(null); }}
+                    />
+                  ))}
+                </ul>
+              </>
+            )}
           </div>
-        )}
-      </div>
+
+          {/* Email list for selected sender */}
+          {selectedSender && (
+            <>
+              <ResizeHandle onMouseDown={senderPane.onMouseDown} />
+            <div
+              className={`min-h-0 overflow-y-auto ${selectedId ? "hidden sm:flex sm:flex-col shrink-0" : "flex-1"}`}
+              style={selectedId ? { width: senderEmailPane.width } : undefined}
+            >
+              <div className="px-3 py-2 bg-muted/30 border-b border-border sticky top-0 z-10 flex items-center gap-2">
+                <button
+                  className="sm:hidden text-muted-foreground hover:text-foreground"
+                  onClick={() => setSelectedSender(null)}
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+                <div
+                  className="h-5 w-5 rounded-full flex items-center justify-center text-[10px] font-semibold text-white shrink-0"
+                  style={{ backgroundColor: senderColor(selectedSender) }}
+                >
+                  {senderInitials(selectedSender)}
+                </div>
+                <span className="text-xs text-muted-foreground truncate flex-1">{selectedSender}</span>
+                <span className="text-xs text-muted-foreground shrink-0">{senderMessages.length}</span>
+              </div>
+              {senderMessages.length === 0 ? (
+                <div className="p-8 text-center text-sm text-muted-foreground">No emails.</div>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {senderMessages.map((m) => (
+                    <MessageRow
+                      key={m.id}
+                      message={m}
+                      selected={m.id === selectedId}
+                      checked={checkedIds.has(m.id)}
+                      onCheck={(id, on) => {
+                        setCheckedIds((prev) => {
+                          const next = new Set(prev);
+                          on ? next.add(id) : next.delete(id);
+                          return next;
+                        });
+                      }}
+                      onClick={() => setSelectedId(m.id)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+            </>
+          )}
+
+          {/* Detail panel */}
+          {selectedId && (
+            <>
+              <ResizeHandle onMouseDown={senderEmailPane.onMouseDown} />
+              <div className="flex-1 min-h-0 overflow-y-auto bg-muted/20">
+              <MessageDetail
+                detail={detailQuery.data ?? null}
+                loading={detailQuery.isLoading}
+                onBack={() => setSelectedId(null)}
+                onReprocess={(id) => reprocessMutation.mutate(id)}
+                reprocessing={reprocessMutation.isPending}
+                onDelete={async (id) => {
+                  const ok = await confirm({
+                    title: "Delete email + history?",
+                    body: (
+                      <div className="space-y-2 text-sm">
+                        <p>This permanently removes the email and everything derived from it:</p>
+                        <ul className="list-disc pl-5 space-y-0.5 text-muted-foreground">
+                          <li>Plans, approvals, decision tokens</li>
+                          <li>Workflow runs + stage results</li>
+                          <li>Wakeup requests for the triage agent</li>
+                          <li>Linked triage issue + its comments (if no other email points to it)</li>
+                          <li>Email attachments on disk</li>
+                        </ul>
+                        <p className="text-destructive">This cannot be undone.</p>
+                      </div>
+                    ),
+                    confirmLabel: "Delete email",
+                    danger: true,
+                  });
+                  if (ok) deleteMutation.mutate(id);
+                }}
+                deleting={deleteMutation.isPending}
+                companyId={companyId}
+                companyName={selectedCompany?.name}
+              />
+            </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function useResizable(defaultWidth: number, min: number, max: number) {
+  const [width, setWidth] = useState(defaultWidth);
+  const dragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    dragging.current = true;
+    startX.current = e.clientX;
+    startWidth.current = width;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const next = Math.max(min, Math.min(max, startWidth.current + ev.clientX - startX.current));
+      setWidth(next);
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [width, min, max]);
+
+  return { width, onMouseDown };
+}
+
+function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className="w-1 shrink-0 hover:bg-primary/40 active:bg-primary/60 cursor-col-resize transition-colors group relative z-10 border-r border-border"
+      title="Drag to resize"
+    />
+  );
+}
+
+// Deterministic pastel color from email string
+function senderColor(addr: string): string {
+  let h = 0;
+  for (let i = 0; i < addr.length; i++) h = (h * 31 + addr.charCodeAt(i)) & 0xffff;
+  const hue = h % 360;
+  return `hsl(${hue}, 55%, 42%)`;
+}
+
+function senderInitials(addr: string): string {
+  const local = addr.split("@")[0] ?? addr;
+  const parts = local.split(/[._\-+]/);
+  if (parts.length >= 2) return (parts[0]![0]! + parts[1]![0]!).toUpperCase();
+  return local.slice(0, 2).toUpperCase();
+}
+
+interface SenderGroup {
+  addr: string;
+  emails: EmailMessageSummary[];
+  lastDate: string;
+  hasPending: boolean;
+  hasError: boolean;
+}
+
+function SenderRow({
+  group,
+  selected,
+  onClick,
+}: {
+  group: SenderGroup;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const color = senderColor(group.addr);
+  const initials = senderInitials(group.addr);
+  return (
+    <li>
+      <button
+        onClick={onClick}
+        className={`w-full flex items-center gap-3 px-3 py-3 text-left hover:bg-accent/40 transition-colors ${selected ? "bg-accent/60" : ""}`}
+      >
+        <div
+          className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
+          style={{ backgroundColor: color }}
+        >
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center justify-between gap-1">
+            <span className="text-sm font-medium truncate">{group.addr}</span>
+            <span className="text-xs text-muted-foreground shrink-0">{relativeTime(group.lastDate)}</span>
+          </div>
+          <div className="flex items-center gap-1.5 mt-0.5">
+            <span className="text-xs text-muted-foreground">{group.emails.length} email{group.emails.length !== 1 ? "s" : ""}</span>
+            {group.hasError && (
+              <span className="text-[10px] px-1.5 py-0 rounded-full bg-rose-500/15 text-rose-400">error</span>
+            )}
+            {group.hasPending && !group.hasError && (
+              <span className="text-[10px] px-1.5 py-0 rounded-full bg-amber-500/15 text-amber-400">pending</span>
+            )}
+          </div>
+        </div>
+      </button>
+    </li>
   );
 }
 

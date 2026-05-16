@@ -17,6 +17,16 @@ import {
 } from "../services/gdrive-auth.js";
 import { SUPPORTED_EXTENSIONS } from "../services/document-extractor.js";
 import { getCompanyStorageRoot, setCompanyStorageRoot, listCompaniesWithStorage } from "../services/client-storage.js";
+import {
+  saveGitHubAppCreds,
+  deleteGitHubAppCreds,
+  getGitHubAppCredsStatus,
+  getGitHubAuthUrl,
+  exchangeCodeForToken,
+  getGitHubStatus,
+  disconnectGitHub,
+  savePAT,
+} from "../services/github-auth.js";
 
 const SKIP_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next", ".nuxt",
@@ -241,6 +251,103 @@ export function instanceStorageRoutes(db: Db): Router {
           updatedAt: new Date(),
         },
       });
+    res.json({ ok: true });
+  });
+
+  // ── GitHub OAuth ─────────────────────────────────────────────────────────────
+
+  router.get("/instance/storage/github/app-credentials", async (req, res) => {
+    assertAdmin(req);
+    res.json(await getGitHubAppCredsStatus(db));
+  });
+
+  router.put("/instance/storage/github/app-credentials", async (req, res) => {
+    assertAdmin(req);
+    const { clientId, clientSecret } = req.body as { clientId?: string; clientSecret?: string };
+    if (!clientId?.trim() || !clientSecret?.trim()) {
+      res.status(400).json({ error: "clientId and clientSecret are required" });
+      return;
+    }
+    await saveGitHubAppCreds(db, clientId.trim(), clientSecret.trim());
+    res.json({ ok: true });
+  });
+
+  router.delete("/instance/storage/github/app-credentials", async (req, res) => {
+    assertAdmin(req);
+    await deleteGitHubAppCreds(db);
+    res.json({ ok: true });
+  });
+
+  router.get("/instance/storage/github/status", async (req, res) => {
+    assertAdmin(req);
+    res.json(await getGitHubStatus(db));
+  });
+
+  router.get("/instance/storage/github/auth", async (req, res) => {
+    assertAdmin(req);
+    const redirectUri = `${req.protocol}://${req.get("host")}/api/instance/storage/github/callback`;
+    try {
+      res.json({ url: await getGitHubAuthUrl(db, redirectUri) });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+    }
+  });
+
+  router.get("/instance/storage/github/callback", async (req, res) => {
+    const code = req.query.code as string | undefined;
+    if (!code) { res.status(400).send("Missing code"); return; }
+    const redirectUri = `${req.protocol}://${req.get("host")}/api/instance/storage/github/callback`;
+    try {
+      await exchangeCodeForToken(db, code, redirectUri);
+      res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Connected</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e5e5e5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #141414; border: 1px solid #2a2a2a; border-radius: 12px; padding: 2rem; max-width: 360px; width: 100%; text-align: center; }
+    .icon { font-size: 2.5rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.5rem; }
+    p { font-size: 0.875rem; color: #888; margin-bottom: 1.5rem; }
+    .btn { display: inline-block; background: #fff; color: #0a0a0a; font-size: 0.875rem; font-weight: 500; padding: 0.5rem 1.25rem; border-radius: 6px; text-decoration: none; cursor: pointer; border: none; }
+    .btn:hover { background: #e5e5e5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✓</div>
+    <h1>GitHub connected</h1>
+    <p>Your account has been linked. You can close this window or return to Paperclip.</p>
+    <button class="btn" onclick="window.opener && window.opener.postMessage('github-connected', '*'); window.close()">Close window</button>
+  </div>
+  <script>
+    if (window.opener) {
+      try { window.opener.postMessage('github-connected', '*'); } catch(e) {}
+    }
+  </script>
+</body>
+</html>`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).send(`Failed to authenticate: ${msg}`);
+    }
+  });
+
+  router.delete("/instance/storage/github/auth", async (req, res) => {
+    assertAdmin(req);
+    await disconnectGitHub(db);
+    res.json({ ok: true });
+  });
+
+  router.put("/instance/storage/github/pat", async (req, res) => {
+    assertAdmin(req);
+    const { token } = req.body as { token?: string };
+    if (!token?.trim()) { res.status(400).json({ error: "token is required" }); return; }
+    await savePAT(db, token.trim());
     res.json({ ok: true });
   });
 

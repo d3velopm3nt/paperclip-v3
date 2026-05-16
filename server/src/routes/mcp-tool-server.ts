@@ -1,7 +1,12 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
+import os from "node:os";
+import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { mkdir } from "node:fs/promises";
 import type { Db } from "@paperclipai/db";
-import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains } from "@paperclipai/db";
+import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains, documentSources, projectWorkspaces } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
@@ -26,12 +31,21 @@ import {
 } from "../services/client-storage.js";
 import { clientService } from "../services/clients.js";
 import { contactService } from "../services/contacts.js";
+import { referenceDocumentsService } from "../services/reference-documents.js";
+import { syncCompanyDocuments } from "../services/document-sync.js";
+import { buildAuthenticatedCloneUrl } from "../services/github-auth.js";
 import { routineService } from "../services/routines.js";
 import { goalService } from "../services/goals.js";
 import { approvalService } from "../services/approvals.js";
 import { sendEmailFromAccount } from "../services/email-sender.js";
 import { searchEntities, switchContext as switchContextSvc } from "../services/entity-search.js";
 import type { EntityType } from "../services/entity-search.js";
+
+const execFileAsync = promisify(execFile);
+
+function safeFolderName(name: string): string {
+  return name.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").trim() || "unnamed";
+}
 
 // ── JSON-RPC helpers ──────────────────────────────────────────────────────────
 
@@ -50,20 +64,23 @@ function textContent(text: string) {
 const TOOLS = [
   {
     name: "list_issues",
-    description: "List issues for a company. Filter by status, priority, or assignee agent. As operator you have cross-company access — pass companyId to query a specific company.",
+    description: "List issues for a company. Filter by status, priority, project, goal, or assignee. Use projectId to see all issues for a project. Use goalId to see issues under a lifecycle stage goal. Omit status to see all including unrouted issues (no project/assignee).",
     inputSchema: {
       type: "object",
       properties: {
         companyId: { type: "string", description: "UUID of the company to query. Required when querying a company other than the default." },
-        status: { type: "string", description: "Filter by status: backlog|todo|in_progress|in_review|done|cancelled" },
+        status: { type: "string", description: "Filter by status: backlog|todo|in_progress|in_review|done|cancelled. Omit to see all." },
         priority: { type: "string", description: "Filter by priority: critical|high|medium|low" },
+        projectId: { type: "string", description: "Filter by project UUID. Use to see all issues for a specific project." },
+        goalId: { type: "string", description: "Filter by goal UUID. Use to see issues under a specific lifecycle stage goal." },
+        unrouted: { type: "boolean", description: "If true, return only issues with no project assigned — orphan issues that need routing." },
         limit: { type: "number", description: "Max results (default 20, max 50)" },
       },
     },
   },
   {
     name: "create_issue",
-    description: "Create a new issue. Returns the created issue with its identifier (e.g. PAP-042). Pass companyId to create in a specific company.",
+    description: "Create a new issue. Returns the created issue with its identifier (e.g. PAP-042). Always pass projectId when the issue belongs to a project. Pass goalId to link it to a lifecycle stage goal.",
     inputSchema: {
       type: "object",
       required: ["title"],
@@ -73,14 +90,15 @@ const TOOLS = [
         description: { type: "string", description: "Issue description" },
         priority: { type: "string", description: "critical|high|medium|low (default: medium)" },
         status: { type: "string", description: "backlog|todo|in_progress (default: backlog)" },
-        projectId: { type: "string", description: "UUID of project to assign to" },
+        projectId: { type: "string", description: "UUID of project to assign to. Pass this whenever the issue belongs to a project." },
+        goalId: { type: "string", description: "UUID of goal (stage) to link this issue to. Used for lifecycle tracking." },
         assigneeAgentId: { type: "string", description: "UUID of agent to assign to" },
       },
     },
   },
   {
     name: "update_issue",
-    description: "Update an existing issue's status, priority, or assignee. When work is complete, set status to 'in_review' — NOT 'done'. Only the operator can mark an issue done after confirming the work.",
+    description: "Update an existing issue. Use projectId to route an orphan issue to a project. Use goalId to link it to a lifecycle stage. When work is complete, set status to 'in_review' — NOT 'done'. Only the operator can mark an issue done.",
     inputSchema: {
       type: "object",
       required: ["issueId"],
@@ -88,6 +106,8 @@ const TOOLS = [
         issueId: { type: "string", description: "UUID of the issue to update" },
         status: { type: "string", description: "New status" },
         priority: { type: "string", description: "New priority" },
+        projectId: { type: "string", description: "Route to a project — set the project UUID. Use this to fix unrouted issues." },
+        goalId: { type: "string", description: "Link to a lifecycle stage goal UUID." },
         assigneeAgentId: { type: "string", description: "New assignee agent UUID, or null to unassign" },
         title: { type: "string", description: "New title" },
         description: { type: "string", description: "New description" },
@@ -858,6 +878,43 @@ const TOOLS = [
       },
     },
   },
+  {
+    name: "set_project_repo",
+    description: `Link a GitHub repo to a project. Use this (not link_github_repo) when the operator says "link a repo to my project" or "set the project repo". This clones the repo, sets it as the project codebase workspace (visible in the project UI), AND indexes it for search — one call does everything.
+
+The instance has a stored GitHub token — you do NOT need to ask the operator for one. Private repos will clone automatically using the stored credentials.
+
+IMPORTANT: Before calling this tool you MUST confirm the following with the operator:
+1. The exact project name and client name — list them from list_projects and ask the operator to confirm.
+2. The repo URL — repeat it back and ask "Should I link this repo to project [name] for client [name]?"
+Only call this tool after the operator explicitly confirms both.`,
+    inputSchema: {
+      type: "object",
+      required: ["projectId", "repoUrl"],
+      properties: {
+        projectId: { type: "string", description: "UUID of the project to link the repo to. Required — confirm with operator before calling." },
+        repoUrl: { type: "string", description: "Full GitHub repo URL, e.g. https://github.com/owner/repo" },
+        branch: { type: "string", description: "Branch to clone (default: main)" },
+        githubToken: { type: "string", description: "Optional token override — only needed if the instance token cannot access this repo." },
+      },
+    },
+  },
+  {
+    name: "link_github_repo",
+    description: "Add a GitHub repo as a searchable document source only (for wikis, docs, or secondary repos). Does NOT set the project codebase or workspace. Use set_project_repo instead when the operator wants to link their main project repo. The instance has a stored GitHub token — do NOT ask the operator for credentials.",
+    inputSchema: {
+      type: "object",
+      required: ["repoUrl"],
+      properties: {
+        repoUrl: { type: "string", description: "Full GitHub repo URL, e.g. https://github.com/owner/repo" },
+        branch: { type: "string", description: "Branch to index (default: main)" },
+        projectId: { type: "string", description: "UUID of the project to scope the source to. Omit for company-wide." },
+        name: { type: "string", description: "Display name for this source (defaults to repo name)" },
+        githubToken: { type: "string", description: "Optional token override — only needed if the instance token cannot access this repo." },
+        companyId: { type: "string", description: "UUID of the company. Required when not in a single-company context." },
+      },
+    },
+  },
 ];
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
@@ -923,13 +980,16 @@ async function handleTool(
     const filters = [eq(issues.companyId, effectiveCompanyId)];
     if (args.status) filters.push(eq(issues.status, String(args.status)));
     if (args.priority) filters.push(eq(issues.priority, String(args.priority)));
+    if (args.projectId) filters.push(eq(issues.projectId, String(args.projectId)));
+    if (args.goalId) filters.push(eq(issues.goalId, String(args.goalId)));
+    if (args.unrouted === true) filters.push(isNull(issues.projectId));
 
     const rows = await db
       .select({
         id: issues.id, identifier: issues.identifier, title: issues.title,
         status: issues.status, priority: issues.priority,
         assigneeAgentId: issues.assigneeAgentId, description: issues.description,
-        clientId: issues.clientId,
+        clientId: issues.clientId, projectId: issues.projectId, goalId: issues.goalId,
       })
       .from(issues)
       .where(and(...filters))
@@ -995,10 +1055,13 @@ async function handleTool(
     if (args.title !== undefined) patch.title = String(args.title);
     if (args.description !== undefined) patch.description = String(args.description);
     if ("assigneeAgentId" in args) patch.assigneeAgentId = args.assigneeAgentId ? String(args.assigneeAgentId) : null;
+    if ("projectId" in args) patch.projectId = args.projectId ? String(args.projectId) : null;
+    if ("goalId" in args) patch.goalId = args.goalId ? String(args.goalId) : null;
 
     const svc = issueService(db);
     const existing = await db.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, issueId)).limit(1).then(r => r[0]);
-    if (!existing || existing.companyId !== companyId) return "Error: issue not found or access denied";
+    // Operators have cross-company access; agents can only update issues in their own company
+    if (!existing || (!isOperator && existing.companyId !== companyId)) return "Error: issue not found or access denied";
 
     const updated = await svc.update(issueId, patch);
     if (!updated) return "Error: issue not found or access denied";
@@ -2478,6 +2541,138 @@ async function handleTool(
       agentId: callerAgentId, details: { via: "mcp-chat" },
     });
     return JSON.stringify({ routineId: updated.id, title: updated.title, status: updated.status }, null, 2);
+  }
+
+  if (name === "set_project_repo") {
+    const { projectId, repoUrl, branch, githubToken } = args as {
+      projectId: string; repoUrl: string; branch?: string; githubToken?: string;
+    };
+    if (!projectId?.trim()) return "Error: projectId is required. Call list_projects first and confirm the project with the operator.";
+    if (!repoUrl?.trim()) return "Error: repoUrl is required";
+
+    const [project] = await db
+      .select({ id: projects.id, name: projects.name, companyId: projects.companyId, clientId: projects.clientId })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    if (!project) return `Error: project ${projectId} not found`;
+
+    let clientName: string | null = null;
+    if (project.clientId) {
+      const [cl] = await db.select({ name: clients.name }).from(clients).where(eq(clients.id, project.clientId)).limit(1);
+      clientName = cl?.name ?? null;
+    }
+
+    const repoName = repoUrl.trim().split("/").pop()?.replace(".git", "") ?? "repo";
+    const branchName = branch?.trim() || "main";
+    const cloneDir = clientName
+      ? path.join(os.homedir(), "paperclip-workspaces", safeFolderName(clientName), safeFolderName(project.name), safeFolderName(repoName))
+      : path.join(os.homedir(), "paperclip-workspaces", safeFolderName(project.name), safeFolderName(repoName));
+
+    // Per-call token overrides the instance-level stored OAuth token
+    const authUrl = await buildAuthenticatedCloneUrl(db, repoUrl.trim(), githubToken ?? null);
+
+    const hasGit = await import("node:fs/promises").then((fs) =>
+      fs.stat(path.join(cloneDir, ".git")).then(() => true).catch(() => false)
+    );
+
+    try {
+      if (!hasGit) {
+        await mkdir(cloneDir, { recursive: true });
+        await execFileAsync("git", ["clone", "--depth=1", "--branch", branchName, authUrl, cloneDir], { timeout: 120_000 });
+      } else {
+        await execFileAsync("git", ["-C", cloneDir, "fetch", "--depth=1", "origin", branchName], { timeout: 60_000 });
+        await execFileAsync("git", ["-C", cloneDir, "reset", "--hard", `origin/${branchName}`], { timeout: 30_000 });
+      }
+    } catch (e) {
+      return `Error: git operation failed — ${e instanceof Error ? e.message : String(e)}`;
+    }
+
+    // Wire project workspace (sets the Codebase section in the project UI)
+    const svc = projectService(db);
+    const existing = await db
+      .select({ id: projectWorkspaces.id })
+      .from(projectWorkspaces)
+      .where(and(eq(projectWorkspaces.projectId, projectId), eq(projectWorkspaces.isPrimary, true)))
+      .limit(1);
+
+    if (existing[0]) {
+      await svc.updateWorkspace(projectId, existing[0].id, { cwd: cloneDir, repoUrl: repoUrl.trim(), sourceType: "git_repo" });
+    } else {
+      await svc.createWorkspace(projectId, { cwd: cloneDir, repoUrl: repoUrl.trim(), sourceType: "git_repo", isPrimary: true });
+    }
+
+    // Also create a document source so the repo is indexed for search
+    const existingSource = await db
+      .select({ id: documentSources.id })
+      .from(documentSources)
+      .where(and(eq(documentSources.companyId, project.companyId), eq(documentSources.githubRepoUrl, repoUrl.trim())))
+      .limit(1);
+    if (!existingSource[0]) {
+      const repoDisplayName = repoUrl.trim().split("/").slice(-2).join("/").replace(".git", "");
+      await referenceDocumentsService(db).createSource(project.companyId, {
+        type: "github",
+        name: repoDisplayName,
+        githubRepoUrl: repoUrl.trim(),
+        githubBranch: branchName,
+        projectId,
+      });
+      syncCompanyDocuments(db, project.companyId).catch(() => {});
+    }
+
+    void logActivity(db, {
+      companyId: project.companyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "project.repo_set", entityType: "project", entityId: projectId,
+      agentId: callerAgentId, details: { repoUrl: repoUrl.trim(), cloneDir, branch: branchName },
+    });
+
+    return JSON.stringify({
+      ok: true,
+      projectId,
+      projectName: project.name,
+      clientName,
+      repoUrl: repoUrl.trim(),
+      branch: branchName,
+      cloneDir,
+      status: hasGit ? "pulled latest" : "cloned fresh",
+    }, null, 2);
+  }
+
+  if (name === "link_github_repo") {
+    const { repoUrl, branch, projectId, name: sourceName, githubToken, companyId: argCompanyId } = args as {
+      repoUrl: string; branch?: string; projectId?: string; name?: string; githubToken?: string; companyId?: string;
+    };
+    if (!repoUrl?.trim()) return "Error: repoUrl is required";
+    const targetCompanyId = argCompanyId ?? effectiveCompanyId;
+    const repoName = repoUrl.split("/").slice(-2).join("/").replace(".git", "");
+    const displayName = sourceName?.trim() || repoName;
+    const branchName = branch?.trim() || "main";
+
+    const existing = await db
+      .select({ id: documentSources.id })
+      .from(documentSources)
+      .where(and(eq(documentSources.companyId, targetCompanyId), eq(documentSources.githubRepoUrl, repoUrl.trim())))
+      .limit(1);
+    if (existing.length > 0) return `GitHub repo already linked (sourceId: ${existing[0]!.id})`;
+
+    const svc = referenceDocumentsService(db);
+    const source = await svc.createSource(targetCompanyId, {
+      type: "github",
+      name: displayName,
+      githubRepoUrl: repoUrl.trim(),
+      githubBranch: branchName,
+      githubToken: githubToken?.trim() || undefined,
+      projectId: projectId || undefined,
+    });
+
+    void logActivity(db, {
+      companyId: targetCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "document_source.created", entityType: "document_source", entityId: source.id,
+      agentId: callerAgentId, details: { type: "github", repoUrl, branch: branchName },
+    });
+
+    syncCompanyDocuments(db, targetCompanyId).catch(() => {});
+    return JSON.stringify({ sourceId: source.id, name: displayName, repoUrl, branch: branchName, status: "linked — initial clone started in background" }, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;

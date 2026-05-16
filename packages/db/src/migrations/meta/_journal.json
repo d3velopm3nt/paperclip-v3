@@ -568,6 +568,13 @@
       "when": 1778790672329,
       "tag": "0080_youthful_unus",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1778913660832,
+      "tag": "0081_medical_prodigy",
+      "breakpoints": true
     }
   ]
 }
