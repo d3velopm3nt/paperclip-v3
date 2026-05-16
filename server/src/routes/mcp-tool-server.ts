@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir } from "node:fs/promises";
 import type { Db } from "@paperclipai/db";
-import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains, documentSources, projectWorkspaces } from "@paperclipai/db";
+import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains, documentSources, projectWorkspaces, agentTemplates } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
@@ -40,6 +40,7 @@ import { approvalService } from "../services/approvals.js";
 import { sendEmailFromAccount } from "../services/email-sender.js";
 import { searchEntities, switchContext as switchContextSvc } from "../services/entity-search.js";
 import type { EntityType } from "../services/entity-search.js";
+import { agentTemplatesService } from "../services/agent-templates.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -913,6 +914,33 @@ Only call this tool after the operator explicitly confirms both.`,
         githubToken: { type: "string", description: "Optional token override — only needed if the instance token cannot access this repo." },
         companyId: { type: "string", description: "UUID of the company. Required when not in a single-company context." },
       },
+    },
+  },
+  {
+    name: "list_agent_templates",
+    description: "List all available agent templates (built-in and custom). Use before calling deploy_agent_template to see available slugs and descriptions.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: "deploy_agent_template",
+    description: "Deploy an agent template to a company — creates all agents, wires the org chart, and seeds instruction files. Use when the operator asks to 'set up a team', 'add agents', or 'onboard' a company. templateSlug must come from list_agent_templates.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateSlug: {
+          type: "string",
+          description: "Slug of the template to deploy (e.g. 'dev-team'). Get from list_agent_templates.",
+        },
+        companyId: {
+          type: "string",
+          description: "UUID of the company to deploy to. Defaults to the current working context company if omitted.",
+        },
+      },
+      required: ["templateSlug"],
     },
   },
 ];
@@ -2673,6 +2701,32 @@ async function handleTool(
 
     syncCompanyDocuments(db, targetCompanyId).catch(() => {});
     return JSON.stringify({ sourceId: source.id, name: displayName, repoUrl, branch: branchName, status: "linked — initial clone started in background" }, null, 2);
+  }
+
+  if (name === "list_agent_templates") {
+    const templates = await agentTemplatesService(db).listTemplates();
+    return JSON.stringify(templates.map((t) => ({
+      slug: t.slug,
+      name: t.name,
+      description: t.description,
+      category: t.category,
+      sourceType: t.sourceType,
+      agentCount: t.agentCount,
+    })));
+  }
+
+  if (name === "deploy_agent_template") {
+    const { templateSlug, companyId: argCompanyId } = args as { templateSlug: string; companyId?: string };
+    const targetCompanyId = argCompanyId ?? effectiveCompanyId;
+    if (!targetCompanyId) return "Error: no company in working context and no companyId provided";
+    const [template] = await db
+      .select({ id: agentTemplates.id, name: agentTemplates.name })
+      .from(agentTemplates)
+      .where(eq(agentTemplates.slug, templateSlug))
+      .limit(1);
+    if (!template) return `Error: template '${templateSlug}' not found. Call list_agent_templates to see available slugs.`;
+    const result = await agentTemplatesService(db).deployTemplate(template.id, targetCompanyId);
+    return `Deployed '${template.name}': created agents ${result.agentNames.join(", ")} (IDs: ${result.agentIds.join(", ")})`;
   }
 
   return `Error: unknown tool "${name}"`;
