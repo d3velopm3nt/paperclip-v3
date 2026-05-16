@@ -4,7 +4,7 @@ import { agentTemplates } from "@paperclipai/db";
 import type { Db } from "@paperclipai/db";
 import { agentTemplatesService } from "../services/agent-templates.js";
 import { assertBoard, assertInstanceAdmin } from "./authz.js";
-import { notFound, forbidden } from "../errors.js";
+import { badRequest, conflict, notFound, forbidden } from "../errors.js";
 
 export function agentTemplateRoutes(db: Db): Router {
   const router = Router();
@@ -26,19 +26,13 @@ export function agentTemplateRoutes(db: Db): Router {
       agentDefinitions: Record<string, unknown>[];
       teamStructure: Record<string, unknown>[];
     };
-    if (!body.name?.trim() || !body.slug?.trim()) {
-      res.status(400).json({ error: "name and slug are required" });
-      return;
-    }
+    if (!body.name?.trim() || !body.slug?.trim()) throw badRequest("name and slug are required");
     const existing = await db
       .select({ id: agentTemplates.id })
       .from(agentTemplates)
       .where(eq(agentTemplates.slug, body.slug.trim()))
       .limit(1);
-    if (existing[0]) {
-      res.status(409).json({ error: "A template with that slug already exists" });
-      return;
-    }
+    if (existing[0]) throw conflict("A template with that slug already exists");
     const [created] = await db
       .insert(agentTemplates)
       .values({
@@ -65,10 +59,7 @@ export function agentTemplateRoutes(db: Db): Router {
       description?: string;
       category: string;
     };
-    if (!agentId || !name || !slug) {
-      res.status(400).json({ error: "agentId, name, and slug are required" });
-      return;
-    }
+    if (!agentId || !name || !slug) throw badRequest("agentId, name, and slug are required");
     const template = await svc.saveAsTemplate(agentId, {
       subtree: subtree ?? false,
       name,
@@ -110,10 +101,7 @@ export function agentTemplateRoutes(db: Db): Router {
   router.post("/agent-templates/:id/deploy", async (req, res) => {
     assertBoard(req);
     const { companyId } = req.body as { companyId?: string };
-    if (!companyId) {
-      res.status(400).json({ error: "companyId is required" });
-      return;
-    }
+    if (!companyId) throw badRequest("companyId is required");
     const template = await svc.getTemplate(req.params.id);
     if (!template) throw notFound("agent template");
     const result = await svc.deployTemplate(req.params.id, companyId);
