@@ -465,6 +465,9 @@ function TemplateDetailContent({
 }
 
 // ── Template editor ─────────────────────────────────────────────────────────
+const TEMPLATE_ROLES = ["orchestrator", "worker", "observer"] as const;
+const TEMPLATE_ADAPTERS = ["ea", "claude_local", "codex_local", "gemini_local", "cursor", "opencode_local"] as const;
+
 function AgentEditorList({
   agents,
   setAgents,
@@ -474,16 +477,115 @@ function AgentEditorList({
   setAgents: (v: EditorAgent[]) => void;
   onPickExisting: () => void;
 }) {
+  function addBlank() {
+    const tempId = makeTempId("agent");
+    const rootExists = agents.some((a) => a.reportsTo === null);
+    setAgents([
+      ...agents,
+      {
+        tempId,
+        name: "",
+        role: rootExists ? "worker" : "orchestrator",
+        adapterType: "ea",
+        reportsTo: rootExists ? (agents.find((a) => a.reportsTo === null)?.tempId ?? null) : null,
+      },
+    ]);
+  }
+
+  function updateAgent(tempId: string, patch: Partial<EditorAgent>) {
+    setAgents(agents.map((a) => (a.tempId === tempId ? { ...a, ...patch } : a)));
+  }
+
+  function removeAgent(tempId: string) {
+    setAgents(
+      agents
+        .filter((a) => a.tempId !== tempId)
+        .map((a) => (a.reportsTo === tempId ? { ...a, reportsTo: null } : a)),
+    );
+  }
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Agents ({agents.length})
         </h3>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={addBlank}>
+            <Plus className="h-3 w-3" />
+            New
+          </Button>
+          <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={onPickExisting}>
+            <Plus className="h-3 w-3" />
+            From existing
+          </Button>
+        </div>
       </div>
+
       {agents.length === 0 && (
-        <p className="text-xs text-muted-foreground">No agents yet.</p>
+        <p className="text-xs text-muted-foreground py-2">Add at least one agent.</p>
       )}
+
+      <div className="space-y-1.5">
+        {agents.map((agent) => (
+          <div key={agent.tempId} className="rounded-md border border-border bg-card px-3 py-2 space-y-2">
+            <div className="flex items-center gap-2">
+              <Input
+                value={agent.name}
+                onChange={(e) => updateAgent(agent.tempId, { name: e.target.value })}
+                placeholder="Agent name"
+                className="h-7 text-xs flex-1"
+              />
+              <button
+                type="button"
+                onClick={() => removeAgent(agent.tempId)}
+                className="shrink-0 text-muted-foreground hover:text-destructive transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-0.5">
+                <label className="text-[10px] text-muted-foreground">Role</label>
+                <select
+                  value={agent.role}
+                  onChange={(e) => updateAgent(agent.tempId, { role: e.target.value })}
+                  className="h-7 w-full rounded border border-border bg-background px-1.5 text-xs text-foreground focus:outline-none"
+                >
+                  {TEMPLATE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+              <div className="space-y-0.5">
+                <label className="text-[10px] text-muted-foreground">Adapter</label>
+                <select
+                  value={agent.adapterType}
+                  onChange={(e) => updateAgent(agent.tempId, { adapterType: e.target.value })}
+                  className="h-7 w-full rounded border border-border bg-background px-1.5 text-xs text-foreground focus:outline-none"
+                >
+                  {TEMPLATE_ADAPTERS.map((a) => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </div>
+              <div className="space-y-0.5">
+                <label className="text-[10px] text-muted-foreground">Reports to</label>
+                <select
+                  value={agent.reportsTo ?? ""}
+                  onChange={(e) => updateAgent(agent.tempId, { reportsTo: e.target.value || null })}
+                  className="h-7 w-full rounded border border-border bg-background px-1.5 text-xs text-foreground focus:outline-none"
+                >
+                  <option value="">— root —</option>
+                  {agents
+                    .filter((a) => a.tempId !== agent.tempId)
+                    .map((a) => (
+                      <option key={a.tempId} value={a.tempId}>
+                        {a.name || a.tempId}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
