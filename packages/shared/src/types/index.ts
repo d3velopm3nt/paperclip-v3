@@ -204,3 +204,12 @@ export type {
   ClientStorageInfo,
   CompanyStorageRoot,
 } from "./document-storage.js";
+export type {
+  AgentTemplate,
+  AgentTemplateSummary,
+  AgentTemplateDefinition,
+  TeamStructureEntry,
+  DeployTemplateResult,
+  CreateCustomTemplateInput,
+  UpdateTemplateInput,
+} from "./agent-template.js";

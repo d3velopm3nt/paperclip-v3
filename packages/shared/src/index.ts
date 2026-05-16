@@ -312,6 +312,13 @@ export type {
   PluginWebhookDeliveryRecord,
   QuotaWindow,
   ProviderQuotaResult,
+  AgentTemplate,
+  AgentTemplateSummary,
+  AgentTemplateDefinition,
+  TeamStructureEntry,
+  DeployTemplateResult,
+  CreateCustomTemplateInput,
+  UpdateTemplateInput,
 } from "./types/index.js";
 export type {
   ReferenceDocument,
