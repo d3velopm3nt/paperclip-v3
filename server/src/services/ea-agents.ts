@@ -7,7 +7,7 @@ import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { loadDefaultAgentInstructionsBundle } from "./default-agent-instructions.js";
 
 // Bump this when the prompt changes to force a re-seed of existing agents.
-const PROMPT_VERSION = 7;
+const PROMPT_VERSION = 8;
 
 export interface EaAgentMetadata {
   currentTopicId?: string;
