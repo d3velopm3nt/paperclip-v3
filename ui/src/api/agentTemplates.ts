@@ -4,11 +4,22 @@ import type {
   DeployTemplateResult,
   CreateCustomTemplateInput,
   UpdateTemplateInput,
+  AgentTemplateDefinition,
+  TeamStructureEntry,
 } from "@paperclipai/shared";
 import { api } from "./client";
 
 export interface AgentTemplateSummaryWithCount extends AgentTemplateSummary {
   agentCount: number;
+}
+
+export interface GeneratedWorkforce {
+  name: string;
+  slug: string;
+  description: string;
+  category: string;
+  agentDefinitions: AgentTemplateDefinition[];
+  teamStructure: TeamStructureEntry[];
 }
 
 export const agentTemplatesApi = {
@@ -29,4 +40,6 @@ export const agentTemplatesApi = {
     description?: string;
     category: string;
   }) => api.post<AgentTemplate>("/agent-templates/save-as-template", input),
+  generate: (prompt: string) =>
+    api.post<GeneratedWorkforce>("/agent-templates/generate", { prompt }),
 };
