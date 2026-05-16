@@ -106,3 +106,6 @@ export { eaConversations, type ConversationMessage } from "./ea_conversations.js
 
 // generic memory store (cross-company)
 export { memoryItems } from "./memory_items.js";
+
+// agent templates
+export { agentTemplates } from "./agent_templates.js";

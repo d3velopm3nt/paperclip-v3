@@ -575,6 +575,13 @@
       "when": 1778913660832,
       "tag": "0081_medical_prodigy",
       "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1778944638353,
+      "tag": "0082_stale_molten_man",
+      "breakpoints": true
     }
   ]
 }
