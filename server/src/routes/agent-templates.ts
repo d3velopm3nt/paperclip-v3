@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { agentTemplates } from "@paperclipai/db";
 import type { Db } from "@paperclipai/db";
 import { agentTemplatesService } from "../services/agent-templates.js";
+import { generateWorkforce } from "../services/workforce-generator.js";
 import { assertBoard, assertInstanceAdmin } from "./authz.js";
 import { badRequest, conflict, notFound, forbidden } from "../errors.js";
 
@@ -68,6 +69,25 @@ export function agentTemplateRoutes(db: Db): Router {
       category,
     });
     res.status(201).json(template);
+  });
+
+  // Must be before /:id routes to avoid "generate" matching as an id param
+  router.post("/agent-templates/generate", async (req, res) => {
+    assertInstanceAdmin(req);
+    const { prompt } = req.body as { prompt?: string };
+    if (!prompt?.trim()) throw badRequest("prompt required");
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on this server" });
+      return;
+    }
+    try {
+      const result = await generateWorkforce(prompt.trim(), apiKey);
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "generation failed";
+      res.status(500).json({ error: msg });
+    }
   });
 
   router.get("/agent-templates/:id", async (req, res) => {
