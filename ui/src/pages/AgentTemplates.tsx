@@ -138,6 +138,26 @@ function buildOrgTree(
   return roots;
 }
 
+// ── Editor types + helpers ──────────────────────────────────────────────────
+interface EditorAgent {
+  tempId: string;
+  name: string;
+  role: string;
+  adapterType: string;
+  reportsTo: string | null;
+}
+
+type EditorMode = { kind: "new" } | { kind: "edit"; templateId: string } | null;
+
+function toSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+}
+
+function makeTempId(name: string): string {
+  const slug = toSlug(name) || "agent";
+  return `${slug}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 // ── Category badge ──────────────────────────────────────────────────────────
 const categoryColors: Record<string, string> = {
   dev: "bg-blue-500/15 text-blue-400",
@@ -439,6 +459,13 @@ export function AgentTemplates() {
   const { setBreadcrumbs } = useBreadcrumbs();
   const { pushToast } = useToast();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editorMode, setEditorMode] = useState<EditorMode>(null);
+  const [editorName, setEditorName] = useState("");
+  const [editorSlug, setEditorSlug] = useState("");
+  const [editorDescription, setEditorDescription] = useState("");
+  const [editorCategory, setEditorCategory] = useState("custom");
+  const [editorAgents, setEditorAgents] = useState<EditorAgent[]>([]);
+  const [editorSlugError, setEditorSlugError] = useState<string | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Instance Settings" }, { label: "Agent Templates" }]);
@@ -465,9 +492,15 @@ export function AgentTemplates() {
             size="sm"
             variant="outline"
             className="h-7 text-xs"
-            onClick={() =>
-              pushToast({ tone: "info", title: "Use the API to create custom templates" })
-            }
+            onClick={() => {
+              setEditorMode({ kind: "new" });
+              setEditorName("");
+              setEditorSlug("");
+              setEditorDescription("");
+              setEditorCategory("custom");
+              setEditorAgents([]);
+              setEditorSlugError(null);
+            }}
           >
             New Template
           </Button>
