@@ -101,6 +101,23 @@ import {
   arraysEqual,
   isReadOnlyUnmanagedSkillEntry,
 } from "../lib/agent-skills-state";
+import { agentTemplatesApi } from "../api/agentTemplates";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { LayoutTemplate } from "lucide-react";
 
 const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   succeeded: { icon: CheckCircle2, color: "text-green-600 dark:text-green-400" },
@@ -228,6 +245,10 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
 }
 
 type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget" | "memory" | "performance" | "mcps" | "emails";
+
+function toSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+}
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
@@ -535,10 +556,17 @@ export function AgentDetail() {
   const { closePanel } = usePanel();
   const { openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateSlug, setTemplateSlug] = useState("");
+  const [templateDescription, setTemplateDescription] = useState("");
+  const [templateCategory, setTemplateCategory] = useState("custom");
+  const [templateSubtree, setTemplateSubtree] = useState(false);
   const activeView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
   const needsDashboardData = activeView === "dashboard";
   const needsRunData = activeView === "runs" || Boolean(urlRunId);
@@ -756,6 +784,18 @@ export function AgentDetail() {
     },
   });
 
+  const saveAsTemplateMutation = useMutation({
+    mutationFn: (input: Parameters<typeof agentTemplatesApi.saveAsTemplate>[0]) =>
+      agentTemplatesApi.saveAsTemplate(input),
+    onSuccess: () => {
+      pushToast({ title: "Template saved", body: "View it at /instance/settings/agent-templates", tone: "success" });
+      setSaveAsTemplateOpen(false);
+    },
+    onError: (err) => {
+      pushToast({ title: "Failed to save template", body: err instanceof Error ? err.message : "Unknown error", tone: "error" });
+    },
+  });
+
   const updatePermissions = useMutation({
     mutationFn: (permissions: AgentPermissionUpdate) =>
       agentsApi.updatePermissions(agentLookupRef, permissions, resolvedCompanyId ?? undefined),
@@ -918,6 +958,22 @@ export function AgentDetail() {
                 Reset Sessions
               </button>
               <button
+                className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
+                onClick={() => {
+                  const name = agent.name ?? "";
+                  setTemplateName(name);
+                  setTemplateSlug(toSlug(name));
+                  setTemplateDescription("");
+                  setTemplateCategory("custom");
+                  setTemplateSubtree(false);
+                  setMoreOpen(false);
+                  setSaveAsTemplateOpen(true);
+                }}
+              >
+                <LayoutTemplate className="h-3 w-3" />
+                Save as Template
+              </button>
+              <button
                 className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
                 onClick={() => {
                   agentAction.mutate("terminate");
@@ -931,6 +987,128 @@ export function AgentDetail() {
           </Popover>
         </div>
       </div>
+
+      {/* Save as Template Modal */}
+      <Dialog open={saveAsTemplateOpen} onOpenChange={setSaveAsTemplateOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as Template</DialogTitle>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-4 pt-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!agent) return;
+              saveAsTemplateMutation.mutate({
+                agentId: agent.id,
+                subtree: templateSubtree,
+                name: templateName,
+                slug: templateSlug,
+                description: templateDescription || undefined,
+                category: templateCategory,
+              });
+            }}
+          >
+            {directReports.length > 0 && (
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="text-sm font-medium mb-1">Scope</legend>
+                <div className="flex flex-col gap-1">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="templateSubtree"
+                      value="agent"
+                      checked={!templateSubtree}
+                      onChange={() => setTemplateSubtree(false)}
+                      className="accent-primary"
+                    />
+                    This agent only
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="templateSubtree"
+                      value="team"
+                      checked={templateSubtree}
+                      onChange={() => setTemplateSubtree(true)}
+                      className="accent-primary"
+                    />
+                    Full team (includes {directReports.length} direct report{directReports.length !== 1 ? "s" : ""})
+                  </label>
+                </div>
+              </fieldset>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-name">Name</Label>
+              <input
+                id="template-name"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={templateName}
+                onChange={(e) => {
+                  setTemplateName(e.target.value);
+                  setTemplateSlug(toSlug(e.target.value));
+                }}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-slug">Slug</Label>
+              <input
+                id="template-slug"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={templateSlug}
+                onChange={(e) => setTemplateSlug(e.target.value)}
+                pattern="[a-z0-9-]+"
+                title="Lowercase letters, numbers, and hyphens only"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-description">Description <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Textarea
+                id="template-description"
+                className="resize-none"
+                rows={3}
+                value={templateDescription}
+                onChange={(e) => setTemplateDescription(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-category">Category</Label>
+              <Select value={templateCategory} onValueChange={setTemplateCategory}>
+                <SelectTrigger id="template-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dev">Dev</SelectItem>
+                  <SelectItem value="sales">Sales</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="support">Support</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setSaveAsTemplateOpen(false)}
+                disabled={saveAsTemplateMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={saveAsTemplateMutation.isPending}
+              >
+                {saveAsTemplateMutation.isPending ? "Saving…" : "Save as Template"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {!urlRunId && (
         <Tabs
