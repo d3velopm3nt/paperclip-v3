@@ -864,6 +864,29 @@ const TOOLS = [
     },
   },
   {
+    name: "pause_agent",
+    description: "Pause an agent — stops it from picking up new work. Use when the operator asks to pause, stop, or disable an agent. Does not terminate it; resume_agent reverses this.",
+    inputSchema: {
+      type: "object",
+      required: ["agentId"],
+      properties: {
+        agentId: { type: "string", description: "UUID of the agent to pause" },
+        reason: { type: "string", description: "Optional reason for pausing (for logs)" },
+      },
+    },
+  },
+  {
+    name: "resume_agent",
+    description: "Resume a paused agent — lets it pick up new work again. Use when the operator asks to unpause, resume, or re-enable an agent.",
+    inputSchema: {
+      type: "object",
+      required: ["agentId"],
+      properties: {
+        agentId: { type: "string", description: "UUID of the agent to resume" },
+      },
+    },
+  },
+  {
     name: "update_routine",
     description: "Update a routine's title, description, priority, status, or assignee.",
     inputSchema: {
@@ -2701,6 +2724,47 @@ async function handleTool(
 
     syncCompanyDocuments(db, targetCompanyId).catch(() => {});
     return JSON.stringify({ sourceId: source.id, name: displayName, repoUrl, branch: branchName, status: "linked — initial clone started in background" }, null, 2);
+  }
+
+  if (name === "pause_agent") {
+    const { agentId: pauseAgentId, reason: pauseReason } = args as { agentId: string; reason?: string };
+    if (!pauseAgentId) return "Error: agentId is required";
+    const [agentRow] = await db
+      .select({ id: agents.id, name: agents.name, status: agents.status, companyId: agents.companyId })
+      .from(agents)
+      .where(and(eq(agents.id, pauseAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .limit(1);
+    if (!agentRow) return "Error: agent not found or access denied";
+    if (agentRow.status === "terminated") return "Error: cannot pause a terminated agent";
+    if (agentRow.status === "paused") return `Agent '${agentRow.name}' is already paused.`;
+    await db.update(agents).set({ status: "paused", pauseReason: "manual", pausedAt: new Date(), updatedAt: new Date() }).where(eq(agents.id, pauseAgentId));
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "agent.paused", entityType: "agent", entityId: pauseAgentId,
+      agentId: callerAgentId, details: { reason: pauseReason ?? "manual", via: "mcp-chat" },
+    });
+    return `Agent '${agentRow.name}' paused.`;
+  }
+
+  if (name === "resume_agent") {
+    const { agentId: resumeAgentId } = args as { agentId: string };
+    if (!resumeAgentId) return "Error: agentId is required";
+    const [agentRow] = await db
+      .select({ id: agents.id, name: agents.name, status: agents.status, companyId: agents.companyId })
+      .from(agents)
+      .where(and(eq(agents.id, resumeAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .limit(1);
+    if (!agentRow) return "Error: agent not found or access denied";
+    if (agentRow.status === "terminated") return "Error: cannot resume a terminated agent";
+    if (agentRow.status === "pending_approval") return "Error: cannot resume an agent pending approval";
+    if (agentRow.status !== "paused") return `Agent '${agentRow.name}' is not paused (current status: ${agentRow.status}).`;
+    await db.update(agents).set({ status: "idle", pauseReason: null, pausedAt: null, updatedAt: new Date() }).where(eq(agents.id, resumeAgentId));
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "agent.resumed", entityType: "agent", entityId: resumeAgentId,
+      agentId: callerAgentId, details: { via: "mcp-chat" },
+    });
+    return `Agent '${agentRow.name}' resumed. Status set to idle.`;
   }
 
   if (name === "list_agent_templates") {
