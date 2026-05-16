@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { LayoutTemplate, Plus, Trash2, X, Search } from "lucide-react";
+import { LayoutTemplate, Plus, Trash2, X, Search, Sparkles } from "lucide-react";
 import { agentTemplatesApi } from "../api/agentTemplates";
-import type { AgentTemplateSummaryWithCount } from "../api/agentTemplates";
+import type { AgentTemplateSummaryWithCount, GeneratedWorkforce } from "../api/agentTemplates";
 import type { AgentTemplate, AgentTemplateDefinition, TeamStructureEntry } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -152,7 +152,7 @@ interface EditorAgent {
   reportsTo: string | null;
 }
 
-type EditorMode = { kind: "new" } | { kind: "edit"; templateId: string } | null;
+type EditorMode = { kind: "new" } | { kind: "edit"; templateId: string } | { kind: "generate" } | null;
 
 function toSlug(name: string): string {
   return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
@@ -839,6 +839,259 @@ function TemplateEditor({
   );
 }
 
+// ── Generation wizard ────────────────────────────────────────────────────────
+type GenStep = "prompt" | "loading" | "preview";
+
+function GenerationWizard({
+  onCancel,
+  onSaved,
+}: {
+  onCancel: () => void;
+  onSaved: (id: string) => void;
+}) {
+  const { companies, selectedCompanyId } = useCompany();
+  const { pushToast } = useToast();
+  const queryClient = useQueryClient();
+  const [step, setStep] = useState<GenStep>("prompt");
+  const [prompt, setPrompt] = useState("");
+  const [result, setResult] = useState<GeneratedWorkforce | null>(null);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [deployCompanyId, setDeployCompanyId] = useState<string>(selectedCompanyId ?? "");
+
+  const orgRoots = useMemo(
+    () => (result ? buildOrgTree(result.agentDefinitions, result.teamStructure) : []),
+    [result],
+  );
+  const layout = useMemo(() => layoutForest(orgRoots), [orgRoots]);
+  const allNodes = useMemo(() => flattenLayout(layout), [layout]);
+  const edges = useMemo(() => collectEdges(layout), [layout]);
+  const svgBounds = useMemo(() => {
+    if (allNodes.length === 0) return { width: 400, height: 200 };
+    let maxX = 0, maxY = 0;
+    for (const n of allNodes) { maxX = Math.max(maxX, n.x + CARD_W); maxY = Math.max(maxY, n.y + CARD_H); }
+    return { width: maxX + PADDING, height: maxY + PADDING };
+  }, [allNodes]);
+
+  const generateMutation = useMutation({
+    mutationFn: () => agentTemplatesApi.generate(prompt),
+    onSuccess: (data) => { setResult(data); setStep("preview"); setGenError(null); },
+    onError: (err) => {
+      setGenError(err instanceof Error ? err.message : "Generation failed. Please try again.");
+      setStep("prompt");
+    },
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      agentTemplatesApi.create({
+        name: result!.name,
+        slug: result!.slug,
+        description: result!.description || undefined,
+        category: result!.category,
+        agentDefinitions: result!.agentDefinitions,
+        teamStructure: result!.teamStructure,
+      }),
+    onSuccess: (saved) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentTemplates.all });
+      pushToast({ tone: "success", title: "Template saved" });
+      onSaved(saved.id);
+    },
+    onError: (err) => {
+      pushToast({ tone: "error", title: "Save failed", body: err instanceof Error ? err.message : "Unknown error" });
+    },
+  });
+
+  const deployMutation = useMutation({
+    mutationFn: async () => {
+      const saved = await agentTemplatesApi.create({
+        name: result!.name,
+        slug: result!.slug,
+        description: result!.description || undefined,
+        category: result!.category,
+        agentDefinitions: result!.agentDefinitions,
+        teamStructure: result!.teamStructure,
+      });
+      return agentTemplatesApi.deploy(saved.id, deployCompanyId);
+    },
+    onSuccess: (deployResult) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentTemplates.all });
+      pushToast({
+        tone: "success",
+        title: `Deployed ${deployResult.agentIds.length} agent${deployResult.agentIds.length !== 1 ? "s" : ""}`,
+        body: deployResult.agentNames.join(", "),
+      });
+      onCancel();
+    },
+    onError: (err) => {
+      pushToast({ tone: "error", title: "Deploy failed", body: err instanceof Error ? err.message : "Unknown error" });
+    },
+  });
+
+  if (step === "loading") {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3">
+        <div className="animate-spin h-6 w-6 rounded-full border-2 border-border border-t-foreground" />
+        <p className="text-sm text-muted-foreground">Generating your workforce…</p>
+        <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
+      </div>
+    );
+  }
+
+  if (step === "preview" && result) {
+    return (
+      <div className="flex-1 min-w-0 overflow-y-auto px-6 py-5 space-y-5">
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-semibold">{result.name}</h2>
+              <CategoryBadge category={result.category} />
+            </div>
+            {result.description && <p className="text-sm text-muted-foreground">{result.description}</p>}
+          </div>
+        </div>
+
+        {allNodes.length > 0 && (
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Org Chart</h3>
+            <div className="border border-border rounded-lg bg-muted/20 overflow-auto" style={{ maxHeight: 280 }}>
+              <svg width={svgBounds.width} height={svgBounds.height} style={{ display: "block" }}>
+                {edges.map(({ parent, child }) => {
+                  const x1 = parent.x + CARD_W / 2;
+                  const y1 = parent.y + CARD_H;
+                  const x2 = child.x + CARD_W / 2;
+                  const y2 = child.y;
+                  const midY = (y1 + y2) / 2;
+                  return (
+                    <path
+                      key={`${parent.tempId}-${child.tempId}`}
+                      d={`M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`}
+                      fill="none" stroke="var(--border)" strokeWidth={1.5}
+                    />
+                  );
+                })}
+                {allNodes.map((node) => (
+                  <g key={node.tempId} transform={`translate(${node.x}, ${node.y})`}>
+                    <rect width={CARD_W} height={CARD_H} rx={8} fill="var(--card)" stroke="var(--border)" strokeWidth={1} />
+                    <text x={CARD_W / 2} y={26} textAnchor="middle" fontSize={12} fontWeight={600} fill="var(--foreground)">
+                      {node.name.length > 20 ? node.name.slice(0, 18) + "…" : node.name}
+                    </text>
+                    <text x={CARD_W / 2} y={44} textAnchor="middle" fontSize={10} fill="var(--muted-foreground)">
+                      {node.role.length > 24 ? node.role.slice(0, 22) + "…" : node.role}
+                    </text>
+                  </g>
+                ))}
+              </svg>
+            </div>
+          </div>
+        )}
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">
+            Agents ({result.agentDefinitions.length})
+          </h3>
+          <div className="space-y-1">
+            {result.agentDefinitions.map((def) => (
+              <div key={def.tempId} className="rounded-md border border-border px-3 py-2 space-y-0.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">{def.name}</span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs text-muted-foreground">{def.role}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">{def.adapterType}</span>
+                  </div>
+                </div>
+                {def.instructionsContent && (
+                  <p className="text-xs text-muted-foreground line-clamp-2">{def.instructionsContent}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2 pt-2 border-t border-border flex-wrap">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setStep("prompt")}>Try Again</Button>
+            <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={saveMutation.isPending || deployMutation.isPending}
+              onClick={() => saveMutation.mutate()}
+            >
+              {saveMutation.isPending ? "Saving…" : "Save as Template"}
+            </Button>
+            <select
+              value={deployCompanyId}
+              onChange={(e) => setDeployCompanyId(e.target.value)}
+              className="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            >
+              {companies.length === 0 && <option value="">No companies</option>}
+              {companies.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            <Button
+              size="sm"
+              disabled={!deployCompanyId || deployMutation.isPending || saveMutation.isPending}
+              onClick={() => deployMutation.mutate()}
+            >
+              {deployMutation.isPending ? "Deploying…" : "Deploy →"}
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex-1 min-w-0 overflow-y-auto px-6 py-5 space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-muted-foreground" />
+          <h2 className="text-base font-semibold">Generate Workforce with AI</h2>
+        </div>
+        <Button variant="ghost" size="icon-xs" onClick={onCancel}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      {genError && (
+        <p className="text-sm text-destructive rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2">
+          {genError}
+        </p>
+      )}
+
+      <div className="space-y-2">
+        <label className="text-xs font-medium text-muted-foreground">Describe the team you need</label>
+        <Textarea
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder='e.g. "A sales team for a B2B SaaS company with a manager and 3 account executives"'
+          rows={4}
+          className="text-sm resize-none"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && prompt.trim()) {
+              setStep("loading");
+              generateMutation.mutate();
+            }
+          }}
+        />
+        <p className="text-[11px] text-muted-foreground">Tip: Cmd+Enter to generate</p>
+      </div>
+
+      <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+        <Button variant="outline" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button
+          size="sm"
+          disabled={!prompt.trim() || generateMutation.isPending}
+          onClick={() => { setStep("loading"); generateMutation.mutate(); }}
+        >
+          Generate →
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export function AgentTemplates() {
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -900,7 +1153,12 @@ export function AgentTemplates() {
 
       {/* Right pane */}
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">
-        {editorMode ? (
+        {editorMode?.kind === "generate" ? (
+          <GenerationWizard
+            onCancel={() => setEditorMode(null)}
+            onSaved={(id) => { setEditorMode(null); setSelectedId(id); }}
+          />
+        ) : editorMode ? (
           <TemplateEditor
             mode={editorMode}
             name={editorName} setName={setEditorName}
@@ -940,6 +1198,33 @@ export function AgentTemplates() {
             ) : (
               <p className="text-sm text-muted-foreground">Select a template to view details.</p>
             )}
+            <div className="flex items-center gap-2 mt-1">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => {
+                  setEditorMode({ kind: "new" });
+                  setEditorName("");
+                  setEditorSlug("");
+                  setEditorDescription("");
+                  setEditorCategory("custom");
+                  setEditorAgents([]);
+                  setEditorSlugError(null);
+                }}
+              >
+                New Template
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs gap-1"
+                onClick={() => setEditorMode({ kind: "generate" })}
+              >
+                <Sparkles className="h-3 w-3" />
+                Generate with AI
+              </Button>
+            </div>
           </div>
         )}
       </div>
