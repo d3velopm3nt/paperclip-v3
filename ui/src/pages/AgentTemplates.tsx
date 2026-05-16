@@ -599,13 +599,74 @@ function ExistingAgentPicker({
   onClose: () => void;
   onPick: (agent: Pick<Agent, "name" | "role" | "adapterType">) => void;
 }) {
+  const { companies } = useCompany();
+  const [search, setSearch] = useState("");
+  const [allAgents, setAllAgents] = useState<Array<Agent & { companyName: string }>>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || companies.length === 0) return;
+    setIsLoading(true);
+    Promise.all(
+      companies.map((c) =>
+        agentsApi.list(c.id).then((agents) =>
+          agents.map((a) => ({ ...a, companyName: c.name }))
+        )
+      )
+    ).then((results) => {
+      setAllAgents(results.flat());
+      setIsLoading(false);
+    }).catch(() => {
+      setIsLoading(false);
+    });
+  }, [open, companies]);
+
+  const filtered = allAgents.filter(
+    (a) =>
+      a.name.toLowerCase().includes(search.toLowerCase()) ||
+      a.companyName.toLowerCase().includes(search.toLowerCase()),
+  );
+
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Pick an existing agent</DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="space-y-3">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search agents…"
+              className="pl-8 h-8 text-sm"
+            />
+          </div>
+          {isLoading && <p className="text-sm text-muted-foreground text-center py-4">Loading agents…</p>}
+          {!isLoading && filtered.length === 0 && (
+            <p className="text-sm text-muted-foreground text-center py-4">No agents found.</p>
+          )}
+          <div className="max-h-72 overflow-y-auto space-y-0.5">
+            {filtered.map((agent) => (
+              <button
+                key={agent.id}
+                type="button"
+                onClick={() => onPick({ name: agent.name, role: agent.role, adapterType: agent.adapterType })}
+                className="w-full text-left flex items-center justify-between px-3 py-2 rounded-md hover:bg-accent/50 transition-colors"
+              >
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate">{agent.name}</div>
+                  <div className="text-xs text-muted-foreground">{agent.companyName}</div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0 ml-2">
+                  <span className="text-[10px] text-muted-foreground font-mono">{agent.adapterType}</span>
+                  <span className="text-[10px] text-muted-foreground">{agent.role}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
