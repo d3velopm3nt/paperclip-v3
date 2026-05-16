@@ -2729,17 +2729,20 @@ async function handleTool(
   if (name === "pause_agent") {
     const { agentId: pauseAgentId, reason: pauseReason } = args as { agentId: string; reason?: string };
     if (!pauseAgentId) return "Error: agentId is required";
+    const pauseWhere = isOperator
+      ? eq(agents.id, pauseAgentId)
+      : and(eq(agents.id, pauseAgentId), eq(agents.companyId, effectiveCompanyId));
     const [agentRow] = await db
       .select({ id: agents.id, name: agents.name, status: agents.status, companyId: agents.companyId })
       .from(agents)
-      .where(and(eq(agents.id, pauseAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .where(pauseWhere)
       .limit(1);
-    if (!agentRow) return "Error: agent not found or access denied";
+    if (!agentRow) return "Error: agent not found";
     if (agentRow.status === "terminated") return "Error: cannot pause a terminated agent";
     if (agentRow.status === "paused") return `Agent '${agentRow.name}' is already paused.`;
     await db.update(agents).set({ status: "paused", pauseReason: "manual", pausedAt: new Date(), updatedAt: new Date() }).where(eq(agents.id, pauseAgentId));
     void logActivity(db, {
-      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      companyId: agentRow.companyId ?? effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
       action: "agent.paused", entityType: "agent", entityId: pauseAgentId,
       agentId: callerAgentId, details: { reason: pauseReason ?? "manual", via: "mcp-chat" },
     });
@@ -2749,18 +2752,21 @@ async function handleTool(
   if (name === "resume_agent") {
     const { agentId: resumeAgentId } = args as { agentId: string };
     if (!resumeAgentId) return "Error: agentId is required";
+    const resumeWhere = isOperator
+      ? eq(agents.id, resumeAgentId)
+      : and(eq(agents.id, resumeAgentId), eq(agents.companyId, effectiveCompanyId));
     const [agentRow] = await db
       .select({ id: agents.id, name: agents.name, status: agents.status, companyId: agents.companyId })
       .from(agents)
-      .where(and(eq(agents.id, resumeAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .where(resumeWhere)
       .limit(1);
-    if (!agentRow) return "Error: agent not found or access denied";
+    if (!agentRow) return "Error: agent not found";
     if (agentRow.status === "terminated") return "Error: cannot resume a terminated agent";
     if (agentRow.status === "pending_approval") return "Error: cannot resume an agent pending approval";
     if (agentRow.status !== "paused") return `Agent '${agentRow.name}' is not paused (current status: ${agentRow.status}).`;
     await db.update(agents).set({ status: "idle", pauseReason: null, pausedAt: null, updatedAt: new Date() }).where(eq(agents.id, resumeAgentId));
     void logActivity(db, {
-      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      companyId: agentRow.companyId ?? effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
       action: "agent.resumed", entityType: "agent", entityId: resumeAgentId,
       agentId: callerAgentId, details: { via: "mcp-chat" },
     });
