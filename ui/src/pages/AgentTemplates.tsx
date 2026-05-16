@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { LayoutTemplate } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { LayoutTemplate, Plus, Trash2, X, Search } from "lucide-react";
 import { agentTemplatesApi } from "../api/agentTemplates";
 import type { AgentTemplateSummaryWithCount } from "../api/agentTemplates";
 import type { AgentTemplate, AgentTemplateDefinition, TeamStructureEntry } from "@paperclipai/shared";
@@ -9,8 +9,13 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToast } from "../context/ToastContext";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { agentsApi } from "../api/agents";
+import type { Agent } from "@paperclipai/shared";
 
 // ── Layout constants ────────────────────────────────────────────────────────
 const CARD_W = 180;
@@ -218,7 +223,7 @@ function TemplateCard({
 }
 
 // ── Detail pane ─────────────────────────────────────────────────────────────
-function TemplateDetail({ templateId }: { templateId: string }) {
+function TemplateDetail({ templateId, onEdit }: { templateId: string; onEdit: (template: AgentTemplate) => void }) {
   const { companies, selectedCompanyId } = useCompany();
   const { pushToast } = useToast();
   const [deployCompanyId, setDeployCompanyId] = useState<string>(selectedCompanyId ?? "");
@@ -253,7 +258,7 @@ function TemplateDetail({ templateId }: { templateId: string }) {
   if (isLoading) return <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">Loading...</div>;
   if (!template) return null;
 
-  return <TemplateDetailContent template={template} companies={companies} deployCompanyId={deployCompanyId} setDeployCompanyId={setDeployCompanyId} deploy={deploy} />;
+  return <TemplateDetailContent template={template} companies={companies} deployCompanyId={deployCompanyId} setDeployCompanyId={setDeployCompanyId} deploy={deploy} onEdit={onEdit} />;
 }
 
 function TemplateDetailContent({
@@ -262,12 +267,14 @@ function TemplateDetailContent({
   deployCompanyId,
   setDeployCompanyId,
   deploy,
+  onEdit,
 }: {
   template: AgentTemplate;
   companies: Array<{ id: string; name: string }>;
   deployCompanyId: string;
   setDeployCompanyId: (id: string) => void;
   deploy: { mutate: () => void; isPending: boolean };
+  onEdit: (template: AgentTemplate) => void;
 }) {
   const orgRoots = useMemo(
     () => buildOrgTree(template.agentDefinitions, template.teamStructure),
@@ -317,6 +324,9 @@ function TemplateDetailContent({
             <p className="text-sm text-muted-foreground">{template.description}</p>
           )}
         </div>
+        <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={() => onEdit(template)}>
+          Edit
+        </Button>
       </div>
 
       {/* Deploy row */}
@@ -454,6 +464,218 @@ function TemplateDetailContent({
   );
 }
 
+// ── Template editor ─────────────────────────────────────────────────────────
+function AgentEditorList({
+  agents,
+  setAgents,
+  onPickExisting,
+}: {
+  agents: EditorAgent[];
+  setAgents: (v: EditorAgent[]) => void;
+  onPickExisting: () => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Agents ({agents.length})
+        </h3>
+      </div>
+      {agents.length === 0 && (
+        <p className="text-xs text-muted-foreground">No agents yet.</p>
+      )}
+    </div>
+  );
+}
+
+function ExistingAgentPicker({
+  open,
+  onClose,
+  onPick,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onPick: (agent: Pick<Agent, "name" | "role" | "adapterType">) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Pick an existing agent</DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function TemplateEditor({
+  mode,
+  name, setName,
+  slug, setSlug,
+  description, setDescription,
+  category, setCategory,
+  agents, setAgents,
+  slugError, setSlugError,
+  onCancel,
+  onSaved,
+}: {
+  mode: { kind: "new" } | { kind: "edit"; templateId: string };
+  name: string; setName: (v: string) => void;
+  slug: string; setSlug: (v: string) => void;
+  description: string; setDescription: (v: string) => void;
+  category: string; setCategory: (v: string) => void;
+  agents: EditorAgent[]; setAgents: (v: EditorAgent[]) => void;
+  slugError: string | null; setSlugError: (v: string | null) => void;
+  onCancel: () => void;
+  onSaved: (id: string) => void;
+}) {
+  const { pushToast } = useToast();
+  const queryClient = useQueryClient();
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const agentDefinitions: AgentTemplateDefinition[] = agents.map((a) => ({
+        tempId: a.tempId,
+        name: a.name,
+        role: a.role,
+        adapterType: a.adapterType,
+        adapterConfig: {},
+        permissions: {},
+        budgetMonthlyCents: 0,
+        skills: [],
+      }));
+      const teamStructure: TeamStructureEntry[] = agents.map((a) => ({
+        tempId: a.tempId,
+        reportsTo: a.reportsTo,
+      }));
+      if (mode.kind === "new") {
+        return agentTemplatesApi.create({ name, slug, description: description || undefined, category, agentDefinitions, teamStructure });
+      }
+      return agentTemplatesApi.update(mode.templateId, { name, description: description || undefined, category, agentDefinitions, teamStructure });
+    },
+    onSuccess: (saved) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentTemplates.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.agentTemplates.detail(saved.id) });
+      pushToast({ tone: "success", title: "Template saved" });
+      setSlugError(null);
+      onSaved(saved.id);
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : "Failed to save template";
+      if (msg.toLowerCase().includes("slug")) {
+        setSlugError(msg);
+      } else {
+        pushToast({ tone: "error", title: "Save failed", body: msg });
+      }
+    },
+  });
+
+  return (
+    <div className="flex-1 min-w-0 overflow-y-auto px-6 py-5 space-y-5">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-base font-semibold">
+          {mode.kind === "new" ? "New Template" : "Edit Template"}
+        </h2>
+        <Button variant="ghost" size="icon-xs" onClick={onCancel}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Name *</label>
+            <Input
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (mode.kind === "new") setSlug(toSlug(e.target.value));
+              }}
+              placeholder="Dev Team"
+              className="h-8 text-sm"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Slug *</label>
+            <Input
+              value={slug}
+              onChange={(e) => { setSlug(e.target.value); setSlugError(null); }}
+              placeholder="dev-team"
+              pattern="[a-z0-9-]+"
+              className="h-8 text-sm font-mono"
+              readOnly={mode.kind === "edit"}
+            />
+            {slugError && <p className="text-xs text-destructive">{slugError}</p>}
+          </div>
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Description</label>
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What this team does…"
+            rows={2}
+            className="text-sm resize-none"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Category</label>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          >
+            {["dev", "sales", "finance", "support", "custom"].map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <AgentEditorList
+        agents={agents}
+        setAgents={setAgents}
+        onPickExisting={() => setPickerOpen(true)}
+      />
+
+      <ExistingAgentPicker
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onPick={(agent) => {
+          const tempId = makeTempId(agent.name);
+          const rootExists = agents.some((a) => a.reportsTo === null);
+          setAgents([
+            ...agents,
+            {
+              tempId,
+              name: agent.name,
+              role: agent.role,
+              adapterType: agent.adapterType,
+              reportsTo: rootExists ? (agents.find((a) => a.reportsTo === null)?.tempId ?? null) : null,
+            },
+          ]);
+          setPickerOpen(false);
+        }}
+      />
+
+      <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
+        <Button variant="outline" size="sm" onClick={onCancel} disabled={saveMutation.isPending}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          disabled={saveMutation.isPending || !name.trim() || !slug.trim() || agents.length === 0}
+          onClick={() => saveMutation.mutate()}
+        >
+          {saveMutation.isPending ? "Saving…" : "Save Template"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export function AgentTemplates() {
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -519,8 +741,39 @@ export function AgentTemplates() {
 
       {/* Right pane */}
       <div className="flex-1 min-w-0 flex flex-col h-full min-h-0">
-        {selectedId ? (
-          <TemplateDetail key={selectedId} templateId={selectedId} />
+        {editorMode ? (
+          <TemplateEditor
+            mode={editorMode}
+            name={editorName} setName={setEditorName}
+            slug={editorSlug} setSlug={setEditorSlug}
+            description={editorDescription} setDescription={setEditorDescription}
+            category={editorCategory} setCategory={setEditorCategory}
+            agents={editorAgents} setAgents={setEditorAgents}
+            slugError={editorSlugError} setSlugError={setEditorSlugError}
+            onCancel={() => setEditorMode(null)}
+            onSaved={(id) => { setEditorMode(null); setSelectedId(id); }}
+          />
+        ) : selectedId ? (
+          <TemplateDetail key={selectedId} templateId={selectedId} onEdit={(template) => {
+            setEditorMode({ kind: "edit", templateId: template.id });
+            setEditorName(template.name);
+            setEditorSlug(template.slug);
+            setEditorDescription(template.description ?? "");
+            setEditorCategory(template.category);
+            setEditorAgents(
+              template.agentDefinitions.map((def) => {
+                const entry = template.teamStructure.find((e) => e.tempId === def.tempId);
+                return {
+                  tempId: def.tempId,
+                  name: def.name,
+                  role: def.role,
+                  adapterType: def.adapterType,
+                  reportsTo: entry?.reportsTo ?? null,
+                };
+              })
+            );
+            setEditorSlugError(null);
+          }} />
         ) : (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-sm text-muted-foreground">Select a template to view details.</p>
