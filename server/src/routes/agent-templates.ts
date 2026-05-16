@@ -76,13 +76,8 @@ export function agentTemplateRoutes(db: Db): Router {
     assertInstanceAdmin(req);
     const { prompt } = req.body as { prompt?: string };
     if (!prompt?.trim()) throw badRequest("prompt required");
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      res.status(500).json({ error: "ANTHROPIC_API_KEY not configured on this server" });
-      return;
-    }
     try {
-      const result = await generateWorkforce(prompt.trim(), apiKey);
+      const result = await generateWorkforce(prompt.trim());
       res.json(result);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "generation failed";

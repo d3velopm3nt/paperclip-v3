@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { z } from "zod";
 import type { AgentTemplateDefinition, TeamStructureEntry } from "@paperclipai/shared";
 
@@ -27,7 +28,7 @@ export interface GeneratedWorkforce {
   teamStructure: TeamStructureEntry[];
 }
 
-const SYSTEM_PROMPT = `You generate AI agent workforce configurations. Return ONLY valid JSON matching this exact schema:
+const SYSTEM_PROMPT = `You generate AI agent workforce configurations. Return ONLY valid JSON matching this exact schema — no markdown fences, no prose, no explanations:
 
 {
   "name": "string",
@@ -49,40 +50,64 @@ const SYSTEM_PROMPT = `You generate AI agent workforce configurations. Return ON
 Rules:
 - Exactly one agent must have reportsTo: null (the root orchestrator)
 - All other reportsTo values must be a valid tempId in the same agents array
-- Default adapterType is "ea" unless context strongly suggests otherwise
-- Return valid JSON only — no markdown fences, no prose, no explanations`;
+- Default adapterType is "ea" unless context strongly suggests otherwise`;
+
+// Nesting guard vars that make `claude` refuse to start when inherited from a parent session
+const NESTING_VARS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_SESSION",
+  "CLAUDE_CODE_PARENT_SESSION",
+] as const;
+
+export function runClaude(input: string, timeoutMs = 120_000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const key of NESTING_VARS) delete env[key];
+
+    const child = spawn("claude", ["--print"], {
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    let stdout = "";
+    let stderr = "";
+
+    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    child.stdin.write(input);
+    child.stdin.end();
+
+    const timer = setTimeout(() => {
+      child.kill();
+      reject(new Error("claude CLI timed out"));
+    }, timeoutMs);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        reject(new Error(`claude CLI exited with code ${code}: ${stderr.slice(0, 500)}`));
+      } else {
+        resolve(stdout);
+      }
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
 
 export async function generateWorkforce(
   prompt: string,
-  apiKey: string,
+  runner: (input: string) => Promise<string> = runClaude,
 ): Promise<GeneratedWorkforce> {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-6",
-      max_tokens: 2048,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+  const input = `${SYSTEM_PROMPT}\n\nUser request: ${prompt}`;
+  const text = await runner(input);
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Anthropic API error ${res.status}: ${text}`);
-  }
-
-  const data = (await res.json()) as { content: Array<{ type: string; text?: string }> };
-  const block = data.content[0];
-  if (!block || block.type !== "text" || !block.text) {
-    throw new Error("Unexpected response type from Anthropic API");
-  }
-
-  const parsed = JSON.parse(block.text) as unknown;
+  const parsed = JSON.parse(text.trim()) as unknown;
   const validated = GeneratedWorkforceSchema.parse(parsed);
 
   const agentDefinitions: AgentTemplateDefinition[] = validated.agents.map((a) => ({

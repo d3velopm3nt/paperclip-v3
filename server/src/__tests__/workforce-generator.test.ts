@@ -1,8 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import { generateWorkforce } from "../services/workforce-generator.js";
-
-const mockFetch = vi.fn();
-vi.stubGlobal("fetch", mockFetch);
 
 const VALID_RESPONSE = {
   name: "Sales Team",
@@ -29,24 +26,11 @@ const VALID_RESPONSE = {
   ],
 };
 
-function makeAnthropicResponse(content: string) {
-  return {
-    ok: true,
-    json: async () => ({
-      content: [{ type: "text", text: content }],
-    }),
-  };
-}
-
 describe("generateWorkforce", () => {
-  beforeEach(() => {
-    mockFetch.mockReset();
-  });
+  it("returns agentDefinitions and teamStructure from valid response", async () => {
+    const runner = async () => JSON.stringify(VALID_RESPONSE);
 
-  it("returns agentDefinitions and teamStructure from valid Claude response", async () => {
-    mockFetch.mockResolvedValue(makeAnthropicResponse(JSON.stringify(VALID_RESPONSE)));
-
-    const result = await generateWorkforce("A B2B sales team", "sk-test");
+    const result = await generateWorkforce("A B2B sales team", runner);
 
     expect(result.name).toBe("Sales Team");
     expect(result.slug).toBe("sales-team");
@@ -63,26 +47,22 @@ describe("generateWorkforce", () => {
     expect(result.teamStructure[1]).toEqual({ tempId: "rep-c3d4", reportsTo: "manager-a1b2" });
   });
 
-  it("throws when Claude returns invalid JSON", async () => {
-    mockFetch.mockResolvedValue(makeAnthropicResponse("not json at all"));
-    await expect(generateWorkforce("prompt", "sk-test")).rejects.toThrow();
+  it("throws when runner returns invalid JSON", async () => {
+    const runner = async () => "not json at all";
+    await expect(generateWorkforce("prompt", runner)).rejects.toThrow();
   });
 
-  it("throws when Claude returns JSON failing schema (invalid role)", async () => {
+  it("throws when runner returns JSON failing schema (invalid role)", async () => {
     const bad = {
       ...VALID_RESPONSE,
       agents: [{ ...VALID_RESPONSE.agents[0], role: "CEO" }],
     };
-    mockFetch.mockResolvedValue(makeAnthropicResponse(JSON.stringify(bad)));
-    await expect(generateWorkforce("prompt", "sk-test")).rejects.toThrow();
+    const runner = async () => JSON.stringify(bad);
+    await expect(generateWorkforce("prompt", runner)).rejects.toThrow();
   });
 
-  it("throws when fetch returns non-ok status", async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 401,
-      text: async () => "Unauthorized",
-    });
-    await expect(generateWorkforce("prompt", "sk-test")).rejects.toThrow("Anthropic API error 401");
+  it("throws when runner rejects", async () => {
+    const runner = async () => { throw new Error("claude CLI exited with code 1"); };
+    await expect(generateWorkforce("prompt", runner)).rejects.toThrow("claude CLI exited");
   });
 });
