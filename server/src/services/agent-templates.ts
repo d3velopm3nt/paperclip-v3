@@ -132,62 +132,64 @@ export function agentTemplatesService(db: Db) {
     const defs = template.agentDefinitions as AgentTemplateDefinition[];
     const structure = template.teamStructure as TeamStructureEntry[];
 
-    const tempIdToRealId = new Map<string, string>();
-    const agentNames: string[] = [];
+    return await db.transaction(async (tx) => {
+      const tempIdToRealId = new Map<string, string>();
+      const agentNames: string[] = [];
 
-    for (const def of defs) {
-      const [created] = await db
-        .insert(agents)
-        .values({
-          companyId,
-          name: def.name,
-          role: def.role,
-          adapterType: def.adapterType,
-          adapterConfig: def.adapterConfig ?? {},
-          runtimeConfig: {},
-          capabilities: def.capabilities ?? null,
-          permissions: def.permissions ?? {},
-          budgetMonthlyCents: def.budgetMonthlyCents ?? 0,
-          spentMonthlyCents: 0,
-          status: "idle",
-        })
-        .returning({ id: agents.id });
+      for (const def of defs) {
+        const [created] = await tx
+          .insert(agents)
+          .values({
+            companyId,
+            name: def.name,
+            role: def.role,
+            adapterType: def.adapterType,
+            adapterConfig: def.adapterConfig ?? {},
+            runtimeConfig: {},
+            capabilities: def.capabilities ?? null,
+            permissions: def.permissions ?? {},
+            budgetMonthlyCents: def.budgetMonthlyCents ?? 0,
+            spentMonthlyCents: 0,
+            status: "idle",
+          })
+          .returning({ id: agents.id });
 
-      if (!created) continue;
+        if (!created) continue;
 
-      if (def.instructionsBundleDir) {
-        await seedInstructionFiles(created.id, def.instructionsBundleDir, template.slug);
-        const adapterConfig = buildBundleAdapterConfig(created.id);
-        await db
-          .update(agents)
-          .set({ adapterConfig, updatedAt: new Date() })
-          .where(eq(agents.id, created.id));
-      } else if (def.instructionsContent) {
-        await writeInlineInstructions(created.id, def.instructionsContent);
-        const adapterConfig = buildBundleAdapterConfig(created.id);
-        await db
-          .update(agents)
-          .set({ adapterConfig, updatedAt: new Date() })
-          .where(eq(agents.id, created.id));
+        if (def.instructionsBundleDir) {
+          await seedInstructionFiles(created.id, def.instructionsBundleDir, template.slug);
+          const adapterConfig = buildBundleAdapterConfig(created.id);
+          await tx
+            .update(agents)
+            .set({ adapterConfig, updatedAt: new Date() })
+            .where(eq(agents.id, created.id));
+        } else if (def.instructionsContent) {
+          await writeInlineInstructions(created.id, def.instructionsContent);
+          const adapterConfig = buildBundleAdapterConfig(created.id);
+          await tx
+            .update(agents)
+            .set({ adapterConfig, updatedAt: new Date() })
+            .where(eq(agents.id, created.id));
+        }
+
+        tempIdToRealId.set(def.tempId, created.id);
+        agentNames.push(def.name);
       }
 
-      tempIdToRealId.set(def.tempId, created.id);
-      agentNames.push(def.name);
-    }
-
-    for (const entry of structure) {
-      if (!entry.reportsTo) continue;
-      const agentId = tempIdToRealId.get(entry.tempId);
-      const reportsToId = tempIdToRealId.get(entry.reportsTo);
-      if (agentId && reportsToId) {
-        await db
-          .update(agents)
-          .set({ reportsTo: reportsToId, updatedAt: new Date() })
-          .where(eq(agents.id, agentId));
+      for (const entry of structure) {
+        if (!entry.reportsTo) continue;
+        const agentId = tempIdToRealId.get(entry.tempId);
+        const reportsToId = tempIdToRealId.get(entry.reportsTo);
+        if (agentId && reportsToId) {
+          await tx
+            .update(agents)
+            .set({ reportsTo: reportsToId, updatedAt: new Date() })
+            .where(eq(agents.id, agentId));
+        }
       }
-    }
 
-    return { agentIds: Array.from(tempIdToRealId.values()), agentNames };
+      return { agentIds: Array.from(tempIdToRealId.values()), agentNames };
+    });
   }
 
   async function saveAsTemplate(
@@ -210,6 +212,7 @@ export function agentTemplatesService(db: Db) {
     }
 
     const collected = await collectAgents(agentId);
+    if (collected.length === 0) throw new Error(`Agent ${agentId} not found`);
 
     const agentDefinitions: AgentTemplateDefinition[] = collected.map((a) => ({
       tempId: a.id,

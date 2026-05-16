@@ -113,4 +113,29 @@ describeEmbeddedPostgres("agentTemplatesService", () => {
     expect(defs).toHaveLength(1);
     expect(defs[0].name).toBe("My Agent");
   }, 20_000);
+
+  it("updateTemplate sets customized=true on a built_in template", async () => {
+    await svc().seedAgentTemplates();
+    const [template] = await db.select().from(agentTemplates);
+    const updated = await svc().updateTemplate(template.id, { name: "Custom Dev Team" });
+    expect(updated?.name).toBe("Custom Dev Team");
+    const meta = updated?.metadata as Record<string, unknown>;
+    expect(meta.customized).toBe(true);
+  }, 20_000);
+
+  it("updateTemplate returns null for nonexistent id", async () => {
+    const result = await svc().updateTemplate("00000000-0000-0000-0000-000000000000", { name: "x" });
+    expect(result).toBeNull();
+  }, 20_000);
+
+  it("deleteTemplate throws for built_in templates", async () => {
+    await svc().seedAgentTemplates();
+    const [template] = await db.select().from(agentTemplates);
+    await expect(svc().deleteTemplate(template.id)).rejects.toThrow("Built-in templates cannot be deleted");
+  }, 20_000);
+
+  it("deleteTemplate returns false for nonexistent id", async () => {
+    const result = await svc().deleteTemplate("00000000-0000-0000-0000-000000000000");
+    expect(result).toBe(false);
+  }, 20_000);
 });
