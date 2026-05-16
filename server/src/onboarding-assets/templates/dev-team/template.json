@@ -1,0 +1,51 @@
+{
+  "name": "Dev Team",
+  "slug": "dev-team",
+  "description": "Software development team with Tech Lead, Full-stack Developer, and QA Agent. Handles code implementation, PR coordination, testing, and project lifecycle management.",
+  "category": "dev",
+  "sourceType": "built_in",
+  "metadata": { "icon": "Code2", "version": 1 },
+  "agentDefinitions": [
+    {
+      "tempId": "tech-lead",
+      "name": "Tech Lead",
+      "role": "orchestrator",
+      "adapterType": "ea",
+      "adapterConfig": {},
+      "capabilities": "Task breakdown, PR review coordination, sprint planning, code architecture decisions. Routes development tasks to Full-stack Dev. Routes QA and testing tasks to QA Agent.",
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "instructionsBundleDir": "tech-lead",
+      "skills": []
+    },
+    {
+      "tempId": "fullstack-dev",
+      "name": "Full-stack Dev",
+      "role": "worker",
+      "adapterType": "ea",
+      "adapterConfig": {},
+      "capabilities": "Code implementation, feature development, follows project lifecycle stages, updates issues on completion, escalates blockers to Tech Lead.",
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "instructionsBundleDir": "fullstack-dev",
+      "skills": []
+    },
+    {
+      "tempId": "qa-agent",
+      "name": "QA Agent",
+      "role": "worker",
+      "adapterType": "ea",
+      "adapterConfig": {},
+      "capabilities": "Test plan creation, bug reporting, UAT sign-off, blocks deployment if open P0 issues exist, reports test results to Tech Lead.",
+      "permissions": {},
+      "budgetMonthlyCents": 0,
+      "instructionsBundleDir": "qa-agent",
+      "skills": []
+    }
+  ],
+  "teamStructure": [
+    { "tempId": "tech-lead", "reportsTo": null },
+    { "tempId": "fullstack-dev", "reportsTo": "tech-lead" },
+    { "tempId": "qa-agent", "reportsTo": "tech-lead" }
+  ]
+}
