@@ -37,7 +37,7 @@ export function sessionResolverService(db: Db) {
         .values({
           agentId,
           adapterType,
-          projectId,
+          projectId: projectId ?? undefined,
           companyId: agent.companyId,
         })
         .returning();
@@ -102,7 +102,7 @@ export function sessionResolverService(db: Db) {
         .values({
           agentId,
           adapterType,
-          projectId,
+          projectId: projectId ?? undefined,
           companyId: agent.companyId,
           sessionParams: updates.sessionParamsJson,
           sessionDisplayId: updates.sessionDisplayId,
