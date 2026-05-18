@@ -582,6 +582,13 @@
       "when": 1778944638353,
       "tag": "0082_stale_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1779128229252,
+      "tag": "0083_minor_whiplash",
+      "breakpoints": true
     }
   ]
 }
