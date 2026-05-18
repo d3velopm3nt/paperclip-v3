@@ -31,6 +31,12 @@ export function SidebarAgents() {
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+
+  const { data: eaAgents } = useQuery({
+    queryKey: ["ea-agents"],
+    queryFn: () => agentsApi.listEa(),
+    staleTime: 60_000,
+  });
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -138,6 +144,41 @@ export function SidebarAgents() {
               </NavLink>
             );
           })}
+          {eaAgents && eaAgents.length > 0 && (
+            <>
+              {orderedAgents.length > 0 && (
+                <div className="mx-3 my-1 border-t border-border/50" />
+              )}
+              {eaAgents.map((agent: Agent) => {
+                const eaUrl = `/agents/${agent.id}`;
+                const isActive = activeAgentId === agent.id;
+                return (
+                  <NavLink
+                    key={agent.id}
+                    to={activeTab ? `${eaUrl}/${activeTab}` : eaUrl}
+                    onClick={() => {
+                      if (isMobile) setSidebarOpen(false);
+                    }}
+                    className={cn(
+                      "flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium transition-colors",
+                      isActive
+                        ? "bg-accent text-foreground"
+                        : "text-foreground/80 hover:bg-accent/50 hover:text-foreground"
+                    )}
+                  >
+                    <AgentIcon icon={agent.icon} className="shrink-0 h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="flex-1 truncate">{agent.name}</span>
+                    {(agent.status as string) === "processing" && (
+                      <span className="relative flex h-2 w-2 ml-auto shrink-0">
+                        <span className="animate-pulse absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                      </span>
+                    )}
+                  </NavLink>
+                );
+              })}
+            </>
+          )}
         </div>
       </CollapsibleContent>
     </Collapsible>

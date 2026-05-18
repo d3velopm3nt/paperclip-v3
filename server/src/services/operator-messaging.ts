@@ -109,7 +109,7 @@ export function operatorMessagingService(db: Db) {
   async function resolveAgentByName(
     companyId: string,
     name: string,
-  ): Promise<{ id: string; companyId: string } | null> {
+  ): Promise<{ id: string; companyId: string | null } | null> {
     const rows = await db
       .select({ id: agents.id, name: agents.name, companyId: agents.companyId })
       .from(agents)

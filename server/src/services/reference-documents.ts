@@ -43,6 +43,8 @@ function toSource(row: typeof documentSources.$inferSelect): DocumentSource {
     name: row.name,
     localPath: row.localPath,
     driveFolderId: row.driveFolderId,
+    githubRepoUrl: row.githubRepoUrl ?? null,
+    githubBranch: row.githubBranch ?? null,
     lastSyncedAt: row.lastSyncedAt?.toISOString() ?? null,
     lastSyncError: row.lastSyncError,
     createdAt: row.createdAt.toISOString(),

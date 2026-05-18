@@ -312,6 +312,13 @@ export type {
   PluginWebhookDeliveryRecord,
   QuotaWindow,
   ProviderQuotaResult,
+  AgentTemplate,
+  AgentTemplateSummary,
+  AgentTemplateDefinition,
+  TeamStructureEntry,
+  DeployTemplateResult,
+  CreateCustomTemplateInput,
+  UpdateTemplateInput,
 } from "./types/index.js";
 export type {
   ReferenceDocument,
@@ -331,6 +338,9 @@ export {
   type FounderProfile,
   instanceGeneralSettingsSchema,
   patchInstanceGeneralSettingsSchema,
+  type EaNotificationChannelConfig,
+  type EaNotificationEvent,
+  type EaNotificationMatrix,
   type PatchInstanceGeneralSettings,
   instanceExperimentalSettingsSchema,
   patchInstanceExperimentalSettingsSchema,

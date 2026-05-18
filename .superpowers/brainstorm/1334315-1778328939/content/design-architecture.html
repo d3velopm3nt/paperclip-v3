@@ -1,0 +1,81 @@
+<h2>ECC Agents — Architecture Design</h2>
+<p class="subtitle">Section 1 of 3: Schema + data flow. Does this look right?</p>
+
+<div class="section">
+  <h3>Schema Changes</h3>
+  <div class="mockup">
+    <div class="mockup-header">packages/db/src/schema/agents.ts</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:13px;padding:12px 16px;line-height:1.7">
+      <span style="color:#6b7280">// companyId: NOT NULL → nullable</span><br>
+      companyId: uuid("company_id")<br>
+      &nbsp;&nbsp;<span style="color:#ef4444;text-decoration:line-through">.notNull()</span><br>
+      &nbsp;&nbsp;.references(() => companies.id)<br><br>
+      <span style="color:#6b7280">// metadata already exists — use it:</span><br>
+      metadata: jsonb("metadata").$type&lt;{<br>
+      &nbsp;&nbsp;currentTopicId?: string;<br>
+      &nbsp;&nbsp;currentTopicName?: string;<br>
+      &nbsp;&nbsp;lastMessagePreview?: string;<br>
+      }&gt;()<br><br>
+      <span style="color:#6b7280">// lastHeartbeatAt already exists → used as "last active"</span>
+    </div>
+  </div>
+  <p style="font-size:13px;color:#6b7280;margin-top:8px">One migration: drop NOT NULL on companyId. No new columns needed — metadata + lastHeartbeatAt already exist.</p>
+</div>
+
+<div class="section">
+  <h3>Two Seeded ECC Agents</h3>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+    <div style="border:1px solid #374151;border-radius:8px;padding:12px">
+      <div style="font-weight:600;margin-bottom:6px">Executive Control Agent</div>
+      <div style="font-size:12px;color:#9ca3af;line-height:1.7">
+        role: <code>orchestrator</code><br>
+        adapterType: <code>ecc</code><br>
+        companyId: <code>null</code><br>
+        <br>
+        Represents: JayJay ↔ ECC operator link.<br>
+        Active during: topic matching + Telegram reply phase.
+      </div>
+    </div>
+    <div style="border:1px solid #374151;border-radius:8px;padding:12px">
+      <div style="font-weight:600;margin-bottom:6px">Client Control Agent</div>
+      <div style="font-size:12px;color:#9ca3af;line-height:1.7">
+        role: <code>orchestrator</code><br>
+        adapterType: <code>ecc</code><br>
+        companyId: <code>null</code><br>
+        <br>
+        Represents: ECC → company topic execution.<br>
+        Active during: tool calls + company task work.
+      </div>
+    </div>
+  </div>
+  <p style="font-size:13px;color:#6b7280;margin-top:8px">Auto-seeded once on server startup if missing. IDs stored in env/config or looked up by adapterType=ecc.</p>
+</div>
+
+<div class="section">
+  <h3>Data Flow — Status Lifecycle</h3>
+  <div style="font-family:monospace;font-size:12px;background:#111;border-radius:8px;padding:16px;line-height:2">
+    <span style="color:#60a5fa">Telegram message arrives</span><br>
+    &nbsp;&nbsp;↓<br>
+    <span style="color:#f59e0b">orchestrator.ts: setAgentProcessing(execAgentId, topicId, topicName)</span><br>
+    &nbsp;&nbsp;↓ spawn Claude CLI subprocess<br>
+    <span style="color:#f59e0b">orchestrator.ts: setAgentProcessing(clientAgentId, topicId, topicName)</span><br>
+    &nbsp;&nbsp;↓ ... resolve_conversation + tool calls ...<br>
+    &nbsp;&nbsp;↓ complete_conversation_turn<br>
+    <span style="color:#34d399">orchestrator.ts: setAgentIdle(execAgentId) + setAgentIdle(clientAgentId)</span><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;→ sets status=idle, lastHeartbeatAt=now, clears metadata<br>
+  </div>
+</div>
+
+<div class="section">
+  <h3>New API Endpoint</h3>
+  <div class="mockup">
+    <div class="mockup-header">GET /api/ecc/agents</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:13px;padding:12px 16px">
+      Returns: Agent[] where companyId IS NULL and adapterType = 'ecc'<br><br>
+      [{<br>
+      &nbsp;&nbsp;id, name, status, lastHeartbeatAt,<br>
+      &nbsp;&nbsp;metadata: { currentTopicName, lastMessagePreview }<br>
+      }, ...]
+    </div>
+  </div>
+</div>

@@ -98,4 +98,21 @@ export const referenceDocumentsApi = {
     api.get<{ requireClientReplyApproval: boolean; requirePlanApproval: boolean }>("/instance/approval-settings"),
   setApprovalSettings: (settings: { requireClientReplyApproval: boolean; requirePlanApproval: boolean }) =>
     api.put<{ ok: boolean }>("/instance/approval-settings", settings),
+
+  getGitHubAppCreds: () =>
+    api.get<{ configured: boolean; clientId: string | null; fromEnv: boolean }>(
+      "/instance/storage/github/app-credentials",
+    ),
+  saveGitHubAppCreds: (clientId: string, clientSecret: string) =>
+    api.put<{ ok: boolean }>("/instance/storage/github/app-credentials", { clientId, clientSecret }),
+  deleteGitHubAppCreds: () =>
+    api.delete<{ ok: boolean }>("/instance/storage/github/app-credentials"),
+  getGitHubStatus: () =>
+    api.get<{ connected: boolean; login: string | null; scope: string | null }>("/instance/storage/github/status"),
+  getGitHubAuthUrl: () =>
+    api.get<{ url: string }>("/instance/storage/github/auth"),
+  disconnectGitHub: () =>
+    api.delete<{ ok: boolean }>("/instance/storage/github/auth"),
+  saveGitHubPAT: (token: string) =>
+    api.put<{ ok: boolean }>("/instance/storage/github/pat", { token }),
 };

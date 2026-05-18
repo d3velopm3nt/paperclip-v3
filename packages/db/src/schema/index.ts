@@ -93,9 +93,19 @@ export { rooms } from "./rooms.js";
 export { roomMembers } from "./room_members.js";
 export { operatorMessages } from "./operator_messages.js";
 export { messageThreads } from "./message_threads.js";
+export { blockedSenderDomains } from "./blocked_sender_domains.js";
 
 // v3: chat
 export { chatThreads } from "./chat_threads.js";
 
-// v3: founder topics (ECC memory boxes)
-export { eccTopics, eccTopicIssues } from "./ecc_topics.js";
+// v3: founder topics (generic memory containers)
+export { topics, topicIssues } from "./topics.js";
+
+// v3: EA conversation sessions
+export { eaConversations, type ConversationMessage } from "./ea_conversations.js";
+
+// generic memory store (cross-company)
+export { memoryItems } from "./memory_items.js";
+
+// agent templates
+export { agentTemplates } from "./agent_templates.js";

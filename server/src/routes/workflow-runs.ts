@@ -23,10 +23,12 @@ export function workflowRunRoutes(db: Db) {
     const { companyId } = req.params;
     assertCompanyAccess(req, companyId);
     const type = typeof req.query.type === "string" ? req.query.type : null;
+    const status = typeof req.query.status === "string" ? req.query.status : null;
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
-    const where = type
-      ? and(eq(workflowRuns.companyId, companyId), eq(workflowRuns.workflowType, type))
-      : eq(workflowRuns.companyId, companyId);
+    const conditions = [eq(workflowRuns.companyId, companyId)];
+    if (type) conditions.push(eq(workflowRuns.workflowType, type));
+    if (status) conditions.push(eq(workflowRuns.overallStatus, status));
+    const where = conditions.length === 1 ? conditions[0] : and(...conditions);
     const rows = await db
       .select()
       .from(workflowRuns)

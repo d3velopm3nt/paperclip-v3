@@ -23,6 +23,7 @@ export const operatorMessages = pgTable(
     fromAgentId: uuid("from_agent_id").references(() => agents.id, { onDelete: "set null" }),
     body: text("body").notNull(),
     rawPayload: jsonb("raw_payload"),
+    discardedAt: timestamp("discarded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({

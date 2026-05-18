@@ -26,7 +26,7 @@ export function TopicDetail() {
   const { companies } = useCompany();
 
   const topicQuery = useQuery({
-    queryKey: ["ecc-topic", topicId],
+    queryKey: ["topic", topicId],
     queryFn: () => topicsApi.getById(topicId!),
     enabled: !!topicId,
   });
@@ -55,7 +55,7 @@ export function TopicDetail() {
     onSuccess: () => {
       setLastSaved(new Date());
       setSaveError(false);
-      queryClient.invalidateQueries({ queryKey: ["ecc-topics"] });
+      queryClient.invalidateQueries({ queryKey: ["topics"] });
     },
     onError: () => setSaveError(true),
   });
@@ -81,12 +81,12 @@ export function TopicDetail() {
 
   const linkIssueMutation = useMutation({
     mutationFn: (issueId: string) => topicsApi.linkIssue(topicId!, issueId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ecc-topic", topicId] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["topic", topicId] }),
   });
 
   const unlinkIssueMutation = useMutation({
     mutationFn: (issueId: string) => topicsApi.unlinkIssue(topicId!, issueId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["ecc-topic", topicId] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["topic", topicId] }),
   });
 
   const deleteMutation = useMutation({

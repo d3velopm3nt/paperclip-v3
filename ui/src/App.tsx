@@ -30,6 +30,7 @@ import { EmailAccounts } from "./pages/EmailAccounts"; // v3:
 import { EmailAccountDetail } from "./pages/EmailAccountDetail"; // v3:
 import { EmailWorkflow } from "./pages/EmailWorkflow"; // v3:
 import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
+import { WorkflowRunDetail } from "./pages/WorkflowRunDetail"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
 import { Rooms } from "./pages/Rooms"; // v3: operator messaging
 import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
@@ -60,11 +61,15 @@ import { NotFoundPage } from "./pages/NotFound";
 import { Chat } from "./pages/Chat"; // v3: chat
 import { DocumentLibrary } from "./pages/DocumentLibrary"; // v3: document storage
 import { InstanceStorageSettings } from "./pages/InstanceStorageSettings"; // v3: document storage
+import { GitHubSettings } from "./pages/GitHubSettings";
+import { AgentTemplates } from "./pages/AgentTemplates";
 import { FounderView } from "./pages/FounderView"; // v3: founder overview
 import { FounderOverview } from "./pages/founder/FounderOverview"; // v3: founder overview
 import { TopicsList } from "./pages/founder/TopicsList"; // v3: founder topics
 import { TopicDetail } from "./pages/founder/TopicDetail"; // v3: founder topic detail
 import { FounderSettings } from "./pages/founder/FounderSettings"; // v3: founder settings
+import { FounderConversations } from "./pages/FounderConversations"; // v3: cross-company conversations
+import { FounderConversationDetail } from "./pages/FounderConversationDetail"; // v3: conversation message list
 import { queryKeys } from "./lib/queryKeys";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
@@ -154,7 +159,8 @@ function boardRoutes() {
       <Route path="email/accounts/:id" element={<EmailAccountDetail />} /> {/* v3: */}
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
       <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
-      <Route path="email/workflows" element={<EmailWorkflows />} /> {/* v3: */}
+      <Route path="workflows" element={<EmailWorkflows />} /> {/* v3: */}
+      <Route path="workflows/run/:runId" element={<WorkflowRunDetail />} /> {/* v3: generic run detail */}
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
       <Route path="channels" element={<Channels />} /> {/* v3: channels */}
@@ -358,17 +364,22 @@ export function App() {
             <Route path="heartbeats" element={<InstanceSettings />} />
             <Route path="experimental" element={<InstanceExperimentalSettings />} />
             <Route path="storage" element={<InstanceStorageSettings />} /> {/* v3: document storage */}
+            <Route path="github" element={<GitHubSettings />} />
+            <Route path="operator" element={<FounderSettings />} />
             <Route path="plugins" element={<PluginManager />} />
             <Route path="plugins/:pluginId" element={<PluginSettings />} />
+            <Route path="agent-templates" element={<AgentTemplates />} />
           </Route>
           {/* v3: founder overview — cross-company dashboard */}
           <Route path="founder" element={<Layout />}>
             <Route element={<FounderView />}>
               <Route index element={<FounderOverview />} />
               <Route path="topics" element={<TopicsList />} />
-              <Route path="settings" element={<FounderSettings />} />
+              <Route path="conversations" element={<FounderConversations />} />
+              <Route path="settings" element={<Navigate to="/instance/settings/operator" replace />} />
             </Route>
             <Route path="topics/:topicId" element={<TopicDetail />} />
+            <Route path="conversations/:convId" element={<FounderConversationDetail />} />
           </Route>
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
@@ -398,7 +409,8 @@ export function App() {
           <Route path="email/accounts/:id" element={<UnprefixedBoardRedirect />} />
           <Route path="email/inbox" element={<UnprefixedBoardRedirect />} />
           <Route path="email/inbox/:id/workflow" element={<UnprefixedBoardRedirect />} />
-          <Route path="email/workflows" element={<UnprefixedBoardRedirect />} />
+          <Route path="workflows" element={<UnprefixedBoardRedirect />} />
+          <Route path="workflows/run/:runId" element={<UnprefixedBoardRedirect />} />
           <Route path="governance/action-policies" element={<UnprefixedBoardRedirect />} />
           <Route path="clients" element={<UnprefixedBoardRedirect />} />
           <Route path="team" element={<UnprefixedBoardRedirect />} />

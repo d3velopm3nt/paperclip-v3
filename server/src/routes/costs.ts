@@ -289,7 +289,7 @@ export function costRoutes(db: Db) {
       return;
     }
 
-    assertCompanyAccess(req, agent.companyId);
+    assertCompanyAccess(req, agent.companyId!);
 
     if (req.actor.type === "agent") {
       if (req.actor.agentId !== agentId) {
@@ -306,7 +306,7 @@ export function costRoutes(db: Db) {
 
     const actor = getActorInfo(req);
     await logActivity(db, {
-      companyId: updated.companyId,
+      companyId: updated.companyId!,
       actorType: actor.actorType,
       actorId: actor.actorId,
       agentId: actor.agentId,
@@ -317,7 +317,7 @@ export function costRoutes(db: Db) {
     });
 
     await budgets.upsertPolicy(
-      updated.companyId,
+      updated.companyId!,
       {
         scopeType: "agent",
         scopeId: updated.id,

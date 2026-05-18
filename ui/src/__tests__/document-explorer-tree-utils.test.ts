@@ -34,6 +34,8 @@ const makeSource = (overrides: Partial<DocumentSource>): DocumentSource => ({
   name: "My Docs",
   localPath: "/home/docs",
   driveFolderId: null,
+  githubRepoUrl: null,
+  githubBranch: null,
   lastSyncedAt: null,
   lastSyncError: null,
   createdAt: "2024-01-01",

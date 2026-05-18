@@ -1,11 +1,9 @@
-// Sidebar badge for the Email → Workflows entry. Counts the latest run per
-// source whose overall status is not "passed" — i.e., something the operator
-// might want to look at (in flight, stalled, or failed).
+// Sidebar badge for the Workflows entry. Counts the latest run per source
+// (across all workflow types) whose overall status needs attention.
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { workflowRunsApi, type WorkflowRun } from "../api/workflowRuns";
 
-const WORKFLOW_TYPE = "inbound_email";
 const ATTENTION_STATUSES = new Set(["running", "partial", "failed"]);
 
 export interface WorkflowBadge {
@@ -18,8 +16,8 @@ export interface WorkflowBadge {
 
 export function useWorkflowBadge(companyId: string | null): WorkflowBadge {
   const runsQuery = useQuery({
-    queryKey: ["workflow-runs", "company", companyId, WORKFLOW_TYPE, "badge"],
-    queryFn: () => workflowRunsApi.listForCompany(companyId!, WORKFLOW_TYPE, 100),
+    queryKey: ["workflow-runs", "company", companyId, "all", "badge"],
+    queryFn: () => workflowRunsApi.listForCompany(companyId!, undefined, 200),
     enabled: !!companyId,
     refetchInterval: 10_000,
   });
@@ -31,8 +29,9 @@ export function useWorkflowBadge(companyId: string | null): WorkflowBadge {
     let partial = 0;
     let failed = 0;
     for (const r of rows) {
-      if (seen.has(r.sourceId)) continue;
-      seen.add(r.sourceId);
+      const key = `${r.workflowType}:${r.sourceId}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       if (!ATTENTION_STATUSES.has(r.overallStatus)) continue;
       if (r.overallStatus === "running") running++;
       else if (r.overallStatus === "partial") partial++;

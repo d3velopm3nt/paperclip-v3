@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { emailAccounts, emailAttachments, emailMessages } from "@paperclipai/db";
+import { emailAccounts, emailAttachments, emailMessages, issueComments, issues, agentWakeupRequests } from "@paperclipai/db";
 import { badRequest, notFound } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
 import { resolveEmailAttachmentsRoot } from "../home-paths.js";
@@ -59,6 +59,27 @@ export function emailMessageRoutes(db: Db) {
         accountLabel: labelByAccount.get(r.emailAccountId) ?? null,
       })),
     );
+  });
+
+  // GET /api/companies/:companyId/issues/:issueId/emails — emails linked to an issue (with attachments)
+  router.get("/companies/:companyId/issues/:issueId/emails", async (req, res) => {
+    const { companyId, issueId } = req.params;
+    assertCompanyAccess(req, companyId);
+    const accountIds = (await db.select({ id: emailAccounts.id }).from(emailAccounts)
+      .where(eq(emailAccounts.companyId, companyId))).map((r) => r.id);
+    if (accountIds.length === 0) { res.json([]); return; }
+
+    const msgs = await db.select().from(emailMessages)
+      .where(and(inArray(emailMessages.emailAccountId, accountIds), eq(emailMessages.issueId, issueId)))
+      .orderBy(desc(emailMessages.receivedAt));
+
+    const result = await Promise.all(msgs.map(async (msg) => {
+      const attachments = await db.select().from(emailAttachments)
+        .where(eq(emailAttachments.emailMessageId, msg.id))
+        .orderBy(emailAttachments.filename);
+      return { ...msg, attachments };
+    }));
+    res.json(result);
   });
 
   // GET /api/email-messages/:id  — includes attachments
@@ -177,6 +198,78 @@ export function emailMessageRoutes(db: Db) {
     res.json({ html });
   });
 
+  // PATCH /api/email-messages/:id — link to an issue (issueId)
+  router.patch("/email-messages/:id", async (req, res) => {
+    const { id } = req.params;
+    const [msg] = await db.select({ id: emailMessages.id, emailAccountId: emailMessages.emailAccountId })
+      .from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db.select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts).where(eq(emailAccounts.id, msg.emailAccountId)).limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    const prevMsg = await db.select({ issueId: emailMessages.issueId, fromAddr: emailMessages.fromAddr, subject: emailMessages.subject })
+      .from(emailMessages).where(eq(emailMessages.id, id)).limit(1).then((r) => r[0]);
+
+    const patch: Record<string, unknown> = {};
+    if ("issueId" in req.body) patch.issueId = req.body.issueId ?? null;
+    if ("approvalId" in req.body) patch.approvalId = req.body.approvalId ?? null;
+
+    const [updated] = await db.update(emailMessages).set(patch).where(eq(emailMessages.id, id)).returning();
+
+    // When issueId is set, auto-post a comment so the agent sees the linked email + attachments
+    const newIssueId = typeof patch.issueId === "string" ? patch.issueId : null;
+    if (newIssueId) {
+      const atts = await db.select({ filename: emailAttachments.filename, contentType: emailAttachments.contentType, storagePath: emailAttachments.storagePath, isInline: emailAttachments.isInline, sizeBytes: emailAttachments.sizeBytes })
+        .from(emailAttachments)
+        .where(and(eq(emailAttachments.emailMessageId, id), eq(emailAttachments.isInline, false)));
+
+      const attLines = atts.map((a) => `  - ${a.filename} (${(a.sizeBytes / 1024).toFixed(0)} KB) → \`${a.storagePath}\``).join("\n");
+      const commentBody = [
+        `📧 **Email linked:** "${prevMsg?.subject || "(no subject)"}"`,
+        `**From:** ${prevMsg?.fromAddr || "unknown"}`,
+        atts.length > 0
+          ? `\n**${atts.length} attachment${atts.length !== 1 ? "s" : ""} on disk:**\n${attLines}`
+          : "\nNo attachments.",
+        `\nUse \`list_issue_emails\` MCP tool to query these from the agent.`,
+      ].join("\n");
+
+      await db.insert(issueComments).values({
+        issueId: newIssueId,
+        companyId: account.companyId,
+        body: commentBody,
+        authorAgentId: null,
+      }).catch(() => {});
+
+      // Unblock issue — if blocked, set back to in_progress and create wakeup request
+      const [blockedIssue] = await db
+        .select({ assigneeAgentId: issues.assigneeAgentId, status: issues.status })
+        .from(issues)
+        .where(and(eq(issues.id, newIssueId), eq(issues.status, "blocked")))
+        .limit(1);
+      if (blockedIssue) {
+        await db.update(issues)
+          .set({ status: "in_progress", updatedAt: new Date() })
+          .where(eq(issues.id, newIssueId))
+          .catch(() => {});
+        if (blockedIssue.assigneeAgentId) {
+          await db.insert(agentWakeupRequests).values({
+            companyId: account.companyId,
+            agentId: blockedIssue.assigneeAgentId,
+            source: "assignment",
+            triggerDetail: "email_linked",
+            reason: "issue_unblocked",
+            payload: { issueId: newIssueId },
+            status: "pending",
+          }).catch(() => {});
+        }
+      }
+    }
+
+    res.json(updated);
+  });
+
   // DELETE /api/email-messages/:id — removes the email and all derived
   // history (plans, approvals, tokens, workflow runs, wakeup requests, and
   // the linked triage issue + comments if no other email references it).
@@ -220,6 +313,104 @@ export function emailMessageRoutes(db: Db) {
 
     const [updated] = await db.select().from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
     res.json(updated);
+  });
+
+  // POST /api/email-messages/bulk-reprocess — reprocess multiple emails by ID.
+  router.post("/email-messages/bulk-reprocess", async (req, res) => {
+    const ids: unknown = req.body?.ids;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw badRequest("ids must be a non-empty array");
+    }
+    if (ids.length > 200) throw badRequest("Max 200 emails per bulk reprocess");
+
+    const processor = emailProcessorService(db);
+    let reprocessed = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const id of ids as string[]) {
+      try {
+        const [msg] = await db.select({ emailAccountId: emailMessages.emailAccountId })
+          .from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+        if (!msg) { failed++; continue; }
+        const [account] = await db.select({ companyId: emailAccounts.companyId })
+          .from(emailAccounts).where(eq(emailAccounts.id, msg.emailAccountId)).limit(1);
+        if (!account) { failed++; continue; }
+        assertCompanyAccess(req, account.companyId);
+        await processor.reprocess(id);
+        reprocessed++;
+      } catch {
+        failed++;
+        errors.push(id);
+      }
+    }
+
+    res.json({ reprocessed, failed, errors });
+  });
+
+  // GET /api/email-messages/:id/attachments/:attachmentId/filed-check
+  // Returns whether the filed path actually exists on disk or Drive.
+  router.get("/email-messages/:id/attachments/:attachmentId/filed-check", async (req, res) => {
+    const { id, attachmentId } = req.params;
+    const [msg] = await db.select({ emailAccountId: emailMessages.emailAccountId }).from(emailMessages).where(eq(emailMessages.id, id)).limit(1);
+    if (!msg) throw notFound("Email message not found");
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account) throw notFound("Parent email account missing");
+    assertCompanyAccess(req, account.companyId);
+
+    const [att] = await db
+      .select({ filedPath: emailAttachments.filedPath, filedAt: emailAttachments.filedAt, filename: emailAttachments.filename })
+      .from(emailAttachments)
+      .where(and(eq(emailAttachments.id, attachmentId), eq(emailAttachments.emailMessageId, id)))
+      .limit(1);
+    if (!att) throw notFound("Attachment not found");
+
+    if (!att.filedPath) {
+      res.json({ exists: false, path: null, type: null, filedAt: null });
+      return;
+    }
+
+    // Two Drive path formats exist:
+    //   "drive:<fileId>"                  — new format, bare Drive file ID (verifiable)
+    //   "google-drive://user@.../name/…"  — old path-style using folder names not IDs (unverifiable)
+    const isDrive = att.filedPath.startsWith("drive:") || att.filedPath.startsWith("google-drive://");
+    const isLegacyDrivePath = att.filedPath.startsWith("google-drive://");
+    let exists = false;
+    let driveFileId: string | null = null;
+    let legacy = false;
+
+    if (isLegacyDrivePath) {
+      // Old format stores folder names in the path, not Drive IDs.
+      // Cannot verify existence reliably — file was likely never uploaded.
+      // User should reprocess to re-file with the fixed uploader.
+      legacy = true;
+      exists = false;
+    } else if (isDrive) {
+      driveFileId = att.filedPath.replace(/^drive:/, "").split("/")[0];
+      try {
+        const { getAuthenticatedDriveClient } = await import("../services/gdrive-auth.js");
+        const drive = await getAuthenticatedDriveClient(db);
+        if (drive) {
+          const result = await drive.files.get({ fileId: driveFileId, fields: "id,trashed", supportsAllDrives: true }).catch(() => null);
+          exists = !!(result?.data?.id && !result.data.trashed);
+        }
+      } catch { exists = false; }
+    } else {
+      exists = existsSync(att.filedPath);
+    }
+
+    res.json({
+      exists,
+      path: att.filedPath,
+      type: isDrive ? "drive" : "local",
+      filedAt: att.filedAt?.toISOString() ?? null,
+      driveFileId,
+      legacy,
+    });
   });
 
   // POST /api/email-messages/:id/attachments/:attachmentId/file
@@ -269,6 +460,7 @@ export function emailMessageRoutes(db: Db) {
         requestBody: { name: att.filename, parents: [driveFolderId] },
         media: { body: Buffer.from(content) },
         fields: "id",
+        supportsAllDrives: true,
       });
       const filedPath = result.data.id ? `drive:${result.data.id}` : `drive:${driveFolderId}/${att.filename}`;
       await db.update(emailAttachments).set({ filedAt: new Date(), filedPath }).where(eq(emailAttachments.id, att.id));

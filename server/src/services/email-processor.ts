@@ -7,6 +7,7 @@ import type { Db } from "@paperclipai/db";
 import {
   agents,
   agentWakeupRequests,
+  blockedSenderDomains,
   emailAccounts,
   emailMessages,
   emailAttachments,
@@ -15,7 +16,7 @@ import {
   projects,
 } from "@paperclipai/db";
 import { saveAttachment } from "./attachment-storage.js";
-import { fileAttachmentToClientFolder } from "./client-storage.js";
+import { ensureClientFolder, fileAttachmentToClientFolder, hasStorageRoot, notifyStorageNotConfigured } from "./client-storage.js";
 import { clientService } from "./clients.js";
 import { contactService } from "./contacts.js";
 import { issueService } from "./issues.js";
@@ -106,13 +107,61 @@ export function emailProcessorService(db: Db) {
       })
       .returning();
 
+    // Build attachment list. Some senders omit a text part and send a single-part
+    // message where the whole email IS the attachment (no multipart wrapper). In
+    // that case mailparser leaves parsed.attachments empty and exposes the content
+    // only through the top-level Content-Type header. We synthesise a synthetic
+    // attachment entry so the file is always saved regardless of MIME structure.
     const attachments = asArray(parsed.attachments);
+    const topCtHeader = parsed.headers.get("content-type");
+    const topCt = (typeof topCtHeader === "string" ? topCtHeader : (topCtHeader as { value?: string } | undefined)?.value ?? "").toLowerCase();
+    if (
+      attachments.length === 0 &&
+      topCt &&
+      !topCt.startsWith("text/") &&
+      !topCt.startsWith("multipart/")
+    ) {
+      const rawBody = input.rawBytes;
+      // Extract base64 payload after the blank-line header/body separator.
+      const sep = rawBody.indexOf("\r\n\r\n");
+      const payloadStr = sep !== -1 ? rawBody.slice(sep + 4).toString("ascii").replace(/\s/g, "") : "";
+      if (payloadStr) {
+        const decoded = Buffer.from(payloadStr, "base64");
+        const ext = topCt.split("/")[1]?.split(";")[0]?.trim() ?? "bin";
+        const guessedName = subject ? `${subject}.${ext}` : `attachment.${ext}`;
+        attachments.push({
+          content: decoded,
+          filename: guessedName,
+          contentType: topCt.split(";")[0]?.trim() ?? topCt,
+          contentDisposition: "attachment",
+          cid: undefined,
+          headers: new Map(),
+          checksum: "",
+          size: decoded.length,
+          related: false,
+          type: "attachment",
+        } as (typeof attachments)[number]);
+      }
+    }
+
     let attachmentCount = 0;
     const savedAttachmentNames: string[] = [];
     for (let i = 0; i < attachments.length; i++) {
       const att = attachments[i]!;
-      const content = att.content;
-      if (!content || !Buffer.isBuffer(content)) continue;
+      const raw = att.content;
+      // Accept Buffer or any typed array (Uint8Array subtype, e.g. from edge-case parsers).
+      const content: Buffer | null = Buffer.isBuffer(raw)
+        ? raw
+        : (raw as unknown) instanceof Uint8Array
+          ? Buffer.from(raw as unknown as Uint8Array)
+          : null;
+      if (!content || content.length === 0) {
+        logger.debug(
+          { emailMessageId: inserted!.id, filename: att.filename, contentType: att.contentType },
+          "email-processor: skipped attachment — no buffer content",
+        );
+        continue;
+      }
       const rawName = att.filename ?? `attachment-${i + 1}`;
       // Prefix with index to avoid intra-message filename collisions.
       const filename = `${String(i + 1).padStart(2, "0")}-${rawName}`;
@@ -154,11 +203,13 @@ export function emailProcessorService(db: Db) {
     // Failures here don't discard the email; the row stays at pending.
     try {
       const [emailAccount] = await db
-        .select({ companyId: emailAccounts.companyId })
+        .select({ companyId: emailAccounts.companyId, triageAgentId: emailAccounts.triageAgentId })
         .from(emailAccounts)
         .where(eq(emailAccounts.id, input.emailAccountId))
         .limit(1);
 
+      let eaRouted = false;
+      let ingestClientId: string | null = null;
       if (emailAccount) {
         // Self-loop guard: skip emails from our own agent_voice accounts.
         const ownVoice = await db
@@ -175,46 +226,123 @@ export function emailProcessorService(db: Db) {
           }).where(eq(emailMessages.id, inserted!.id));
           logger.info({ emailMessageId: inserted!.id, fromAddr }, "email-processor: ignored self-loop email");
         } else {
-          await routeInboundMessage(db, {
-            companyId: emailAccount.companyId,
-            platform: "email",
-            fromAddr,
-            body: typeof body === "string" ? body : "",
-            subject,
-            threadKey: messageIdHeader,
-            attachmentSummaries: savedAttachmentNames,
+          // Spam check: silently discard emails from blocked sender domains.
+          const senderDomain = fromAddr.split("@")[1]?.toLowerCase() ?? "";
+          if (senderDomain) {
+            const [blocked] = await db
+              .select({ id: blockedSenderDomains.id })
+              .from(blockedSenderDomains)
+              .where(and(
+                eq(blockedSenderDomains.companyId, emailAccount.companyId),
+                eq(blockedSenderDomains.domain, senderDomain),
+              ))
+              .limit(1);
+            if (blocked) {
+              await db.update(emailMessages).set({
+                processingState: "ignored",
+                matchedCompanyId: emailAccount.companyId,
+                processedAt: new Date(),
+                errorText: `Blocked domain: ${senderDomain}`,
+              }).where(eq(emailMessages.id, inserted!.id));
+              logger.info({ emailMessageId: inserted!.id, senderDomain }, "email-processor: discarded email from blocked domain");
+              return { emailMessageId: inserted!.id, duplicated: false, attachmentCount };
+            }
+          }
+
+          // Fire-and-forget: warn operator once/day if no storage root configured.
+          void hasStorageRoot(db, emailAccount.companyId).then((has) => {
+            if (!has) void notifyStorageNotConfigured(db, emailAccount.companyId);
           });
+
+          // Synchronous client match — stamp matchedClientId immediately so attachment
+          // filing and folder creation work even when EA handles the email async.
+          try {
+            let clientRec = await clientService(db).matchByEmail(emailAccount.companyId, fromAddr);
+            if (!clientRec) {
+              const domain = fromAddr.split("@")[1]?.toLowerCase() ?? "";
+              if (domain) {
+                const name = domain.split(".").slice(0, -1).join(".") || domain;
+                clientRec = await clientService(db).create(emailAccount.companyId, {
+                  name: name.charAt(0).toUpperCase() + name.slice(1),
+                  emailDomain: domain,
+                });
+                logger.info({ companyId: emailAccount.companyId, emailMessageId: inserted!.id, domain }, "email-processor: auto-created client stub on ingest");
+              }
+            }
+            if (clientRec) {
+              ingestClientId = clientRec.id;
+              await db.update(emailMessages)
+                .set({ matchedClientId: clientRec.id, matchedCompanyId: emailAccount.companyId })
+                .where(eq(emailMessages.id, inserted!.id));
+              ensureClientFolder(db, clientRec.id).catch(() => {});
+            }
+          } catch (err) {
+            logger.warn({ err, emailMessageId: inserted!.id }, "email-processor: ingest client match failed");
+          }
+
+          // EA routing: if the account's triage agent is an EA, skip the
+          // orchestrator and wake the EA directly with { emailMessageId }.
+          if (emailAccount.triageAgentId) {
+            const [triageAgentRow] = await db
+              .select({ adapterType: agents.adapterType })
+              .from(agents)
+              .where(eq(agents.id, emailAccount.triageAgentId))
+              .limit(1);
+            if (triageAgentRow?.adapterType === "ea") {
+              // EA agents have companyId=null, so bypass heartbeatService budget
+              // check and insert the wakeup request directly with the email
+              // account's companyId so the EA knows which inbox triggered it.
+              await db.insert(agentWakeupRequests).values({
+                companyId: emailAccount.companyId,
+                agentId: emailAccount.triageAgentId,
+                source: "assignment",
+                triggerDetail: "system",
+                reason: "email-triage",
+                payload: { emailMessageId: inserted!.id },
+                status: "queued",
+                requestedByActorType: "system",
+                requestedByActorId: "email-processor",
+              });
+              await db.update(emailMessages).set({
+                matchedCompanyId: emailAccount.companyId,
+                matchedAgentId: emailAccount.triageAgentId,
+                processingState: "analyzing",
+              }).where(eq(emailMessages.id, inserted!.id));
+              logger.info(
+                { emailMessageId: inserted!.id, triageAgentId: emailAccount.triageAgentId },
+                "email-processor: EA triage — woke EA, skipped issue creation",
+              );
+              eaRouted = true;
+            }
+          }
+          if (!eaRouted) {
+            await routeInboundMessage(db, {
+              companyId: emailAccount.companyId,
+              platform: "email",
+              fromAddr,
+              body: typeof body === "string" ? body : "",
+              subject,
+              threadKey: messageIdHeader,
+              attachmentSummaries: savedAttachmentNames,
+            });
+          }
         }
       }
 
       // File attachments to client folder (fire-and-forget, non-fatal)
-      if (attachmentCount > 0) {
-        const [emailRow] = await db
-          .select({ matchedClientId: emailMessages.matchedClientId, attachmentsPath: emailMessages.attachmentsPath })
-          .from(emailMessages)
-          .where(eq(emailMessages.id, inserted!.id))
-          .limit(1);
-        if (emailRow?.matchedClientId && emailRow?.attachmentsPath) {
-          const { resolveEmailAttachmentsRoot } = await import("../home-paths.js");
-          const { join } = await import("node:path");
-          const attachDir = join(resolveEmailAttachmentsRoot(), emailRow.attachmentsPath);
-          // Fetch attachments with IDs so we can record filing status
-          db.select({ id: emailAttachments.id, storagePath: emailAttachments.storagePath, filename: emailAttachments.filename })
-            .from(emailAttachments)
-            .where(eq(emailAttachments.emailMessageId, inserted!.id))
-            .then((atts) => {
-              for (const att of atts) {
-                void fileAttachmentToClientFolder(
-                  db,
-                  att.storagePath,
-                  att.filename,
-                  emailRow.matchedClientId!,
-                  "emails",
-                  att.id,
-                );
-              }
-            }).catch(() => {});
-        }
+      if (attachmentCount > 0 && ingestClientId) {
+        const clientId = ingestClientId;
+        ensureClientFolder(db, clientId)
+          .then(() =>
+            db.select({ id: emailAttachments.id, storagePath: emailAttachments.storagePath, filename: emailAttachments.filename })
+              .from(emailAttachments)
+              .where(eq(emailAttachments.emailMessageId, inserted!.id))
+          )
+          .then((atts) => {
+            for (const att of atts) {
+              void fileAttachmentToClientFolder(db, att.storagePath, att.filename, clientId, "Emails", att.id);
+            }
+          }).catch(() => {});
       }
 
       // Workflow eval is for inbound triage only. Agent-voice replies and
@@ -226,7 +354,7 @@ export function emailProcessorService(db: Db) {
         .innerJoin(emailMessages, eq(emailMessages.id, inserted!.id))
         .where(eq(emailAccounts.id, input.emailAccountId))
         .limit(1);
-      if (acctState?.role === "inbound" && acctState?.processingState !== "ignored") {
+      if (!eaRouted && acctState?.role === "inbound" && acctState?.processingState !== "ignored") {
         workflowEngine(db).runFireAndForget(inboundEmailWorkflow, inserted!.id);
       }
     } catch (err) {
@@ -397,10 +525,8 @@ export function emailProcessorService(db: Db) {
       .limit(1);
     if (!row) throw new Error(`email not found: ${emailMessageId}`);
 
-    // Reset state + clear prior processing artefacts so routeInbound can
-    // re-propose a plan. Plans/approvals/issues are left in place for the
-    // audit trail — only the email's linkage pointers are cleared so routing
-    // starts fresh without inheriting the old plan/issue associations.
+    // Reset state — clear prior linkage so routing starts fresh.
+    // Plans/approvals/issues are left in place for the audit trail.
     await db
       .update(emailMessages)
       .set({
@@ -410,32 +536,141 @@ export function emailProcessorService(db: Db) {
         issueId: null,
         approvalId: null,
         matchedAgentId: null,
+        matchedClientId: null,
+        matchedCompanyId: null,
       })
       .where(eq(emailMessages.id, emailMessageId));
 
-    const [reprocessAccount] = await db
-      .select({ companyId: emailAccounts.companyId })
+    // Clear old attachment filing status — re-filed fresh this run.
+    await db
+      .update(emailAttachments)
+      .set({ filedAt: null, filedPath: null })
+      .where(eq(emailAttachments.emailMessageId, emailMessageId));
+
+    const [account] = await db
+      .select({
+        companyId: emailAccounts.companyId,
+        role: emailAccounts.role,
+        triageAgentId: emailAccounts.triageAgentId,
+      })
       .from(emailAccounts)
       .where(eq(emailAccounts.id, row.emailAccountId))
       .limit(1);
-    if (reprocessAccount) {
+    if (!account) return;
+
+    const { companyId } = account;
+
+    // Self-loop guard — same as ingest path
+    const ownVoice = await db
+      .select({ fromEmail: emailAccounts.fromEmail })
+      .from(emailAccounts)
+      .where(and(eq(emailAccounts.companyId, companyId), eq(emailAccounts.role, "agent_voice")));
+    if (new Set(ownVoice.map((r) => r.fromEmail.toLowerCase())).has(row.fromAddr.toLowerCase())) {
+      await db.update(emailMessages).set({
+        processingState: "ignored",
+        matchedCompanyId: companyId,
+        processedAt: new Date(),
+        errorText: `Self-loop: from=${row.fromAddr} is one of our agent_voice accounts.`,
+      }).where(eq(emailMessages.id, emailMessageId));
+      return;
+    }
+
+    // Client matching — do synchronously so matchedClientId is available immediately.
+    // Auto-create a stub client if the sender domain doesn't match any known client.
+    let clientRec = await clientService(db).matchByEmail(companyId, row.fromAddr);
+    if (!clientRec) {
+      const domain = row.fromAddr.split("@")[1]?.toLowerCase() ?? "";
+      if (domain) {
+        const name = domain.split(".").slice(0, -1).join(".") || domain;
+        clientRec = await clientService(db).create(companyId, {
+          name: name.charAt(0).toUpperCase() + name.slice(1),
+          emailDomain: domain,
+        });
+        logger.info({ companyId, emailMessageId, domain }, "email-processor: auto-created client stub during reprocess");
+      }
+    }
+
+    // Stamp company + client match immediately so the log shows correct state.
+    await db.update(emailMessages).set({
+      matchedCompanyId: companyId,
+      matchedClientId: clientRec?.id ?? null,
+      processedAt: new Date(),
+      processingState: "analyzing",
+    }).where(eq(emailMessages.id, emailMessageId));
+
+    // Ensure client storage folder exists so attachments can be filed.
+    if (clientRec) {
+      ensureClientFolder(db, clientRec.id).catch(() => {});
+    }
+
+    // Route: EA triage agent → wake directly; otherwise use orchestrator.
+    let eaRouted = false;
+    if (account.triageAgentId) {
+      const [triageAgent] = await db
+        .select({ adapterType: agents.adapterType })
+        .from(agents)
+        .where(eq(agents.id, account.triageAgentId))
+        .limit(1);
+      if (triageAgent?.adapterType === "ea") {
+        await db.insert(agentWakeupRequests).values({
+          companyId,
+          agentId: account.triageAgentId,
+          source: "assignment",
+          triggerDetail: "system",
+          reason: "email-triage",
+          payload: { emailMessageId },
+          status: "queued",
+          requestedByActorType: "system",
+          requestedByActorId: "email-processor",
+        });
+        await db.update(emailMessages).set({
+          matchedAgentId: account.triageAgentId,
+        }).where(eq(emailMessages.id, emailMessageId));
+        eaRouted = true;
+        logger.info({ emailMessageId, triageAgentId: account.triageAgentId }, "email-processor: reprocess — woke EA");
+      }
+    }
+
+    if (!eaRouted) {
+      const attRows = await db
+        .select({ filename: emailAttachments.filename })
+        .from(emailAttachments)
+        .where(eq(emailAttachments.emailMessageId, emailMessageId));
       await routeInboundMessage(db, {
-        companyId: reprocessAccount.companyId,
+        companyId,
         platform: "email",
         fromAddr: row.fromAddr,
         body: row.body,
         subject: row.subject,
         threadKey: row.messageIdHeader,
+        attachmentSummaries: attRows.map((a) => a.filename),
       });
     }
-    const [acctState2] = await db
-      .select({ role: emailAccounts.role, processingState: emailMessages.processingState })
-      .from(emailAccounts)
-      .innerJoin(emailMessages, eq(emailMessages.id, row.id))
-      .where(eq(emailAccounts.id, row.emailAccountId))
-      .limit(1);
-    if (acctState2?.role === "inbound" && acctState2?.processingState !== "ignored") {
+
+    if (account.role === "inbound") {
       workflowEngine(db).runFireAndForget(inboundEmailWorkflow, row.id);
+    }
+
+    // File attachments now that matchedClientId is set.
+    // Await so we can reliably advance state afterward.
+    if (clientRec) {
+      const { backfillClientAttachments } = await import("./client-storage.js");
+      await backfillClientAttachments(db, clientRec.id).catch(() => {});
+    }
+
+    // If no plan was created, advance "analyzing" → "executed" so the badge doesn't stick.
+    // For EA-routed emails: EA runs async after this; if it later calls plan-gate it
+    // will override "executed" → "plan_proposed". Safe to set now.
+    const [cur] = await db
+      .select({ processingState: emailMessages.processingState })
+      .from(emailMessages)
+      .where(eq(emailMessages.id, emailMessageId))
+      .limit(1);
+    if (cur?.processingState === "analyzing") {
+      await db.update(emailMessages).set({
+        processingState: "executed",
+        processedAt: new Date(),
+      }).where(eq(emailMessages.id, emailMessageId));
     }
   }
 

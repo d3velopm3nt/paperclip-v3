@@ -301,9 +301,10 @@ export function companyService(db: Db) {
       ]).then(([agentRows, issueRows]) => {
         const result: Record<string, { agentCount: number; issueCount: number }> = {};
         for (const row of agentRows) {
-          result[row.companyId] = { agentCount: row.count, issueCount: 0 };
+          if (row.companyId) result[row.companyId] = { agentCount: row.count, issueCount: 0 };
         }
         for (const row of issueRows) {
+          if (!row.companyId) continue;
           if (result[row.companyId]) {
             result[row.companyId].issueCount = row.count;
           } else {

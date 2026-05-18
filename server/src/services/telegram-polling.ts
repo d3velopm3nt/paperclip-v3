@@ -1,9 +1,15 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import type { Db } from "@paperclipai/db";
 import { companies, instanceSettings } from "@paperclipai/db";
 import { eq, sql } from "drizzle-orm";
+import type { EaNotificationEvent, EaNotificationMatrix } from "@paperclipai/shared";
 import { sendTelegramMessage, sendTelegramChatAction } from "./telegram-adapter.js";
 import { logActivity } from "./activity-log.js";
-import { readInstanceToken } from "./instance-token-store.js";
+import { readInstanceToken, writeInstanceToken } from "./instance-token-store.js";
 import { logger } from "../middleware/logger.js";
 import { routeInboundMessage } from "./inbound-router.js";
 
@@ -20,17 +26,74 @@ async function tgGet(token: string, method: string, params: Record<string, unkno
   return json.result;
 }
 
+interface PhotoSize { file_id: string; width: number; height: number; file_size?: number; }
+
 interface TelegramMessage {
   message_id: number;
   from?: { id: number; first_name?: string; username?: string };
   chat: { id: number; type: string; title?: string; first_name?: string };
   text?: string;
+  caption?: string;
+  photo?: PhotoSize[];
+  voice?: { file_id: string; duration: number; mime_type?: string; file_size?: number };
+  audio?: { file_id: string; duration: number; mime_type?: string; file_name?: string };
+  document?: { file_id: string; file_name?: string; mime_type?: string };
+  video?: { file_id: string; duration: number; mime_type?: string };
   date: number;
 }
 
 interface Update {
   update_id: number;
   message?: TelegramMessage;
+}
+
+async function downloadTelegramFile(token: string, fileId: string, ext: string): Promise<string | null> {
+  try {
+    const info = (await tgGet(token, "getFile", { file_id: fileId })) as { file_path?: string };
+    if (!info.file_path) return null;
+    const url = `${BASE_URL}/file/bot${token}/${info.file_path}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const dest = path.join(os.tmpdir(), `tg-${fileId.slice(-8)}.${ext}`);
+    await fs.writeFile(dest, buf);
+    return dest;
+  } catch (err) {
+    logger.warn({ err, fileId }, "telegram-polling: file download failed");
+    return null;
+  }
+}
+
+const WHISPER_PYTHON = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../../.whisper-env/bin/python",
+);
+const TRANSCRIBE_SCRIPT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../scripts/transcribe.py",
+);
+
+async function transcribeAudio(audioPath: string): Promise<string | null> {
+  try {
+    await fs.access(WHISPER_PYTHON);
+  } catch {
+    logger.warn("telegram-polling: whisper venv not found — skipping transcription");
+    return null;
+  }
+  return new Promise((resolve) => {
+    let out = "", err = "";
+    const proc = spawn(WHISPER_PYTHON, [TRANSCRIBE_SCRIPT, audioPath, "base"], { stdio: ["ignore", "pipe", "pipe"] });
+    proc.stdout.on("data", (chunk: Buffer) => { out += chunk.toString(); });
+    proc.stderr.on("data", (chunk: Buffer) => { err += chunk.toString(); });
+    proc.on("close", (code) => {
+      if (code !== 0) {
+        logger.warn({ code, stderr: err.slice(0, 300) }, "telegram-polling: transcription failed");
+        resolve(null);
+      } else {
+        resolve(out.trim() || null);
+      }
+    });
+  });
 }
 
 declare const global: { __tgPollingActive?: boolean };
@@ -94,10 +157,12 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
   }
 
   async function handleMessage(msg: TelegramMessage, resolvedCompanyId: string, resolvedToken: string) {
-    if (!msg.text) return;
-    const chatId = String(msg.chat.id);
+    // Accept text, captions (on photos/videos), and media-only messages
+    const hasContent = msg.text || msg.caption || msg.photo || msg.voice || msg.audio || msg.document || msg.video;
+    if (!hasContent) return;
 
-    logger.info({ chatId, text: msg.text }, "telegram-polling: message received ✓");
+    const chatId = String(msg.chat.id);
+    logger.info({ chatId, text: msg.text ?? msg.caption ?? "(media)" }, "telegram-polling: message received ✓");
 
     // Persist operator chat ID so outbound tools can reply
     db.insert(instanceSettings)
@@ -110,17 +175,78 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
         },
       })
       .catch(() => {});
+    // Also persist in token store — survives general settings overwrites
+    writeInstanceToken(db, "telegramOperatorChatId", chatId).catch(() => {});
 
-    if (msg.text.trim().toLowerCase() === "paperclip") {
+    const rawText = msg.text ?? msg.caption ?? "";
+
+    if (rawText.trim().toLowerCase() === "paperclip") {
       await sendTelegramMessage(resolvedToken, chatId, "✅ Paperclip is connected and receiving messages!");
       return;
     }
 
-    // Slash command handling — may override body sent to orchestrator
-    let body = msg.text;
+    // Download any attached media and collect file paths for Claude to read
+    const mediaParts: string[] = [];
 
-    if (body.startsWith("/")) {
-      const [rawCmd] = body.slice(1).split(/[\s@]/);
+    if (msg.photo?.length) {
+      // Pick the largest resolution photo
+      const largest = msg.photo.reduce((a, b) => (b.file_size ?? 0) > (a.file_size ?? 0) ? b : a);
+      const filePath = await downloadTelegramFile(resolvedToken, largest.file_id, "jpg");
+      if (filePath) mediaParts.push(`Photo saved at: ${filePath} (use the Read tool to view it)`);
+    }
+
+    if (msg.voice) {
+      const ext = msg.voice.mime_type === "audio/ogg" ? "ogg" : "oga";
+      const filePath = await downloadTelegramFile(resolvedToken, msg.voice.file_id, ext);
+      if (filePath) {
+        const transcript = await transcribeAudio(filePath);
+        if (transcript) {
+          mediaParts.push(`Voice note transcript: "${transcript}"`);
+        } else {
+          mediaParts.push(`Voice note (${msg.voice.duration}s) — transcription unavailable, file at: ${filePath}`);
+        }
+      } else {
+        mediaParts.push(`Voice note (${msg.voice.duration}s) — download failed`);
+      }
+    }
+
+    if (msg.audio) {
+      const ext = (msg.audio.mime_type?.split("/")[1]) ?? "mp3";
+      const filePath = await downloadTelegramFile(resolvedToken, msg.audio.file_id, ext);
+      const label = msg.audio.file_name ?? "audio";
+      if (filePath) {
+        const transcript = await transcribeAudio(filePath);
+        if (transcript) {
+          mediaParts.push(`Audio "${label}" transcript: "${transcript}"`);
+        } else {
+          mediaParts.push(`Audio file "${label}" saved at: ${filePath}`);
+        }
+      }
+    }
+
+    if (msg.document) {
+      const ext = msg.document.file_name?.split(".").pop() ?? "bin";
+      const filePath = await downloadTelegramFile(resolvedToken, msg.document.file_id, ext);
+      const label = msg.document.file_name ?? "document";
+      if (filePath) mediaParts.push(`Document "${label}" saved at: ${filePath} (use the Read tool to inspect it)`);
+    }
+
+    if (msg.video) {
+      const filePath = await downloadTelegramFile(resolvedToken, msg.video.file_id, "mp4");
+      if (filePath) mediaParts.push(`Video (${msg.video.duration}s) saved at: ${filePath}`);
+    }
+
+    // Build body: text/caption + any media descriptions
+    let body = rawText;
+    if (mediaParts.length > 0) {
+      if (body) body += "\n\n";
+      body += mediaParts.join("\n");
+    }
+    if (!body.trim()) body = "(no text — media only)";
+
+    // Slash command handling — may override body sent to orchestrator
+    if (rawText.startsWith("/")) {
+      const [rawCmd] = rawText.slice(1).split(/[\s@]/);
       const cmd = rawCmd?.toLowerCase() ?? "";
 
       if (cmd === "help") {
@@ -227,4 +353,75 @@ export async function startTelegramPolling(db: Db, envToken: string, companyId?:
 
 export function stopTelegramPolling() {
   global.__tgPollingActive = false;
+}
+
+// Shared helper — resolves bot token + operator chat ID from DB/env and sends a message.
+// Use this everywhere instead of duplicating the lookup pattern.
+export async function notifyOperatorTelegram(db: Db, message: string): Promise<void> {
+  const token = await readInstanceToken(db, "telegramBotToken").catch(() => null)
+    ?? process.env.TELEGRAM_BOT_TOKEN ?? "";
+  if (!token) return;
+  const [settings] = await db
+    .select({ general: instanceSettings.general })
+    .from(instanceSettings)
+    .where(eq(instanceSettings.singletonKey, "default"))
+    .limit(1);
+  const chatId = await readInstanceToken(db, "telegramOperatorChatId").catch(() => null)
+    ?? ((settings?.general as Record<string, unknown> | null)?.telegramOperatorChatId as string | undefined)
+    ?? process.env.TELEGRAM_OPERATOR_CHAT_ID ?? "";
+  if (!chatId) return;
+  await sendTelegramMessage(token, chatId, message);
+}
+
+// Multi-channel operator notification. Checks eaNotificationMatrix in instance_settings
+// for per-event per-channel routing. Pass eventType to gate on matrix; omit to send to all channels.
+export async function notifyOperator(db: Db, message: string, eventType?: EaNotificationEvent): Promise<void> {
+  const [settings] = await db
+    .select({ general: instanceSettings.general })
+    .from(instanceSettings)
+    .where(eq(instanceSettings.singletonKey, "default"))
+    .limit(1);
+  const general = (settings?.general ?? {}) as Record<string, unknown>;
+  const matrix = (general.eaNotificationMatrix ?? null) as EaNotificationMatrix | null;
+
+  function channelEnabled(channel: "telegram" | "email"): boolean {
+    if (!matrix) return channel === "telegram"; // default: telegram only
+    if (!eventType) return true; // no event type = always send
+    return matrix[channel]?.[eventType] ?? false;
+  }
+
+  const results = await Promise.allSettled([
+    channelEnabled("telegram") ? notifyOperatorTelegram(db, message) : Promise.resolve(),
+    channelEnabled("email") ? notifyOperatorEmail(db, general, message) : Promise.resolve(),
+  ]);
+
+  for (const result of results) {
+    if (result.status === "rejected") {
+      logger.warn({ err: result.reason }, "notifyOperator: channel delivery failed");
+    }
+  }
+}
+
+async function notifyOperatorEmail(db: Db, general: Record<string, unknown>, message: string): Promise<void> {
+  const toAddr = (general.operatorNotifyEmail as string | undefined) ?? "";
+  if (!toAddr) return;
+
+  // Find any active outbound email account to use as sender
+  const { emailAccounts } = await import("@paperclipai/db");
+  const { sendEmailFromAccount } = await import("./email-sender.js");
+  const [account] = await db
+    .select({ id: emailAccounts.id, companyId: emailAccounts.companyId })
+    .from(emailAccounts)
+    .limit(1);
+  if (!account) return;
+
+  const subject = message.split("\n")[0]?.slice(0, 100) ?? "Paperclip notification";
+  const htmlBody = `<pre style="font-family:sans-serif;white-space:pre-wrap">${message.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
+  await sendEmailFromAccount(db, {
+    accountId: account.id,
+    to: toAddr,
+    subject,
+    html: htmlBody,
+    text: message,
+  });
 }

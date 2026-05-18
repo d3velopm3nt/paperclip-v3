@@ -1,5 +1,5 @@
 export type { Company } from "./company.js";
-export type { InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
+export type { EaNotificationChannelConfig, EaNotificationEvent, EaNotificationMatrix, FounderProfileSettings, InstanceExperimentalSettings, InstanceGeneralSettings, InstanceSettings } from "./instance.js";
 export type {
   CompanySkillSourceType,
   CompanySkillTrustLevel,
@@ -204,3 +204,12 @@ export type {
   ClientStorageInfo,
   CompanyStorageRoot,
 } from "./document-storage.js";
+export type {
+  AgentTemplate,
+  AgentTemplateSummary,
+  AgentTemplateDefinition,
+  TeamStructureEntry,
+  DeployTemplateResult,
+  CreateCustomTemplateInput,
+  UpdateTemplateInput,
+} from "./agent-template.js";

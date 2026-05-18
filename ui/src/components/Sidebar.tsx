@@ -128,7 +128,7 @@ export function Sidebar() {
           <SidebarNavItem to="/chat" label="Chat" icon={MessageSquare} /> {/* v3: chat */}
           <SidebarNavItem to="/documents" label="Documents" icon={FileText} /> {/* v3: document storage */}
           <SidebarNavItem
-            to="/email/workflows"
+            to="/workflows"
             label="Workflows"
             icon={Activity}
             badge={workflowBadge.total > 0 ? workflowBadge.total : undefined}

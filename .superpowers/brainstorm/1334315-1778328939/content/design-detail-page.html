@@ -1,0 +1,86 @@
+<h2>ECC Agents — Detail Page + Orchestrator Integration</h2>
+<p class="subtitle">Section 3 of 3: How the agent detail page shows + edits ECC prompts</p>
+
+<div class="section">
+  <h3>Where prompts live after this change</h3>
+  <div class="mockup">
+    <div class="mockup-header">agents.adapterConfig (JSONB)</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:13px;padding:12px 16px;line-height:1.7">
+      {<br>
+      &nbsp;&nbsp;"systemPrompt": "You are the Paperclip Executive Command Center (ECC)...",<br>
+      &nbsp;&nbsp;"promptVersion": 1<br>
+      }
+    </div>
+  </div>
+  <p style="font-size:13px;color:#6b7280;margin-top:8px">Seeded at startup with the current hardcoded strings. Orchestrator reads from DB, falls back to hardcoded default if null.</p>
+</div>
+
+<div class="section">
+  <h3>Orchestrator change — reads from DB</h3>
+  <div class="mockup">
+    <div class="mockup-header">server/src/services/orchestrator.ts</div>
+    <div class="mockup-body" style="font-family:monospace;font-size:13px;padding:12px 16px;line-height:1.7">
+      <span style="color:#6b7280">// before:</span><br>
+      const systemPrompt = isOperator ? ECC_SYSTEM_PROMPT : CLIENT_SYSTEM_PROMPT;<br><br>
+      <span style="color:#6b7280">// after:</span><br>
+      const eccAgent = await agentsService.getEccAgent(isOperator ? "operator" : "client");<br>
+      const systemPrompt = eccAgent?.adapterConfig?.systemPrompt<br>
+      &nbsp;&nbsp;?? (isOperator ? ECC_SYSTEM_PROMPT : CLIENT_SYSTEM_PROMPT);
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>PromptsTab — ECC special case</h3>
+  <div class="split">
+    <div class="mockup">
+      <div class="mockup-header">Current (local adapters) — file browser + editor</div>
+      <div class="mockup-body" style="display:flex;gap:0;height:200px;overflow:hidden">
+        <div style="width:140px;border-right:1px solid #374151;padding:8px;font-size:11px;color:#9ca3af">
+          <div style="padding:4px 6px;background:#1d4ed833;border-radius:4px;color:#60a5fa;margin-bottom:4px">AGENTS.md</div>
+          <div style="padding:4px 6px;color:#6b7280">CLAUDE.md</div>
+          <div style="padding:4px 6px;color:#6b7280">skills/</div>
+        </div>
+        <div style="flex:1;padding:8px;font-size:11px;color:#6b7280;font-family:monospace">
+          # Agent Instructions<br>
+          You are an AI agent...
+        </div>
+      </div>
+    </div>
+    <div class="mockup">
+      <div class="mockup-header">ECC agents — single prompt textarea</div>
+      <div class="mockup-body" style="padding:12px">
+        <div style="font-size:11px;color:#6b7280;margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">System Prompt</div>
+        <textarea style="width:100%;height:140px;background:#111;border:1px solid #374151;border-radius:6px;padding:8px;font-size:11px;color:#e5e7eb;font-family:monospace;resize:none;box-sizing:border-box">You are the Paperclip Executive Command Center (ECC) — JayJay Barnard's operational intelligence layer.
+
+Your role:
+- Act as an executive assistant...
+- Maintain awareness across all companies...</textarea>
+        <div style="margin-top:8px;font-size:11px;color:#6b7280">Saved to adapterConfig.systemPrompt · Orchestrator reads on next spawn</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Navigation path from FounderOverview</h3>
+  <div style="font-family:monospace;font-size:13px;background:#111;border-radius:8px;padding:16px;line-height:2">
+    Click ECC agent card on FounderOverview<br>
+    &nbsp;&nbsp;→ navigate("/agents/" + agent.id + "/instructions")<br>
+    &nbsp;&nbsp;→ AgentDetail loads agent by ID (no companyId needed)<br>
+    &nbsp;&nbsp;→ Instructions tab auto-selected<br>
+    &nbsp;&nbsp;→ PromptsTab detects adapterType === "ecc" → shows textarea<br>
+    &nbsp;&nbsp;→ Edit + Save → PATCH /api/agents/:id → updates adapterConfig.systemPrompt
+  </div>
+</div>
+
+<div class="section">
+  <h3>Tabs visible for ECC agents</h3>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+    <div style="border:1px solid #1d4ed8;background:#1e3a5f22;padding:6px 14px;border-radius:6px;font-size:12px;color:#60a5fa">Instructions ✅</div>
+    <div style="border:1px solid #374151;background:#111;padding:6px 14px;border-radius:6px;font-size:12px;color:#6b7280">Runs ✅</div>
+    <div style="border:1px solid #374151;background:#111;padding:6px 14px;border-radius:6px;font-size:12px;color:#6b7280">Performance ✅</div>
+    <div style="border:1px solid #374151;background:#111;padding:6px 14px;border-radius:6px;font-size:12px;color:#4b5563;text-decoration:line-through">Budget — hidden (no companyId)</div>
+    <div style="border:1px solid #374151;background:#111;padding:6px 14px;border-radius:6px;font-size:12px;color:#4b5563;text-decoration:line-through">Skills — hidden (not applicable)</div>
+  </div>
+</div>

@@ -74,6 +74,7 @@ import {
   ArrowLeft,
   HelpCircle,
   FolderOpen,
+  LayoutTemplate,
 } from "lucide-react";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -95,11 +96,28 @@ import {
 } from "@paperclipai/shared";
 import { redactHomePathUserSegments, redactHomePathUserSegmentsInValue } from "@paperclipai/adapter-utils";
 import { agentRouteRef } from "../lib/utils";
+import { workflowRunsApi, type WorkflowRun, type WorkflowStageResult } from "../api/workflowRuns";
 import {
   applyAgentSkillSnapshot,
   arraysEqual,
   isReadOnlyUnmanagedSkillEntry,
 } from "../lib/agent-skills-state";
+import { agentTemplatesApi } from "../api/agentTemplates";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 
 const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   succeeded: { icon: CheckCircle2, color: "text-green-600 dark:text-green-400" },
@@ -227,6 +245,10 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
 }
 
 type AgentDetailView = "dashboard" | "instructions" | "configuration" | "skills" | "runs" | "budget" | "memory" | "performance" | "mcps" | "emails";
+
+function toSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+}
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "instructions" || value === "prompts") return "instructions";
@@ -534,10 +556,17 @@ export function AgentDetail() {
   const { closePanel } = usePanel();
   const { openNewIssue } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
+  const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [templateSlug, setTemplateSlug] = useState("");
+  const [templateDescription, setTemplateDescription] = useState("");
+  const [templateCategory, setTemplateCategory] = useState("custom");
+  const [templateSubtree, setTemplateSubtree] = useState(false);
   const activeView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
   const needsDashboardData = activeView === "dashboard";
   const needsRunData = activeView === "runs" || Boolean(urlRunId);
@@ -564,7 +593,9 @@ export function AgentDetail() {
     enabled: canFetchAgent,
   });
   const resolvedCompanyId = agent?.companyId ?? selectedCompanyId;
-  const canonicalAgentRef = agent ? agentRouteRef(agent) : routeAgentRef;
+  // EA agents (companyId=null) have no company scope — use UUID as canonical ref
+  // to avoid slug-based redirect that would produce a failed URL-key lookup on the server.
+  const canonicalAgentRef = agent ? (agent.companyId ? agentRouteRef(agent) : agent.id) : routeAgentRef;
   const agentLookupRef = agent?.id ?? routeAgentRef;
   const resolvedAgentId = agent?.id ?? null;
 
@@ -680,13 +711,14 @@ export function AgentDetail() {
   }, [agent?.companyId, selectedCompanyId, setSelectedCompanyId]);
 
   const agentAction = useMutation({
-    mutationFn: async (action: "invoke" | "pause" | "resume" | "terminate") => {
+    mutationFn: async (action: "invoke" | "pause" | "resume" | "terminate" | "restart") => {
       if (!agentLookupRef) return Promise.reject(new Error("No agent reference"));
       switch (action) {
         case "invoke": return agentsApi.invoke(agentLookupRef, resolvedCompanyId ?? undefined);
         case "pause": return agentsApi.pause(agentLookupRef, resolvedCompanyId ?? undefined);
         case "resume": return agentsApi.resume(agentLookupRef, resolvedCompanyId ?? undefined);
         case "terminate": return agentsApi.terminate(agentLookupRef, resolvedCompanyId ?? undefined);
+        case "restart": return agentsApi.wakeup(agentLookupRef, { source: "on_demand", reason: "restart_after_error" }, resolvedCompanyId ?? undefined);
       }
     },
     onSuccess: (data, action) => {
@@ -749,6 +781,18 @@ export function AgentDetail() {
     },
     onError: (err) => {
       setActionError(err instanceof Error ? err.message : "Failed to reset session");
+    },
+  });
+
+  const saveAsTemplateMutation = useMutation({
+    mutationFn: (input: Parameters<typeof agentTemplatesApi.saveAsTemplate>[0]) =>
+      agentTemplatesApi.saveAsTemplate(input),
+    onSuccess: () => {
+      pushToast({ title: "Template saved", body: "View it at /instance/settings/agent-templates", tone: "success" });
+      setSaveAsTemplateOpen(false);
+    },
+    onError: (err) => {
+      pushToast({ title: "Failed to save template", body: err instanceof Error ? err.message : "Unknown error", tone: "error" });
     },
   });
 
@@ -854,6 +898,17 @@ export function AgentDetail() {
             disabled={agentAction.isPending || isPendingApproval}
             label="Run Heartbeat"
           />
+          {agent.status === "error" && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => agentAction.mutate("restart")}
+              disabled={agentAction.isPending}
+              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+            >
+              {agentAction.isPending ? "Restarting…" : "Restart Agent"}
+            </Button>
+          )}
           <PauseResumeButton
             isPaused={agent.status === "paused"}
             onPause={() => agentAction.mutate("pause")}
@@ -903,6 +958,22 @@ export function AgentDetail() {
                 Reset Sessions
               </button>
               <button
+                className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50"
+                onClick={() => {
+                  const name = agent.name ?? "";
+                  setTemplateName(name);
+                  setTemplateSlug(toSlug(name));
+                  setTemplateDescription("");
+                  setTemplateCategory("custom");
+                  setTemplateSubtree(false);
+                  setMoreOpen(false);
+                  setSaveAsTemplateOpen(true);
+                }}
+              >
+                <LayoutTemplate className="h-3 w-3" />
+                Save as Template
+              </button>
+              <button
                 className="flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded hover:bg-accent/50 text-destructive"
                 onClick={() => {
                   agentAction.mutate("terminate");
@@ -916,6 +987,138 @@ export function AgentDetail() {
           </Popover>
         </div>
       </div>
+
+      {/* Save as Template Modal */}
+      <Dialog open={saveAsTemplateOpen} onOpenChange={(open) => {
+        setSaveAsTemplateOpen(open);
+        if (!open) saveAsTemplateMutation.reset();
+      }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Save as Template</DialogTitle>
+          </DialogHeader>
+          <form
+            className="flex flex-col gap-4 pt-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!agent) return;
+              saveAsTemplateMutation.mutate({
+                agentId: agent.id,
+                subtree: templateSubtree,
+                name: templateName,
+                slug: templateSlug,
+                description: templateDescription || undefined,
+                category: templateCategory,
+              });
+            }}
+          >
+            {directReports.length > 0 && (
+              <fieldset className="flex flex-col gap-1.5">
+                <legend className="text-sm font-medium mb-1">Scope</legend>
+                <div className="flex flex-col gap-1">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="templateSubtree"
+                      value="agent"
+                      checked={!templateSubtree}
+                      onChange={() => setTemplateSubtree(false)}
+                      className="accent-primary"
+                    />
+                    This agent only
+                  </label>
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="templateSubtree"
+                      value="team"
+                      checked={templateSubtree}
+                      onChange={() => setTemplateSubtree(true)}
+                      className="accent-primary"
+                    />
+                    Full team (includes {directReports.length} direct report{directReports.length !== 1 ? "s" : ""})
+                  </label>
+                </div>
+              </fieldset>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-name">Name</Label>
+              <input
+                id="template-name"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={templateName}
+                onChange={(e) => {
+                  setTemplateName(e.target.value);
+                  setTemplateSlug(toSlug(e.target.value));
+                }}
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-slug">Slug</Label>
+              <input
+                id="template-slug"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={templateSlug}
+                onChange={(e) => setTemplateSlug(e.target.value)}
+                pattern="[a-z0-9-]+"
+                title="Lowercase letters, numbers, and hyphens only"
+                required
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-description">Description <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Textarea
+                id="template-description"
+                className="resize-none"
+                rows={3}
+                value={templateDescription}
+                onChange={(e) => setTemplateDescription(e.target.value)}
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="template-category">Category</Label>
+              <Select value={templateCategory} onValueChange={setTemplateCategory}>
+                <SelectTrigger id="template-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="dev">Dev</SelectItem>
+                  <SelectItem value="sales">Sales</SelectItem>
+                  <SelectItem value="finance">Finance</SelectItem>
+                  <SelectItem value="support">Support</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {saveAsTemplateMutation.isError && (
+              <p className="text-xs text-destructive">
+                {saveAsTemplateMutation.error instanceof Error
+                  ? saveAsTemplateMutation.error.message
+                  : "Failed to save template"}
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setSaveAsTemplateOpen(false)}
+                disabled={saveAsTemplateMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={saveAsTemplateMutation.isPending}
+              >
+                {saveAsTemplateMutation.isPending ? "Saving…" : "Save as Template"}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {!urlRunId && (
         <Tabs
@@ -1047,7 +1250,11 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "runs" && (
+      {activeView === "runs" && !agent.companyId && (
+        <EccRunsTab agentId={agent.id} initialRunId={urlRunId ?? null} />
+      )}
+
+      {activeView === "runs" && agent.companyId && (
         <RunsTab
           runs={heartbeats ?? []}
           companyId={resolvedCompanyId!}
@@ -1697,10 +1904,21 @@ function PromptsTab({
     agent.adapterType === "hermes_local" ||
     agent.adapterType === "cursor";
 
+  const isEa = agent.adapterType === "ea";
+  const eaHasBundle = isEa && !!(agent.adapterConfig as Record<string, unknown>)?.instructionsBundleMode;
+  const [eaDraft, setEaDraft] = useState<string | null>(null);
+  const eaPersistedPrompt =
+    typeof (agent.adapterConfig as Record<string, unknown>)?.systemPrompt === "string"
+      ? ((agent.adapterConfig as Record<string, unknown>).systemPrompt as string)
+      : "";
+  const eaCurrentPrompt = eaDraft ?? eaPersistedPrompt;
+  const eaDirty = eaDraft !== null && eaDraft !== eaPersistedPrompt;
+
   const { data: bundle, isLoading: bundleLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsBundle(agent.id),
     queryFn: () => agentsApi.instructionsBundle(agent.id, companyId),
-    enabled: Boolean(companyId && isLocal),
+    enabled: Boolean((companyId && isLocal) || eaHasBundle),
+    staleTime: 30_000,
   });
 
   const persistedMode = bundle?.mode ?? "managed";
@@ -1734,10 +1952,13 @@ function PromptsTab({
   const selectedFileExists = bundleMatchesDraft && fileOptions.includes(selectedOrEntryFile);
   const selectedFileSummary = bundle?.files.find((file) => file.path === selectedOrEntryFile) ?? null;
 
+  const eaFileQueryEnabled = eaHasBundle && bundle != null && fileOptions.includes(selectedOrEntryFile);
   const { data: selectedFileDetail, isLoading: fileLoading } = useQuery({
     queryKey: queryKeys.agents.instructionsFile(agent.id, selectedOrEntryFile),
     queryFn: () => agentsApi.instructionsFile(agent.id, selectedOrEntryFile, companyId),
-    enabled: Boolean(companyId && isLocal && selectedFileExists),
+    enabled: Boolean((companyId && isLocal && selectedFileExists) || eaFileQueryEnabled),
+    staleTime: 0,
+    gcTime: 0,
   });
 
   const updateBundle = useMutation({
@@ -1789,6 +2010,12 @@ function PromptsTab({
     },
   });
 
+  const saveEaMutation = useMutation({
+    mutationFn: (prompt: string) =>
+      agentsApi.update(agent.id, { adapterConfig: { ...(agent.adapterConfig as Record<string, unknown> ?? {}), systemPrompt: prompt } }, companyId ?? undefined),
+    onSuccess: () => setEaDraft(null),
+  });
+
   useEffect(() => {
     if (!bundle) return;
     if (!bundleMatchesDraft) {
@@ -1819,7 +2046,8 @@ function PromptsTab({
   }, [visibleFilePaths]);
 
   useEffect(() => {
-    const versionKey = selectedFileExists && selectedFileDetail
+    const fileLoaded = (selectedFileExists || eaFileQueryEnabled) && selectedFileDetail;
+    const versionKey = fileLoaded
       ? `${selectedFileDetail.path}:${selectedFileDetail.content}`
       : `draft:${currentMode}:${currentRootPath}:${selectedOrEntryFile}`;
     if (awaitingRefresh) {
@@ -1833,7 +2061,7 @@ function PromptsTab({
       setDraft(null);
       lastFileVersionRef.current = versionKey;
     }
-  }, [awaitingRefresh, currentMode, currentRootPath, selectedFileDetail, selectedFileExists, selectedOrEntryFile]);
+  }, [awaitingRefresh, currentMode, currentRootPath, eaFileQueryEnabled, selectedFileDetail, selectedFileExists, selectedOrEntryFile]);
 
   useEffect(() => {
     if (!bundle) return;
@@ -1856,7 +2084,7 @@ function PromptsTab({
     };
   }, [bundle, currentEntryFile, currentMode, currentRootPath, selectedOrEntryFile]);
 
-  const currentContent = selectedFileExists ? (selectedFileDetail?.content ?? "") : "";
+  const currentContent = (selectedFileExists || eaFileQueryEnabled) ? (selectedFileDetail?.content ?? "") : "";
   const displayValue = draft ?? currentContent;
   const bundleDirty = Boolean(
     bundleDraft &&
@@ -1921,6 +2149,22 @@ function PromptsTab({
     } : null);
   }, [bundle, isDirty, onCancelActionChange, persistedMode, persistedRootPath]);
 
+  useEffect(() => {
+    if (!isEa) return;
+    onDirtyChange(eaDirty);
+    onSavingChange(saveEaMutation.isPending);
+  }, [isEa, eaDirty, saveEaMutation.isPending, onDirtyChange, onSavingChange]);
+
+  useEffect(() => {
+    if (!isEa) return;
+    onSaveActionChange(eaDirty ? () => { saveEaMutation.mutate(eaCurrentPrompt); } : null);
+  }, [isEa, eaDirty, eaCurrentPrompt, onSaveActionChange, saveEaMutation]);
+
+  useEffect(() => {
+    if (!isEa) return;
+    onCancelActionChange(eaDirty ? () => { setEaDraft(null); } : null);
+  }, [isEa, eaDirty, onCancelActionChange]);
+
   const handleSeparatorDrag = useCallback((event: React.MouseEvent) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -1942,7 +2186,26 @@ function PromptsTab({
     document.body.style.userSelect = "none";
   }, [filePanelWidth]);
 
-  if (!isLocal) {
+  if (!isLocal && !eaHasBundle) {
+    if (isEa) {
+      return (
+        <div className="max-w-3xl space-y-4">
+          <div>
+            <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wide font-semibold">System Prompt</p>
+            <p className="text-xs text-muted-foreground mb-3">Saved to agent config. Orchestrator reads this on next spawn.</p>
+            <textarea
+              className="w-full min-h-[520px] rounded-md border border-border bg-muted/30 px-3 py-2 text-sm font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-y"
+              value={eaCurrentPrompt}
+              onChange={(e) => setEaDraft(e.target.value)}
+              spellCheck={false}
+            />
+          </div>
+          {eaDirty && (
+            <p className="text-xs text-amber-500">Unsaved changes — use the Save button above to apply.</p>
+          )}
+        </div>
+      );
+    }
     return (
       <div className="max-w-3xl">
         <p className="text-sm text-muted-foreground">
@@ -2272,7 +2535,7 @@ function PromptsTab({
               <div className="min-w-0">
                 <h4 className="text-sm font-medium font-mono truncate">{selectedOrEntryFile}</h4>
                 <p className="text-xs text-muted-foreground">
-                  {selectedFileExists
+                  {(selectedFileExists || eaFileQueryEnabled)
                     ? selectedFileSummary?.deprecated
                       ? "Deprecated virtual file"
                       : `${selectedFileDetail?.language ?? "text"} file`
@@ -2280,7 +2543,7 @@ function PromptsTab({
                 </p>
               </div>
             </div>
-            {selectedFileExists && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
+            {(selectedFileExists || eaFileQueryEnabled) && !selectedFileSummary?.deprecated && selectedOrEntryFile !== currentEntryFile && (
               <Button
                 type="button"
                 size="sm"
@@ -2302,7 +2565,7 @@ function PromptsTab({
             )}
           </div>
 
-          {selectedFileExists && fileLoading && !selectedFileDetail ? (
+          {(selectedFileExists || eaFileQueryEnabled) && fileLoading && !selectedFileDetail ? (
             <PromptEditorSkeleton />
           ) : isMarkdown(selectedOrEntryFile) ? (
             <MarkdownEditor
@@ -2799,6 +3062,140 @@ function AgentSkillsTab({
           </section>
         </>
       )}
+    </div>
+  );
+}
+
+/* ---- EA Runs Tab (workflow_runs, not heartbeat_runs) ---- */
+
+const EA_STATUS_ICONS: Record<string, { icon: typeof CheckCircle2; color: string }> = {
+  passed: { icon: CheckCircle2, color: "text-emerald-600 dark:text-emerald-400" },
+  failed: { icon: XCircle, color: "text-red-600 dark:text-red-400" },
+  running: { icon: Loader2, color: "text-blue-600 dark:text-blue-400" },
+  partial: { icon: Clock, color: "text-amber-600 dark:text-amber-400" },
+};
+
+const EA_STAGE_LABELS: Record<string, string> = {
+  message_received: "Message received",
+  topic_matched: "Topic matched",
+  conversation_resolved: "Conversation resolved",
+  operator_notified: "Operator notified",
+  client_reply_sent: "Client reply sent",
+  client_reply_approved: "Client reply approved",
+  memory_updated: "Memory updated",
+  action_taken: "Action taken",
+};
+
+function EccStageRow({ stage }: { stage: WorkflowStageResult }) {
+  const meta = EA_STATUS_ICONS[stage.status] ?? { icon: Clock, color: "text-muted-foreground" };
+  const Icon = meta.icon;
+  const label = EA_STAGE_LABELS[stage.stageId] ?? stage.label;
+  const actuals = stage.actuals as Record<string, unknown>;
+  const detail = actuals.actionSummary ?? actuals.message ?? actuals.messagePreview ?? actuals.topicName
+    ?? actuals.stderr ?? actuals.error ?? null;
+  const exitCode = typeof actuals.exitCode === "number" ? actuals.exitCode : null;
+  const errorText = stage.errorText ?? null;
+  return (
+    <div className="flex items-start gap-2 py-1.5 border-b border-border/50 last:border-0">
+      <Icon className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", meta.color, (stage.status as string) === "running" && "animate-spin")} />
+      <div className="flex-1 min-w-0">
+        <span className="text-xs font-medium">{label}{exitCode !== null ? ` (exit ${exitCode})` : ""}</span>
+        {detail && typeof detail === "string" && (
+          <p className="text-xs text-muted-foreground mt-0.5 break-all whitespace-pre-wrap">{detail.slice(0, 300)}</p>
+        )}
+        {!detail && errorText && (
+          <p className="text-xs text-muted-foreground mt-0.5 break-all">{errorText.slice(0, 300)}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EccRunsTab({ agentId, initialRunId }: { agentId: string; initialRunId?: string | null }) {
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId ?? null);
+
+  const runsQuery = useQuery({
+    queryKey: ["ea-workflow-runs", agentId],
+    queryFn: () => workflowRunsApi.listByAgent(agentId, 50),
+    refetchInterval: 15_000,
+  });
+
+  const detailQuery = useQuery({
+    queryKey: ["ea-workflow-runs", "detail", selectedRunId],
+    queryFn: () => workflowRunsApi.getEa(selectedRunId!),
+    enabled: !!selectedRunId,
+    staleTime: 30_000,
+  });
+
+  const runs = runsQuery.data ?? [];
+
+  if (runsQuery.isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (runs.length === 0) return <p className="text-sm text-muted-foreground">No runs yet.</p>;
+
+  const effectiveRunId = selectedRunId ?? runs[0]?.id ?? null;
+  if (effectiveRunId && !selectedRunId) setSelectedRunId(effectiveRunId);
+
+  const selectedRun = runs.find((r) => r.id === effectiveRunId) ?? null;
+  const stages = detailQuery.data?.stages ?? [];
+
+  function durLabel(run: WorkflowRun): string | null {
+    if (!run.finishedAt) return null;
+    const ms = new Date(run.finishedAt).getTime() - new Date(run.startedAt).getTime();
+    return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  return (
+    <div className="flex gap-4 min-h-0">
+      {/* Left: run list */}
+      <div className="w-64 shrink-0 border border-border overflow-y-auto">
+        {runs.map((run) => {
+          const meta = EA_STATUS_ICONS[run.overallStatus] ?? { icon: Clock, color: "text-muted-foreground" };
+          const Icon = meta.icon;
+          const isActive = run.id === effectiveRunId;
+          return (
+            <button
+              key={run.id}
+              onClick={() => setSelectedRunId(run.id)}
+              className={cn(
+                "w-full text-left flex items-start gap-2 px-3 py-2.5 border-b border-border last:border-0 transition-colors",
+                isActive ? "bg-accent/40" : "hover:bg-accent/20"
+              )}
+            >
+              <Icon className={cn("h-3.5 w-3.5 mt-0.5 shrink-0", meta.color, run.overallStatus === "running" && "animate-spin")} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-[11px] text-muted-foreground">{run.id.slice(0, 8)}</span>
+                  {durLabel(run) && <span className="text-[11px] text-muted-foreground">{durLabel(run)}</span>}
+                </div>
+                <span className="text-[11px] text-muted-foreground">{relativeTime(run.startedAt)}</span>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Right: stage detail */}
+      <div className="flex-1 min-w-0 border border-border p-4 overflow-y-auto">
+        {!selectedRun && <p className="text-sm text-muted-foreground">Select a run.</p>}
+        {selectedRun && (
+          <>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="font-mono text-xs text-muted-foreground">{selectedRun.id.slice(0, 8)}</span>
+              <span className="text-xs text-muted-foreground">{relativeTime(selectedRun.startedAt)}</span>
+              {durLabel(selectedRun) && <span className="text-xs text-muted-foreground">{durLabel(selectedRun)}</span>}
+            </div>
+            {detailQuery.isLoading && <p className="text-xs text-muted-foreground">Loading stages…</p>}
+            {stages.length > 0 && (
+              <div>
+                {stages.map((s) => <EccStageRow key={s.id} stage={s} />)}
+              </div>
+            )}
+            {!detailQuery.isLoading && stages.length === 0 && (
+              <p className="text-xs text-muted-foreground">No stages recorded.</p>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

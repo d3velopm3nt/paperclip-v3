@@ -3014,7 +3014,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     if (include.agents) {
       for (const agent of agentRows) {
         const slug = idToSlug.get(agent.id)!;
-        const exportedInstructions = await instructions.exportFiles(agent);
+        const exportedInstructions = await instructions.exportFiles(agent as typeof agent & { companyId: string });
         warnings.push(...exportedInstructions.warnings);
 
         const envInputsStart = envInputs.length;
@@ -3929,7 +3929,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             continue;
           }
           try {
-            const materialized = await instructions.materializeManagedBundle(updated, bundleFiles, {
+            const materialized = await instructions.materializeManagedBundle(updated as typeof updated & { companyId: string }, bundleFiles, {
               clearLegacyPromptTemplate: true,
               replaceExisting: true,
             });
@@ -3960,7 +3960,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
           actorUserId ?? null,
         );
         try {
-          const materialized = await instructions.materializeManagedBundle(created, bundleFiles, {
+          const materialized = await instructions.materializeManagedBundle(created as typeof created & { companyId: string }, bundleFiles, {
             clearLegacyPromptTemplate: true,
             replaceExisting: true,
           });

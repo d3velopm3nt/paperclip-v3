@@ -35,9 +35,13 @@ export interface WorkflowRunWithStages {
 }
 
 export const workflowRunsApi = {
-  listForCompany: (companyId: string, type?: string, limit = 50) => {
+  listByAgent: (agentId: string, limit = 50) =>
+    api.get<WorkflowRun[]>(`/ea/workflow-runs?agentId=${encodeURIComponent(agentId)}&limit=${limit}`),
+  getEa: (id: string) => api.get<WorkflowRunWithStages>(`/ea/workflow-runs/${encodeURIComponent(id)}`),
+  listForCompany: (companyId: string, type?: string, limit = 50, status?: string) => {
     const qs = new URLSearchParams();
     if (type) qs.set("type", type);
+    if (status) qs.set("status", status);
     qs.set("limit", String(limit));
     return api.get<WorkflowRun[]>(
       `/companies/${encodeURIComponent(companyId)}/workflow-runs?${qs.toString()}`,

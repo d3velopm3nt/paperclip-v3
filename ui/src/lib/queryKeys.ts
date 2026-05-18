@@ -191,4 +191,8 @@ export const queryKeys = {
     messages: (companyId: string, threadId: string) =>
       ["chat", "messages", companyId, threadId] as const,
   },
+  agentTemplates: {
+    all: ["agent-templates"] as const,
+    detail: (id: string) => ["agent-templates", "detail", id] as const,
+  },
 };

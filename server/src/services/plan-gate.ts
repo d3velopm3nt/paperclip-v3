@@ -13,6 +13,7 @@ import type { Db } from "@paperclipai/db";
 import { approvals, issues, plans, emailMessages, emailAccounts, companies, clients, projects } from "@paperclipai/db";
 import { actionPolicyService, type ActionPolicyRow, type PolicyScope } from "./action-policies.js";
 import { issueService } from "./issues.js";
+import { heartbeatService } from "./heartbeat.js";
 import { sendEmailFromAccount } from "./email-sender.js";
 import { workflowEngine } from "./workflow-engine.js";
 import { inboundEmailWorkflow } from "./workflows/inbound-email.js";
@@ -60,6 +61,11 @@ export interface ProposePlanInput {
    * Defaults to the proposing agent (agentId) if omitted.
    */
   assigneeAgentId?: string | null;
+  /**
+   * Skip clientId/projectId/DoD readiness check. Used by EA-sourced plans
+   * where context may not be known at proposal time.
+   */
+  bypassReadinessGate?: boolean;
 }
 
 /** Thrown when a create_issue plan is missing the readiness fields. */
@@ -131,7 +137,7 @@ export function planGateService(db: Db) {
     // Readiness gate — create_issue plans must carry the full spec before
     // they can be proposed. Other kinds (clarifications, replies, operator
     // questions) are how the agent gathers what's missing.
-    if (input.kind === "create_issue") {
+    if (input.kind === "create_issue" && !input.bypassReadinessGate) {
       const missing: string[] = [];
       if (!input.clientId) missing.push("clientId");
       if (!input.projectId) missing.push("projectId");
@@ -448,6 +454,16 @@ export function planGateService(db: Db) {
             .where(eq(emailMessages.id, plan.sourceEmailMessageId));
         }
         logger.info({ planId, issueId: created.id }, "plan-gate: executed create_issue");
+        if (assigneeAgentId) {
+          await heartbeatService(db).wakeup(assigneeAgentId, {
+            source: "assignment",
+            triggerDetail: "system",
+            reason: "plan-approved",
+            payload: { issueId: created.id },
+            requestedByActorType: "system",
+            requestedByActorId: "plan-gate",
+          }).catch((err: unknown) => logger.warn({ err, assigneeAgentId }, "plan-gate: failed to wake assignee"));
+        }
         if (plan.sourceEmailMessageId) {
           workflowEngine(db).runFireAndForget(inboundEmailWorkflow, plan.sourceEmailMessageId);
         }

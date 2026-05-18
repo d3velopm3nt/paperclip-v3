@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 interface McpTokenPayload {
   companyId: string;
   agentId: string | null;
-  isOperator?: boolean; // cross-company operator access (founder/ECC)
+  isOperator?: boolean; // cross-company operator access (founder/EA)
   exp: number; // unix seconds
 }
 

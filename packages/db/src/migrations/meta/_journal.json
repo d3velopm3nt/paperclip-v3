@@ -519,6 +519,69 @@
       "when": 1778181535113,
       "tag": "0073_stale_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1778281300956,
+      "tag": "0074_lonely_jocasta",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1778335118186,
+      "tag": "0075_amused_wrecker",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1747044000000,
+      "tag": "0076_rename_ecc_to_ea",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1778612796694,
+      "tag": "0077_confused_mole_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1778683732548,
+      "tag": "0078_fuzzy_black_tarantula",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1778702344443,
+      "tag": "0079_nosy_scream",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1778790672329,
+      "tag": "0080_youthful_unus",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1778913660832,
+      "tag": "0081_medical_prodigy",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1778944638353,
+      "tag": "0082_stale_molten_man",
+      "breakpoints": true
     }
   ]
 }

@@ -84,6 +84,12 @@ export function Agents() {
     enabled: !!selectedCompanyId,
   });
 
+  const { data: eaAgents } = useQuery({
+    queryKey: ["ea-agents"],
+    queryFn: () => agentsApi.listEa(),
+    staleTime: 60_000,
+  });
+
   const { data: orgTree } = useQuery({
     queryKey: queryKeys.org(selectedCompanyId!),
     queryFn: () => agentsApi.org(selectedCompanyId!),
@@ -284,6 +290,38 @@ export function Agents() {
         <p className="text-sm text-muted-foreground text-center py-8">
           No agents match the selected filter.
         </p>
+      )}
+
+      {/* EA agents — cross-company, always shown in list view */}
+      {effectiveView === "list" && eaAgents && eaAgents.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs text-muted-foreground font-mono uppercase tracking-widest">EA Agents</p>
+          <div className="border border-border">
+            {eaAgents.map((agent) => (
+              <EntityRow
+                key={agent.id}
+                title={agent.name}
+                subtitle="Executive Command Center"
+                to={`/agents/${agent.id}`}
+                leading={
+                  <span className="relative flex h-2.5 w-2.5">
+                    <span
+                      className={`absolute inline-flex h-full w-full rounded-full ${agentStatusDot[agent.status] ?? agentStatusDotDefault}`}
+                    />
+                  </span>
+                }
+                trailing={
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-muted-foreground font-mono w-14 text-right">ea</span>
+                    <span className="w-20 flex justify-end">
+                      <StatusBadge status={agent.status} />
+                    </span>
+                  </div>
+                }
+              />
+            ))}
+          </div>
+        </div>
       )}
 
       {/* Org chart view */}

@@ -56,3 +56,4 @@ logs/
 server/logs/
 server/secrets/
 data/
+.whisper-env/
