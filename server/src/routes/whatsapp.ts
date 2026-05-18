@@ -163,12 +163,12 @@ export function whatsappRoutes(db: Db): Router {
 
   router.post("/channels/whatsapp/test", async (req, res) => {
     assertBoard(req);
-    const { token, phoneNumberId, contacts } = await getWhatsAppSettings(db);
+    const { token, phoneNumberId, allowedContacts } = await getWhatsAppSettings(db);
     if (!token || !phoneNumberId) {
       res.status(422).json({ error: "Access token and phone number ID required" });
       return;
     }
-    const testTarget = contacts?.[0];
+    const testTarget = allowedContacts?.[0];
     if (!testTarget) {
       res.status(422).json({ error: "Add at least one allowed contact to test" });
       return;

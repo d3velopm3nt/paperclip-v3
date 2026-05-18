@@ -1,9 +1,10 @@
 // server/src/routes/mcp-tool-server.ts
 import { Router } from "express";
 import type { Db } from "@paperclipai/db";
-import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies } from "@paperclipai/db";
+import { agents, issues, projects, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, routines } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, or } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
+import { routineService } from "../services/routines.js";
 import { eccTopicsService } from "../services/ecc-topics.js";
 import { logActivity } from "../services/activity-log.js";
 import { logger } from "../middleware/logger.js";
@@ -69,6 +70,65 @@ const TOOLS = [
         assigneeAgentId: { type: "string", description: "New assignee agent UUID, or null to unassign" },
         title: { type: "string", description: "New title" },
         description: { type: "string", description: "New description" },
+      },
+    },
+  },
+  {
+    name: "list_routines",
+    description: "List routines (scheduled recurring tasks) for a company. Returns each routine with its triggers (cron schedules), assignee agent, and last run status.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        companyId: { type: "string", description: "UUID of the company to query. Required when querying a company other than the default." },
+      },
+    },
+  },
+  {
+    name: "create_routine",
+    description: "Create a new routine (recurring scheduled task) assigned to an agent. Optionally attach a cron schedule trigger so it runs automatically.",
+    inputSchema: {
+      type: "object",
+      required: ["projectId", "title", "assigneeAgentId"],
+      properties: {
+        companyId: { type: "string", description: "UUID of the company. Defaults to agent's company." },
+        projectId: { type: "string", description: "UUID of the project this routine belongs to." },
+        title: { type: "string", description: "Short title for the routine (max 200 chars)." },
+        description: { type: "string", description: "What the agent should do when this routine fires." },
+        assigneeAgentId: { type: "string", description: "UUID of the agent that will execute this routine." },
+        priority: { type: "string", description: "low | medium | high | urgent (default: medium)" },
+        cronExpression: { type: "string", description: "Cron expression for automatic scheduling (e.g. '0 8 * * 1-5' for weekdays at 8am). Omit for manual-only." },
+        timezone: { type: "string", description: "IANA timezone for the cron schedule (e.g. Africa/Johannesburg). Default: UTC." },
+      },
+    },
+  },
+  {
+    name: "run_routine",
+    description: "Manually trigger a routine to run immediately.",
+    inputSchema: {
+      type: "object",
+      required: ["routineId"],
+      properties: {
+        routineId: { type: "string", description: "UUID of the routine to run." },
+        payload: { type: "object", description: "Optional JSON payload passed to the agent." },
+      },
+    },
+  },
+  {
+    name: "update_routine",
+    description: "Update an existing routine's title, description, priority, status, assignee, or policies.",
+    inputSchema: {
+      type: "object",
+      required: ["routineId"],
+      properties: {
+        routineId: { type: "string", description: "UUID of the routine to update." },
+        title: { type: "string", description: "New title." },
+        description: { type: "string", description: "New description / instructions for the agent." },
+        priority: { type: "string", description: "low | medium | high | critical" },
+        status: { type: "string", description: "active | paused | archived" },
+        assigneeAgentId: { type: "string", description: "UUID of new assignee agent." },
+        projectId: { type: "string", description: "UUID of new project." },
+        concurrencyPolicy: { type: "string", description: "coalesce_if_active | skip_if_active | always_enqueue" },
+        catchUpPolicy: { type: "string", description: "skip_missed | enqueue_missed_with_cap" },
       },
     },
   },
@@ -928,6 +988,97 @@ async function handleTool(
     const svc = eccTopicsService(db);
     await svc.linkIssue(String(args.topicId), String(args.issueId));
     return `Issue ${args.issueId} linked to topic ${args.topicId}`;
+  }
+
+  if (name === "list_routines") {
+    const svc = routineService(db);
+    const rows = await svc.list(effectiveCompanyId);
+    return JSON.stringify(rows, null, 2);
+  }
+
+  if (name === "create_routine") {
+    const svc = routineService(db);
+    const { projectId, title, description, assigneeAgentId, priority, cronExpression, timezone } =
+      args as {
+        projectId: string;
+        title: string;
+        description?: string;
+        assigneeAgentId: string;
+        priority?: string;
+        cronExpression?: string;
+        timezone?: string;
+      };
+    if (!projectId) return "Error: projectId is required";
+    if (!title) return "Error: title is required";
+    if (!assigneeAgentId) return "Error: assigneeAgentId is required";
+
+    const routine = await svc.create(
+      effectiveCompanyId,
+      {
+        projectId,
+        title,
+        description: description ?? null,
+        assigneeAgentId,
+        priority: (priority as "low" | "medium" | "high" | "critical") ?? "medium",
+        status: "active",
+        concurrencyPolicy: "coalesce_if_active",
+        catchUpPolicy: "skip_missed",
+      },
+      { agentId: callerAgentId },
+    );
+
+    if (cronExpression) {
+      await svc.createTrigger(
+        routine.id,
+        { kind: "schedule", cronExpression, timezone: timezone ?? "UTC", enabled: true },
+        { agentId: callerAgentId },
+      );
+    }
+
+    return JSON.stringify({ routineId: routine.id, title: routine.title }, null, 2);
+  }
+
+  if (name === "run_routine") {
+    const svc = routineService(db);
+    const { routineId, payload } = args as { routineId: string; payload?: Record<string, unknown> };
+    if (!routineId) return "Error: routineId is required";
+    const run = await svc.runRoutine(routineId, {
+      source: "api",
+      payload: payload ?? null,
+    });
+    return JSON.stringify({ runId: run.id, status: run.status }, null, 2);
+  }
+
+  if (name === "update_routine") {
+    const routineId = String(args.routineId ?? "").trim();
+    if (!routineId) return "Error: routineId is required";
+
+    const patch: Record<string, unknown> = { updatedAt: new Date() };
+    if (args.title !== undefined) patch.title = String(args.title);
+    if (args.description !== undefined) patch.description = String(args.description);
+    if (args.priority !== undefined) patch.priority = String(args.priority);
+    if (args.status !== undefined) patch.status = String(args.status);
+    if (args.assigneeAgentId !== undefined) patch.assigneeAgentId = String(args.assigneeAgentId);
+    if (args.projectId !== undefined) patch.projectId = String(args.projectId);
+    if (args.concurrencyPolicy !== undefined) patch.concurrencyPolicy = String(args.concurrencyPolicy);
+    if (args.catchUpPolicy !== undefined) patch.catchUpPolicy = String(args.catchUpPolicy);
+    if (callerAgentId) patch.updatedByAgentId = callerAgentId;
+
+    const [updated] = await db
+      .update(routines)
+      .set(patch)
+      .where(and(eq(routines.id, routineId), eq(routines.companyId, effectiveCompanyId)))
+      .returning();
+
+    if (!updated) return "Error: routine not found or access denied";
+
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "routine.updated", entityType: "routine", entityId: routineId,
+      agentId: callerAgentId, details: { patch, via: "mcp-chat" },
+    });
+
+    return JSON.stringify(updated, null, 2);
   }
 
   return `Error: unknown tool "${name}"`;
