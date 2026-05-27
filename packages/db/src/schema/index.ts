@@ -100,3 +100,7 @@ export { chatThreads } from "./chat_threads.js";
 // v3: trust + scoring
 export { trustLevels } from "./trust_levels.js";
 export { agentScores } from "./agent_scores.js";
+
+// v3: telegram
+export { telegramBots } from "./telegram_bots.js";
+export { telegramBindings } from "./telegram_bindings.js";
