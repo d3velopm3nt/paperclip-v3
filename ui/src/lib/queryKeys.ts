@@ -191,4 +191,5 @@ export const queryKeys = {
     messages: (companyId: string, threadId: string) =>
       ["chat", "messages", companyId, threadId] as const,
   },
+  telegramBots: (companyId: string) => ["telegram-bots", companyId] as const,
 };

@@ -31,6 +31,7 @@ import { EmailAccountDetail } from "./pages/EmailAccountDetail"; // v3:
 import { EmailWorkflow } from "./pages/EmailWorkflow"; // v3:
 import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
+import { TelegramBots } from "./pages/TelegramBots"; // v3: telegram
 import { Rooms } from "./pages/Rooms"; // v3: operator messaging
 import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
 import { Channels } from "./pages/Channels"; // v3: channels
@@ -150,6 +151,7 @@ function boardRoutes() {
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
       <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
       <Route path="email/workflows" element={<EmailWorkflows />} /> {/* v3: */}
+      <Route path="telegram/bots" element={<TelegramBots />} /> {/* v3: telegram */}
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
       <Route path="channels" element={<Channels />} /> {/* v3: channels */}
