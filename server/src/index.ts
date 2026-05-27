@@ -34,6 +34,7 @@ import { printStartupBanner } from "./startup-banner.js";
 import { getBoardClaimWarningUrl, initializeBoardClaimChallenge } from "./board-claim.js";
 import { maybePersistWorktreeRuntimePorts } from "./worktree-config.js";
 import { startEmailPollWorker } from "./workers/email-poll.js"; // v3:
+import { startTelegramPollWorker } from "./workers/telegram-poll.js"; // v3:
 import { syncAllCompaniesDocuments } from "./services/document-sync.js"; // v3:
 
 type BetterAuthSessionUser = {
@@ -549,6 +550,10 @@ export async function startServer(): Promise<StartedServer> {
   // v3: start IMAP polling worker — reconciles active accounts every 60s
   const emailPollWorker = startEmailPollWorker({ db: db as any });
   void emailPollWorker; // keep handle alive for the process lifetime
+
+  // v3: start Telegram long-poll worker — reconciles active longpoll bots every 60s
+  const telegramPollWorker = startTelegramPollWorker({ db: db as any });
+  void telegramPollWorker; // keep handle alive for the process lifetime
 
   setupLiveEventsWebSocketServer(server, db as any, {
     deploymentMode: config.deploymentMode,
