@@ -44,6 +44,8 @@ import { workflowRunRoutes } from "./routes/workflow-runs.js"; // v3:
 import { roomRoutes } from "./routes/rooms.js"; // v3: operator messaging
 import { operatorMessageRoutes } from "./routes/operator-messages.js"; // v3: operator messaging
 import { telegramRoutes } from "./routes/telegram.js"; // v3: telegram
+import { telegramBotRoutes } from "./routes/telegram-bots.js"; // v3: telegram multi-company bots
+import { telegramWebhookRoutes } from "./routes/telegram-webhook.js"; // v3: telegram bot webhooks
 import { whatsappRoutes } from "./routes/whatsapp.js"; // v3: whatsapp
 import { startTelegramPolling, stopTelegramPolling } from "./services/telegram-polling.js"; // v3: telegram long polling
 import { chatRoutes } from "./routes/chat.js"; // v3: chat
@@ -190,6 +192,7 @@ export async function createApp(
   api.use(roomRoutes(db)); // v3: operator messaging
   api.use(operatorMessageRoutes(db)); // v3: operator messaging
   api.use(telegramRoutes(db)); // v3: telegram channel
+  api.use(telegramBotRoutes(db)); // v3: telegram multi-company bot management
   api.use(whatsappRoutes(db)); // v3: whatsapp channel
   api.use(chatRoutes(db)); // v3: chat
   api.use(mcpToolServerRoutes(db)); // v3: built-in MCP tool server for chat agents
@@ -274,6 +277,10 @@ export async function createApp(
       allowedHostnames: opts.allowedHostnames,
     }),
   );
+
+  // Mount webhook routes (external services, no auth)
+  app.use("/webhook", telegramWebhookRoutes(db)); // v3: telegram bot webhooks
+
   app.use("/api", api);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "API route not found" });
