@@ -864,6 +864,18 @@ const TOOLS = [
     },
   },
   {
+    name: "run_heartbeat",
+    description: "Trigger an immediate heartbeat (wakeup) for an agent in idle state. Use when an agent is idle but not picking up work. Does not affect paused or terminated agents.",
+    inputSchema: {
+      type: "object",
+      required: ["agentId"],
+      properties: {
+        agentId: { type: "string", description: "UUID of the agent to wake up" },
+        reason: { type: "string", description: "Optional reason for the wakeup (for logs)" },
+      },
+    },
+  },
+  {
     name: "pause_agent",
     description: "Pause an agent — stops it from picking up new work. Use when the operator asks to pause, stop, or disable an agent. Does not terminate it; resume_agent reverses this.",
     inputSchema: {
@@ -2500,6 +2512,35 @@ async function handleTool(
       agentId: callerAgentId, details: { reason: restartReason ?? "restart_after_error", via: "mcp-chat" },
     });
     return `Agent ${restartAgentId} restarted. Status reset to idle and wakeup enqueued.`;
+  }
+
+  if (name === "run_heartbeat") {
+    const { agentId: heartbeatAgentId, reason: heartbeatReason } = args as { agentId: string; reason?: string };
+    if (!heartbeatAgentId) return "Error: agentId is required";
+    const [agentRow] = await db
+      .select({ id: agents.id, name: agents.name, status: agents.status, companyId: agents.companyId })
+      .from(agents)
+      .where(and(eq(agents.id, heartbeatAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .limit(1);
+    if (!agentRow) return "Error: agent not found or access denied";
+    if (agentRow.status === "terminated") return "Error: cannot wake up a terminated agent";
+    if (agentRow.status === "paused") return `Agent '${agentRow.name}' is paused. Use resume_agent first.`;
+    const hb = heartbeatService(db);
+    await hb.wakeup(heartbeatAgentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: heartbeatReason ?? "manual_heartbeat",
+      payload: null,
+      requestedByActorType: "system",
+      requestedByActorId: "ea",
+      contextSnapshot: { source: "mcp.run_heartbeat" },
+    }).catch(() => null);
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "agent.heartbeat_triggered", entityType: "agent", entityId: heartbeatAgentId,
+      agentId: callerAgentId, details: { reason: heartbeatReason ?? "manual_heartbeat", via: "mcp-chat" },
+    });
+    return `Heartbeat enqueued for agent '${agentRow.name}' (status: ${agentRow.status}).`;
   }
 
   if (name === "list_approvals") {
