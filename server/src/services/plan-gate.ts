@@ -17,6 +17,7 @@ import { sendEmailFromAccount } from "./email-sender.js";
 import { workflowEngine } from "./workflow-engine.js";
 import { inboundEmailWorkflow } from "./workflows/inbound-email.js";
 import { logger } from "../middleware/logger.js";
+import { trustService } from "./trust.js";
 
 export type Confidence = "low" | "medium" | "high";
 
@@ -78,6 +79,7 @@ export interface ProposedPlan {
 
 export function planGateService(db: Db) {
   const policies = actionPolicyService(db);
+  const trust = trustService(db);
 
   async function evaluateGate(input: EvaluateInput): Promise<EvaluateResult> {
     const { policy, matchedScope } = await policies.resolvePolicy({
@@ -108,6 +110,23 @@ export function planGateService(db: Db) {
     }
 
     if (policy.requiresApproval) {
+      // Check trust level for auto-approve
+      if (input.agentId) {
+        const canAutoApprove = await trust.checkAutoApprove(
+          input.agentId,
+          input.actionType,
+          input.companyId,
+        );
+        if (canAutoApprove) {
+          return {
+            decision: "PASS",
+            reason: `Policy requires approval but agent has trust-based auto-approve for ${input.actionType}`,
+            policy,
+            matchedScope,
+          };
+        }
+      }
+
       return {
         decision: "REQUIRES_PLAN",
         reason: `Policy at ${matchedScope} scope requires approval`,
