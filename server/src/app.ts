@@ -35,6 +35,7 @@ import { mcpServerRoutes } from "./routes/mcp-servers.js";
 import { agentKpiRoutes } from "./routes/agent-kpis.js";
 import { agentExperimentRoutes } from "./routes/agent-experiments.js";
 import { skillChangeRoutes } from "./routes/skill-changes.js";
+import { scoringRoutes } from "./routes/scoring.js"; // v3:
 import { emailAccountRoutes } from "./routes/email-accounts.js"; // v3:
 import { emailMessageRoutes } from "./routes/email-messages.js"; // v3:
 import { actionPolicyRoutes } from "./routes/action-policies.js"; // v3:
@@ -183,6 +184,7 @@ export async function createApp(
   api.use(agentKpiRoutes(db));
   api.use(agentExperimentRoutes(db));
   api.use(skillChangeRoutes(db));
+  api.use(scoringRoutes(db)); // v3:
   api.use(emailAccountRoutes(db)); // v3:
   api.use(emailMessageRoutes(db)); // v3:
   api.use(actionPolicyRoutes(db)); // v3:
