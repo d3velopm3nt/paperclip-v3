@@ -96,3 +96,7 @@ export { messageThreads } from "./message_threads.js";
 
 // v3: chat
 export { chatThreads } from "./chat_threads.js";
+
+// v3: trust + scoring
+export { trustLevels } from "./trust_levels.js";
+export { agentScores } from "./agent_scores.js";
