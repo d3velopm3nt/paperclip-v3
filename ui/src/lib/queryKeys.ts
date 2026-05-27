@@ -192,4 +192,5 @@ export const queryKeys = {
       ["chat", "messages", companyId, threadId] as const,
   },
   telegramBots: (companyId: string) => ["telegram-bots", companyId] as const,
+  trustLevels: (companyId: string) => ["trust-levels", companyId] as const,
 };

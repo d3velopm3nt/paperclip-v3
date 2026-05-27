@@ -144,6 +144,7 @@ export function Sidebar() {
         <SidebarSection label="Governance">
           <SidebarNavItem to="/governance/plans" label="Plans" icon={ShieldCheck} />
           <SidebarNavItem to="/governance/action-policies" label="Policies" icon={ShieldCheck} />
+          <SidebarNavItem to="/governance/trust" label="Trust" icon={ShieldCheck} /> {/* v3: trust */}
         </SidebarSection>
 
         <SidebarSection label="Company">
