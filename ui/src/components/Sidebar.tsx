@@ -22,6 +22,7 @@ import {
   Radio,
   MessageSquare,
   FileText,
+  Bot,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -136,12 +137,14 @@ export function Sidebar() {
             alert={workflowBadge.hasFailed}
           />
           <SidebarNavItem to="/email/accounts" label="Accounts" icon={Mail} />
+          <SidebarNavItem to="/telegram/bots" label="Telegram" icon={Bot} /> {/* v3: telegram */}
         </SidebarSection>
 
         {/* v3: */}
         <SidebarSection label="Governance">
           <SidebarNavItem to="/governance/plans" label="Plans" icon={ShieldCheck} />
           <SidebarNavItem to="/governance/action-policies" label="Policies" icon={ShieldCheck} />
+          <SidebarNavItem to="/governance/trust" label="Trust" icon={ShieldCheck} /> {/* v3: trust */}
         </SidebarSection>
 
         <SidebarSection label="Company">

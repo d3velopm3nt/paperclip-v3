@@ -32,6 +32,8 @@ import { EmailWorkflow } from "./pages/EmailWorkflow"; // v3:
 import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
 import { WorkflowRunDetail } from "./pages/WorkflowRunDetail"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
+import { TelegramBots } from "./pages/TelegramBots"; // v3: telegram
+import { TrustDashboard } from "./pages/TrustDashboard"; // v3: trust
 import { Rooms } from "./pages/Rooms"; // v3: operator messaging
 import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
 import { Channels } from "./pages/Channels"; // v3: channels
@@ -161,6 +163,7 @@ function boardRoutes() {
       <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
       <Route path="workflows" element={<EmailWorkflows />} /> {/* v3: */}
       <Route path="workflows/run/:runId" element={<WorkflowRunDetail />} /> {/* v3: generic run detail */}
+      <Route path="telegram/bots" element={<TelegramBots />} /> {/* v3: telegram */}
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}
       <Route path="rooms/:id" element={<RoomDetail />} /> {/* v3: operator messaging */}
       <Route path="channels" element={<Channels />} /> {/* v3: channels */}
@@ -171,6 +174,7 @@ function boardRoutes() {
       <Route path="clients/:clientId" element={<ClientDetail />} /> {/* v3: */}
       <Route path="team" element={<Team />} /> {/* v3: */}
       <Route path="governance/plans" element={<Plans />} /> {/* v3: */}
+      <Route path="governance/trust" element={<TrustDashboard />} /> {/* v3: trust */}
       <Route path="analytics" element={<Analytics />} />
       <Route path="settings" element={<LegacySettingsRedirect />} />
       <Route path="settings/*" element={<LegacySettingsRedirect />} />

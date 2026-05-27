@@ -195,4 +195,6 @@ export const queryKeys = {
     all: ["agent-templates"] as const,
     detail: (id: string) => ["agent-templates", "detail", id] as const,
   },
+  telegramBots: (companyId: string) => ["telegram-bots", companyId] as const,
+  trustLevels: (companyId: string) => ["trust-levels", companyId] as const,
 };

@@ -1,3 +1,2 @@
-DROP TABLE "ecc_conversations" CASCADE;--> statement-breakpoint
-DROP TABLE "ecc_topic_issues" CASCADE;--> statement-breakpoint
-DROP TABLE "ecc_topics" CASCADE;
+-- No-op migration: ecc_* tables were already renamed in migrations 0076 and 0079
+-- Original migration attempted to drop tables that no longer exist

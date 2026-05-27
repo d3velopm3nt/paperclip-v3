@@ -21,3 +21,4 @@ export { agentKpiRoutes } from "./agent-kpis.js";
 export { agentExperimentRoutes } from "./agent-experiments.js";
 export { skillChangeRoutes } from "./skill-changes.js";
 export { agentTemplateRoutes } from "./agent-templates.js";
+export { scoringRoutes } from "./scoring.js"; // v3:
