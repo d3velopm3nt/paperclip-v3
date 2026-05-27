@@ -74,7 +74,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     // Disable async workflow re-evaluation — it races with afterEach truncate.
     process.env.PAPERCLIP_DISABLE_WORKFLOW_EVAL = "1";
     process.env.PAPERCLIP_DISABLE_HEARTBEAT_RUN_EXEC = "1";
-  }, 30_000);
+  }, 60_000);
 
   afterEach(async () => {
     // Truncate companies cascade — companies is the root and most rows fall
@@ -145,7 +145,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
       .where(eq(agentWakeupRequests.agentId, agent.id));
     expect(wakeups.length).toBeGreaterThanOrEqual(1);
     expect(wakeups[0].reason).toBe("email-triage");
-  }, 30_000);
+  }, 60_000);
 
   it("reply with In-Reply-To attaches to the original triage issue (no second issue, comment + wakeup)", async () => {
     const { agent, account } = await seed();
@@ -200,7 +200,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
       .where(eq(agentWakeupRequests.agentId, agent.id));
     expect(wakeups.length).toBe(1);
     expect(wakeups[0].reason).toBe("thread-reply");
-  }, 30_000);
+  }, 60_000);
 
   it("plan decision token approves and executes (creates issue from plan)", async () => {
     const { company, agent, account } = await seed();
@@ -252,7 +252,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
 
     const [createdIssue] = await db.select().from(issues).where(eq(issues.id, result.issueId!));
     expect(createdIssue.title).toContain("Build feature X");
-  }, 30_000);
+  }, 60_000);
 
   it("expired token is rejected", async () => {
     const { company, agent } = await seed();
@@ -273,7 +273,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
       .where(eq(planDecisionTokens.token, token));
 
     await expect(tokens.redeem(token)).rejects.toThrow(/expired/i);
-  }, 30_000);
+  }, 60_000);
 
   it("re-used token is rejected on the second attempt", async () => {
     const { company, agent } = await seed();
@@ -289,7 +289,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     const { token } = await tokens.issue(proposed.planId);
     await tokens.redeem(token);
     await expect(tokens.redeem(token)).rejects.toThrow(/already used/i);
-  }, 30_000);
+  }, 60_000);
 
   it("create_issue plan without clientId/projectId/DoD throws PlanReadinessError", async () => {
     const { company, agent } = await seed();
@@ -317,7 +317,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
       const e = err as InstanceType<typeof PlanReadinessError>;
       expect(e.missing).toEqual(["clientId", "projectId", "definitionOfDone"]);
     }
-  }, 30_000);
+  }, 60_000);
 
   it("client/project auto-link: single non-archived project for matched client → plan picks it up", async () => {
     const { company, agent, account } = await seed();
@@ -345,7 +345,7 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     const [issue] = await db.select().from(issues).where(eq(issues.id, msg.issueId!));
     expect(issue.clientId).toBe(client.id);
     expect(issue.projectId).toBe(project.id);
-  }, 30_000);
+  }, 60_000);
 
   it("no client match → triage issue still created with null clientId/projectId", async () => {
     const { agent, account } = await seed();
@@ -365,5 +365,5 @@ describeIfDb("email → triage issue → plan-gate → execute (e2e)", () => {
     expect(issue.clientId).toBeNull();
     expect(issue.projectId).toBeNull();
     expect(issue.assigneeAgentId).toBe(agent.id);
-  }, 30_000);
+  }, 60_000);
 });

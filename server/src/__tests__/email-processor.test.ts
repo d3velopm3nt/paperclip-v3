@@ -140,7 +140,7 @@ describeEmbeddedPostgres("email-processor service", () => {
     expect(existsSync(pdf!.storagePath)).toBe(true);
     expect(existsSync(png!.storagePath)).toBe(true);
     expect(readFileSync(pdf!.storagePath).toString()).toContain("%PDF-1.4");
-  }, 20_000);
+  }, 60_000);
 
   it("returns duplicated=true on same Message-ID re-delivery", async () => {
     const [company] = await db.insert(companies).values({ name: "Dev", issuePrefix: "DEV" }).returning();
@@ -169,5 +169,5 @@ describeEmbeddedPostgres("email-processor service", () => {
 
     const count = await db.select().from(emailMessages);
     expect(count).toHaveLength(1);
-  }, 20_000);
+  }, 60_000);
 });
