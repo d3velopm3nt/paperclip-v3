@@ -94,6 +94,7 @@ const TOOLS = [
         projectId: { type: "string", description: "UUID of project to assign to. Pass this whenever the issue belongs to a project." },
         goalId: { type: "string", description: "UUID of goal (stage) to link this issue to. Used for lifecycle tracking." },
         assigneeAgentId: { type: "string", description: "UUID of agent to assign to" },
+        sourceEmailMessageId: { type: "string", description: "UUID of inbound email this issue was created from. Links the email to the new issue." },
       },
     },
   },
@@ -1114,6 +1115,15 @@ async function handleTool(
         .from(clients).where(eq(clients.id, String(args.clientId))).limit(1);
       issueClientFolderPath = getClientFolderPath(cl ?? null);
     }
+
+    if (args.sourceEmailMessageId && typeof args.sourceEmailMessageId === "string") {
+      await db.update(emailMessages).set({
+        issueId: created.id,
+        processingState: "plan_proposed",
+        processedAt: new Date(),
+      }).where(eq(emailMessages.id, String(args.sourceEmailMessageId))).catch(() => {});
+    }
+
     return JSON.stringify({ ...created, clientFolderPath: issueClientFolderPath }, null, 2);
   }
 
