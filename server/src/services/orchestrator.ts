@@ -15,6 +15,7 @@ import { eaConversationsService } from "./ea-conversations.js";
 import { topicsService } from "./topics.js";
 import { eaAgentsService } from "./ea-agents.js";
 import { notifyOperator } from "./telegram-polling.js";
+import { sendTelegramMessage } from "./telegram-adapter.js";
 import type { ConversationMessage } from "./ea-conversations.js";
 import type { EaAgentMetadata } from "./ea-agents.js";
 
@@ -238,6 +239,7 @@ function parseAssistantText(streamJson: string): string {
 export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise<void> {
   const { companyId } = input;
   const isOperator = input.fromType === "operator";
+  const botToken = process.env.TELEGRAM_BOT_TOKEN ?? "";
 
   const eaSvc = eaAgentsService(db);
   const execAgent = await eaSvc.getEaAgent("operator");
@@ -368,7 +370,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
       logger.warn({ err: memErr, agentId: activeEaAgent.id }, "orchestrator: failed to load agent memories");
     }
   }
-  await fs.writeFile(promptPath, systemPrompt + memorySection, "utf-8");
+  const inboundRestriction = !isOperator
+    ? `\n\n---\n\n# Inbound Email Rules (MANDATORY)\n\nYou are processing an inbound client message. These rules override all other instructions:\n\n1. **DO NOT call create_issue, create_client, or create_project.** These tools will return an authorization error. You do not have permission to create entities autonomously.\n2. **Thread match found** (existingIssueId is set) → call add_issue_comment to append the message, then stop.\n3. **No thread match** → call notify_operator with a brief summary (sender, subject, first 200 chars of body) and stop. Do not take any other action.\n4. The operator will decide whether to create an issue, label the email, or ignore it.\n`
+    : "";
+  await fs.writeFile(promptPath, systemPrompt + memorySection + inboundRestriction, "utf-8");
 
   const agentMeta = (activeEaAgent?.metadata ?? {}) as EaAgentMetadata;
   const existingSessionId = agentMeta.claudeSessionId;
@@ -454,6 +459,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
           errorText: errText, ord: 98, computedAt: now,
         }).catch(() => {});
       }
+      // Send error message back to user on Telegram
+      if (input.platform === "telegram" && botToken) {
+        await sendTelegramMessage(botToken, input.fromAddr, "❌ Sorry, something went wrong processing your message. Please try again.").catch(() => {});
+      }
     }
 
     await Promise.allSettled([fs.unlink(mcpConfigPath), fs.unlink(promptPath)]);
@@ -480,6 +489,10 @@ export async function runOrchestrator(db: Db, input: OrchestratorInput): Promise
         status: "failed", expectations: [], actuals: { error: errMsg.slice(0, 300) },
         errorText: errMsg.slice(0, 300), ord: 99, computedAt: now,
       }).catch(() => {});
+    }
+    // Send error message back to user on Telegram
+    if (input.platform === "telegram" && botToken) {
+      await sendTelegramMessage(botToken, input.fromAddr, "❌ Sorry, something went wrong. Please try again later.").catch(() => {});
     }
     await notifyOperator(db, `⚠️ Orchestrator error on ${input.platform} message:\n\n${errMsg.slice(0, 300)}\n\nOriginal message: "${input.body.slice(0, 100)}"`, "high_risk_detected")
       .catch(() => {});
