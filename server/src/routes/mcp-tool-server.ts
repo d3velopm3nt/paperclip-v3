@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir } from "node:fs/promises";
 import type { Db } from "@paperclipai/db";
-import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains, documentSources, projectWorkspaces, agentTemplates } from "@paperclipai/db";
+import { agents, agentMemories, issues, projects, goals, activityLog, emailMessages, emailAttachments, emailAccounts, clients, contacts, issueComments, approvals, operatorMessages, instanceSettings, companies, workflowRuns, workflowStageResults, memoryItems, topics, topicIssues, blockedSenderDomains, emailLabelDefinitions, documentSources, projectWorkspaces, agentTemplates } from "@paperclipai/db";
 import { and, desc, eq, gte, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { verifyMcpToken } from "../services/mcp-session-token.js";
 import { heartbeatService } from "../services/index.js";
@@ -658,6 +658,19 @@ const TOOLS = [
     },
   },
   {
+    name: "label_email",
+    description: "Label an inbound email (e.g. 'spam', 'marketing', 'AI', 'news'). Marks it as ignored. Returns the sender domain so you can offer to block it with block_sender_domain.",
+    inputSchema: {
+      type: "object",
+      required: ["emailId", "label"],
+      properties: {
+        emailId: { type: "string", description: "UUID of the email message to label" },
+        label: { type: "string", description: "Label name (e.g. 'spam', 'marketing', 'AI', 'news')" },
+        companyId: { type: "string", description: "Company UUID. Defaults to agent's company." },
+      },
+    },
+  },
+  {
     name: "list_routines",
     description: "List routines (scheduled recurring tasks) for a company. Returns each routine with its triggers (cron schedules), assignee agent, and last run status.",
     inputSchema: {
@@ -864,6 +877,18 @@ const TOOLS = [
     },
   },
   {
+    name: "run_heartbeat",
+    description: "Trigger an immediate heartbeat (wakeup) for an agent in idle state. Use when an agent is idle but not picking up work. Does not affect paused or terminated agents.",
+    inputSchema: {
+      type: "object",
+      required: ["agentId"],
+      properties: {
+        agentId: { type: "string", description: "UUID of the agent to wake up" },
+        reason: { type: "string", description: "Optional reason for the wakeup (for logs)" },
+      },
+    },
+  },
+  {
     name: "pause_agent",
     description: "Pause an agent — stops it from picking up new work. Use when the operator asks to pause, stop, or disable an agent. Does not terminate it; resume_agent reverses this.",
     inputSchema: {
@@ -1059,6 +1084,7 @@ async function handleTool(
   }
 
   if (name === "create_issue") {
+    if (!isOperator) return "Error: issue creation requires operator authorization. Call notify_operator() to inform the operator instead.";
     const title = String(args.title ?? "").trim();
     if (!title) return "Error: title is required";
 
@@ -1477,6 +1503,7 @@ async function handleTool(
   }
 
   if (name === "create_project") {
+    if (!isOperator) return "Error: project creation requires operator authorization. Call notify_operator() to inform the operator instead.";
     const { name: projectName, description, clientId, status } = args as {
       name: string; description?: string; clientId?: string; status?: string;
     };
@@ -2263,6 +2290,7 @@ async function handleTool(
   }
 
   if (name === "create_client") {
+    if (!isOperator) return "Error: client creation requires operator authorization. Call notify_operator() to inform the operator instead.";
     const { name: clientName, emailDomain, extraEmails } = args as {
       name: string; emailDomain?: string; extraEmails?: string[];
     };
@@ -2301,6 +2329,38 @@ async function handleTool(
       .values({ companyId: effectiveCompanyId, domain: normalised, reason: reason ?? null })
       .onConflictDoNothing();
     return `Domain ${normalised} blocked.`;
+  }
+
+  if (name === "label_email") {
+    const emailId = String(args.emailId ?? "").trim();
+    const label = String(args.label ?? "").trim();
+    if (!emailId) return "Error: emailId is required";
+    if (!label) return "Error: label is required";
+
+    const [msg] = await db
+      .select({ id: emailMessages.id, fromAddr: emailMessages.fromAddr, emailAccountId: emailMessages.emailAccountId })
+      .from(emailMessages)
+      .where(eq(emailMessages.id, emailId))
+      .limit(1);
+    if (!msg) return "Error: email not found";
+
+    const [account] = await db
+      .select({ companyId: emailAccounts.companyId })
+      .from(emailAccounts)
+      .where(eq(emailAccounts.id, msg.emailAccountId))
+      .limit(1);
+    if (!account || (!isOperator && account.companyId !== companyId)) {
+      return "Error: email not found or access denied";
+    }
+
+    await db.update(emailMessages).set({
+      label,
+      processingState: "ignored",
+      processedAt: new Date(),
+    }).where(eq(emailMessages.id, emailId));
+
+    const domain = msg.fromAddr.split("@")[1] ?? "";
+    return JSON.stringify({ success: true, emailId, label, senderDomain: domain });
   }
 
   if (name === "discard_message") {
@@ -2441,6 +2501,35 @@ async function handleTool(
       agentId: callerAgentId, details: { reason: restartReason ?? "restart_after_error", via: "mcp-chat" },
     });
     return `Agent ${restartAgentId} restarted. Status reset to idle and wakeup enqueued.`;
+  }
+
+  if (name === "run_heartbeat") {
+    const { agentId: heartbeatAgentId, reason: heartbeatReason } = args as { agentId: string; reason?: string };
+    if (!heartbeatAgentId) return "Error: agentId is required";
+    const [agentRow] = await db
+      .select({ id: agents.id, name: agents.name, status: agents.status, companyId: agents.companyId })
+      .from(agents)
+      .where(and(eq(agents.id, heartbeatAgentId), eq(agents.companyId, effectiveCompanyId)))
+      .limit(1);
+    if (!agentRow) return "Error: agent not found or access denied";
+    if (agentRow.status === "terminated") return "Error: cannot wake up a terminated agent";
+    if (agentRow.status === "paused") return `Agent '${agentRow.name}' is paused. Use resume_agent first.`;
+    const hb = heartbeatService(db);
+    await hb.wakeup(heartbeatAgentId, {
+      source: "on_demand",
+      triggerDetail: "manual",
+      reason: heartbeatReason ?? "manual_heartbeat",
+      payload: null,
+      requestedByActorType: "system",
+      requestedByActorId: "ea",
+      contextSnapshot: { source: "mcp.run_heartbeat" },
+    }).catch(() => null);
+    void logActivity(db, {
+      companyId: effectiveCompanyId, actorType: "agent", actorId: callerAgentId ?? "chat",
+      action: "agent.heartbeat_triggered", entityType: "agent", entityId: heartbeatAgentId,
+      agentId: callerAgentId, details: { reason: heartbeatReason ?? "manual_heartbeat", via: "mcp-chat" },
+    });
+    return `Heartbeat enqueued for agent '${agentRow.name}' (status: ${agentRow.status}).`;
   }
 
   if (name === "list_approvals") {
