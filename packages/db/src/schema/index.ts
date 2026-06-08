@@ -94,6 +94,7 @@ export { roomMembers } from "./room_members.js";
 export { operatorMessages } from "./operator_messages.js";
 export { messageThreads } from "./message_threads.js";
 export { blockedSenderDomains } from "./blocked_sender_domains.js";
+export { emailLabelDefinitions } from "./email_label_definitions.js";
 
 // v3: chat
 export { chatThreads } from "./chat_threads.js";
