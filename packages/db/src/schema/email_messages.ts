@@ -47,6 +47,7 @@ export const emailMessages = pgTable(
     attachmentsPath: text("attachments_path"),
     rawHeaders: jsonb("raw_headers").$type<Record<string, unknown>>(),
     errorText: text("error_text"),
+    label: text("label"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
