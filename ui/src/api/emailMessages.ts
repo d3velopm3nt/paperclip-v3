@@ -31,6 +31,7 @@ export interface EmailMessageSummary {
   approvalId: string | null;
   attachmentsPath: string | null;
   errorText: string | null;
+  label: string | null;
   createdAt: string;
 }
 
@@ -80,4 +81,6 @@ export const emailMessagesApi = {
     api.get<EmailMessageDetail[]>(`/companies/${encodeURIComponent(companyId)}/issues/${encodeURIComponent(issueId)}/emails`),
   linkToIssue: (id: string, issueId: string | null) =>
     api.patch<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}`, { issueId }),
+  setLabel: (id: string, label: string | null) =>
+    api.patch<EmailMessageSummary>(`/email-messages/${encodeURIComponent(id)}`, { label }),
 };

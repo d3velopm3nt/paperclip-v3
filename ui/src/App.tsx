@@ -32,6 +32,7 @@ import { EmailWorkflow } from "./pages/EmailWorkflow"; // v3:
 import { EmailWorkflows } from "./pages/EmailWorkflows"; // v3:
 import { WorkflowRunDetail } from "./pages/WorkflowRunDetail"; // v3:
 import { EmailInbox } from "./pages/EmailInbox"; // v3:
+import { EmailLabels } from "./pages/EmailLabels"; // v3:
 import { Rooms } from "./pages/Rooms"; // v3: operator messaging
 import { RoomDetail } from "./pages/RoomDetail"; // v3: operator messaging
 import { Channels } from "./pages/Channels"; // v3: channels
@@ -159,6 +160,7 @@ function boardRoutes() {
       <Route path="email/accounts/:id" element={<EmailAccountDetail />} /> {/* v3: */}
       <Route path="email/inbox" element={<EmailInbox />} /> {/* v3: */}
       <Route path="email/inbox/:id/workflow" element={<EmailWorkflow />} /> {/* v3: */}
+      <Route path="email/labels" element={<EmailLabels />} /> {/* v3: */}
       <Route path="workflows" element={<EmailWorkflows />} /> {/* v3: */}
       <Route path="workflows/run/:runId" element={<WorkflowRunDetail />} /> {/* v3: generic run detail */}
       <Route path="rooms" element={<Rooms />} /> {/* v3: operator messaging */}

@@ -444,6 +444,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     ? context.paperclipMcpConfigPath.trim()
     : null;
 
+  const claudeConfigDir = path.join(
+    typeof effectiveEnv.HOME === "string" && effectiveEnv.HOME.trim().length > 0
+      ? effectiveEnv.HOME.trim()
+      : os.homedir(),
+    ".claude",
+  );
+
   const buildClaudeArgs = (resumeSessionId: string | null) => {
     const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
     if (resumeSessionId) args.push("--resume", resumeSessionId);
@@ -457,6 +464,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     }
     if (mcpConfigPath) args.push("--mcp-config", mcpConfigPath);
     args.push("--add-dir", skillsDir);
+    args.push("--add-dir", claudeConfigDir);
     if (extraArgs.length > 0) args.push(...extraArgs);
     return args;
   };

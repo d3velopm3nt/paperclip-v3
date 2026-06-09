@@ -146,6 +146,7 @@ export function emailProcessorService(db: Db) {
 
     let attachmentCount = 0;
     const savedAttachmentNames: string[] = [];
+    const seenAttachments = new Set<string>();
     for (let i = 0; i < attachments.length; i++) {
       const att = attachments[i]!;
       const raw = att.content;
@@ -163,6 +164,15 @@ export function emailProcessorService(db: Db) {
         continue;
       }
       const rawName = att.filename ?? `attachment-${i + 1}`;
+      const dupKey = `${rawName}:${content.length}`;
+      if (seenAttachments.has(dupKey)) {
+        logger.debug(
+          { emailMessageId: inserted!.id, filename: rawName, size: content.length },
+          "email-processor: skipped duplicate attachment",
+        );
+        continue;
+      }
+      seenAttachments.add(dupKey);
       // Prefix with index to avoid intra-message filename collisions.
       const filename = `${String(i + 1).padStart(2, "0")}-${rawName}`;
       try {

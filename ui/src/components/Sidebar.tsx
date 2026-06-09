@@ -22,6 +22,7 @@ import {
   Radio,
   MessageSquare,
   FileText,
+  Tag,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -136,6 +137,7 @@ export function Sidebar() {
             alert={workflowBadge.hasFailed}
           />
           <SidebarNavItem to="/email/accounts" label="Accounts" icon={Mail} />
+          <SidebarNavItem to="/email/labels" label="Labels" icon={Tag} />
         </SidebarSection>
 
         {/* v3: */}

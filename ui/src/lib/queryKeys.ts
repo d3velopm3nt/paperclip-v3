@@ -145,6 +145,9 @@ export const queryKeys = {
       ["email-messages", companyId, state ?? "__all__"] as const,
     detail: (id: string) => ["email-messages", "detail", id] as const,
   },
+  emailLabelDefinitions: {
+    list: (companyId: string) => ["email-label-definitions", companyId] as const,
+  },
   actionPolicies: {
     list: (companyId: string) => ["action-policies", companyId] as const,
   },

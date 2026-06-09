@@ -4,7 +4,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { emailAccounts, emailAttachments, emailMessages, issueComments, issues, agentWakeupRequests } from "@paperclipai/db";
+import { emailAccounts, emailAttachments, emailMessages, emailLabelDefinitions, issueComments, issues, agentWakeupRequests } from "@paperclipai/db";
 import { badRequest, notFound } from "../errors.js";
 import { assertCompanyAccess } from "./authz.js";
 import { resolveEmailAttachmentsRoot } from "../home-paths.js";
@@ -215,6 +215,13 @@ export function emailMessageRoutes(db: Db) {
     const patch: Record<string, unknown> = {};
     if ("issueId" in req.body) patch.issueId = req.body.issueId ?? null;
     if ("approvalId" in req.body) patch.approvalId = req.body.approvalId ?? null;
+    if ("label" in req.body) {
+      patch.label = req.body.label ?? null;
+      if (req.body.label) {
+        patch.processingState = "ignored";
+        patch.processedAt = new Date();
+      }
+    }
 
     const [updated] = await db.update(emailMessages).set(patch).where(eq(emailMessages.id, id)).returning();
 
@@ -480,6 +487,41 @@ export function emailMessageRoutes(db: Db) {
       filedAt: updatedAtt!.filedAt?.toISOString() ?? null,
       filedPath: updatedAtt!.filedPath ?? null,
     });
+  });
+
+  // GET /api/companies/:companyId/email-label-definitions
+  router.get("/companies/:companyId/email-label-definitions", async (req, res) => {
+    const { companyId } = req.params;
+    assertCompanyAccess(req, companyId);
+    const rows = await db
+      .select()
+      .from(emailLabelDefinitions)
+      .where(eq(emailLabelDefinitions.companyId, companyId))
+      .orderBy(emailLabelDefinitions.name);
+    res.json(rows);
+  });
+
+  // POST /api/companies/:companyId/email-label-definitions
+  router.post("/companies/:companyId/email-label-definitions", async (req, res) => {
+    const { companyId } = req.params;
+    assertCompanyAccess(req, companyId);
+    const { name, color } = req.body as { name?: string; color?: string };
+    if (!name?.trim()) throw badRequest("name is required");
+    const [created] = await db
+      .insert(emailLabelDefinitions)
+      .values({ companyId, name: name.trim(), color: color ?? "#6b7280" })
+      .returning();
+    res.status(201).json(created);
+  });
+
+  // DELETE /api/companies/:companyId/email-label-definitions/:labelId
+  router.delete("/companies/:companyId/email-label-definitions/:labelId", async (req, res) => {
+    const { companyId, labelId } = req.params;
+    assertCompanyAccess(req, companyId);
+    await db
+      .delete(emailLabelDefinitions)
+      .where(and(eq(emailLabelDefinitions.id, labelId), eq(emailLabelDefinitions.companyId, companyId)));
+    res.status(204).end();
   });
 
   return router;

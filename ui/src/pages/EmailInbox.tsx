@@ -10,6 +10,7 @@ import {
   type EmailMessageDetail,
   type EmailMessageSummary,
 } from "../api/emailMessages";
+import { emailLabelDefinitionsApi } from "../api/emailLabelDefinitions";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
@@ -43,6 +44,8 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronRight,
+  Tag,
+  Plus,
 } from "lucide-react";
 import { EmailProcessingLog } from "../components/EmailProcessingLog";
 import { FiledCheckDialog } from "../components/EmailProcessingLog";
@@ -769,6 +772,11 @@ function MessageRow({
             {message.accountLabel && (
               <span className="text-[11px] text-muted-foreground">via {message.accountLabel}</span>
             )}
+            {message.label && (
+              <span className="flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                <Tag className="h-2.5 w-2.5" />{message.label}
+              </span>
+            )}
             {hasAttachment && <Paperclip className="h-3 w-3 text-muted-foreground" />}
             {message.errorText && <AlertCircle className="h-3 w-3 text-destructive" />}
           </div>
@@ -998,11 +1006,45 @@ function MessageDetail({
   const { pushToast } = useToast();
   const [linkOpen, setLinkOpen] = useState(false);
   const [issueSearch, setIssueSearch] = useState("");
+  const [labelOpen, setLabelOpen] = useState(false);
+  const [createIssueOpen, setCreateIssueOpen] = useState(false);
+  const [newIssueTitle, setNewIssueTitle] = useState("");
 
   const issuesQuery = useQuery({
     queryKey: ["issues", "list", companyId],
     queryFn: () => issuesApi.list(companyId),
     enabled: linkOpen,
+  });
+
+  const labelsQuery = useQuery({
+    queryKey: queryKeys.emailLabelDefinitions.list(companyId),
+    queryFn: () => emailLabelDefinitionsApi.list(companyId),
+    enabled: labelOpen,
+  });
+
+  const setLabelMutation = useMutation({
+    mutationFn: (label: string | null) => emailMessagesApi.setLabel(detail!.id, label),
+    onSuccess: () => {
+      pushToast({ tone: "success", title: "Label set" });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.detail(detail!.id) });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId) });
+      setLabelOpen(false);
+    },
+    onError: (err: Error) => pushToast({ tone: "warn", title: "Failed to set label", body: err.message }),
+  });
+
+  const createIssueMutation = useMutation({
+    mutationFn: (title: string) =>
+      issuesApi.create(companyId, { title, sourceEmailMessageId: detail!.id }),
+    onSuccess: (created) => {
+      pushToast({ tone: "success", title: "Issue created" });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.detail(detail!.id) });
+      qc.invalidateQueries({ queryKey: queryKeys.emailMessages.list(companyId) });
+      setCreateIssueOpen(false);
+      setNewIssueTitle("");
+      navigate(`/issues/${created.id}`);
+    },
+    onError: (err: Error) => pushToast({ tone: "warn", title: "Failed to create issue", body: err.message }),
   });
 
   const linkMutation = useMutation({
@@ -1044,6 +1086,24 @@ function MessageDetail({
           <ArrowLeft className="h-4 w-4 mr-1" /> Back
         </Button>
         <div className="flex items-center gap-2 ml-auto">
+          {!detail.issueId && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => { setNewIssueTitle(detail.subject || ""); setCreateIssueOpen(true); }}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" />
+              Create Issue
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setLabelOpen(true)}
+          >
+            <Tag className="h-3.5 w-3.5 mr-1" />
+            {detail.label ? detail.label : "Label"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -1084,6 +1144,11 @@ function MessageDetail({
           >
             {detail.processingState}
           </span>
+          {detail.label && (
+            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+              <Tag className="h-3 w-3" />{detail.label}
+            </span>
+          )}
         </div>
       </div>
 
@@ -1156,6 +1221,92 @@ function MessageDetail({
           )}
         </div>
       )}
+
+      {/* Label dialog */}
+      <Dialog open={labelOpen} onOpenChange={setLabelOpen}>
+        <DialogContent className="max-w-xs">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <Tag className="h-4 w-4" />
+              Label email
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {labelsQuery.isLoading ? (
+              <p className="text-xs text-muted-foreground p-2">Loading…</p>
+            ) : (labelsQuery.data ?? []).length === 0 ? (
+              <p className="text-xs text-muted-foreground p-2">No labels defined. Add labels in Settings → Email Labels.</p>
+            ) : (
+              <div className="divide-y divide-border rounded-md border border-border">
+                {(labelsQuery.data ?? []).map((lbl) => (
+                  <button
+                    key={lbl.id}
+                    className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-accent/40 transition-colors ${detail.label === lbl.name ? "font-medium" : ""}`}
+                    onClick={() => setLabelMutation.mutate(lbl.name)}
+                    disabled={setLabelMutation.isPending}
+                  >
+                    <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: lbl.color }} />
+                    {lbl.name}
+                    {detail.label === lbl.name && <span className="ml-auto text-xs text-muted-foreground">current</span>}
+                  </button>
+                ))}
+                {detail.label && (
+                  <button
+                    className="w-full text-left px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/40 transition-colors"
+                    onClick={() => setLabelMutation.mutate(null)}
+                    disabled={setLabelMutation.isPending}
+                  >
+                    Remove label
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Issue dialog */}
+      <Dialog open={createIssueOpen} onOpenChange={setCreateIssueOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              Create issue from email
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Issue title…"
+              value={newIssueTitle}
+              onChange={(e) => setNewIssueTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newIssueTitle.trim()) {
+                  createIssueMutation.mutate(newIssueTitle.trim());
+                }
+              }}
+              className="h-8 text-sm"
+              autoFocus
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setCreateIssueOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={!newIssueTitle.trim() || createIssueMutation.isPending}
+                onClick={() => createIssueMutation.mutate(newIssueTitle.trim())}
+              >
+                {createIssueMutation.isPending ? "Creating…" : "Create Issue"}
+              </Button>
+            </div>
+            {createIssueMutation.isError && (
+              <p className="text-xs text-destructive">
+                {createIssueMutation.error instanceof Error ? createIssueMutation.error.message : "Failed"}
+              </p>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Link to Issue dialog */}
       <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
