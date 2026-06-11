@@ -427,27 +427,36 @@ export async function fileAttachmentToProjectFolder(
 
 const STORAGE_WARN_BODY = "No storage root configured. Use the set_storage_root MCP tool or reply with: set storage to <path>";
 
+// In-process guard: prevents concurrent email ingest from firing multiple
+// simultaneous Telegram sends before the DB dedup record has been written.
+const storageWarnInFlight = new Set<string>();
+
 /**
  * Sends a Telegram notification to the operator if no storage root is configured.
  * Throttled to once per day per company — non-fatal.
  */
 export async function notifyStorageNotConfigured(db: Db, companyId: string): Promise<void> {
   if (process.env.NODE_ENV === "test") return;
-  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const [recent] = await db
-    .select({ id: operatorMessages.id })
-    .from(operatorMessages)
-    .where(and(
-      eq(operatorMessages.companyId, companyId),
-      eq(operatorMessages.body, STORAGE_WARN_BODY),
-      gte(operatorMessages.createdAt, oneDayAgo),
-    ))
-    .orderBy(desc(operatorMessages.createdAt))
-    .limit(1);
-  if (recent) return;
-
+  // Synchronous guard prevents concurrent calls from all passing the DB check
+  // before any of them has written the dedup record.
+  if (storageWarnInFlight.has(companyId)) return;
+  storageWarnInFlight.add(companyId);
   try {
-    await notifyOperator(db, STORAGE_WARN_BODY, "high_risk_detected");
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const [recent] = await db
+      .select({ id: operatorMessages.id })
+      .from(operatorMessages)
+      .where(and(
+        eq(operatorMessages.companyId, companyId),
+        eq(operatorMessages.body, STORAGE_WARN_BODY),
+        gte(operatorMessages.createdAt, oneDayAgo),
+      ))
+      .orderBy(desc(operatorMessages.createdAt))
+      .limit(1);
+    if (recent) return;
+
+    // Insert the dedup record BEFORE sending so a crash/rejection after send
+    // still prevents a retry within the same day.
     await db.insert(operatorMessages).values({
       companyId,
       direction: "outbound",
@@ -455,7 +464,10 @@ export async function notifyStorageNotConfigured(db: Db, companyId: string): Pro
       source: "system",
       body: STORAGE_WARN_BODY,
     });
+    await notifyOperator(db, STORAGE_WARN_BODY, "high_risk_detected");
   } catch {
     // Non-fatal
+  } finally {
+    storageWarnInFlight.delete(companyId);
   }
 }

@@ -39,43 +39,54 @@ const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
  */
 async function buildSkillsDir(config: Record<string, unknown>): Promise<string> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skills-"));
-  const target = path.join(tmp, ".claude", "skills");
-  await fs.mkdir(target, { recursive: true });
-  const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
-  const desiredNames = new Set(
-    resolveClaudeDesiredSkillNames(
-      config,
-      availableEntries,
-    ),
-  );
-  // Symlink Paperclip-managed skills
-  for (const entry of availableEntries) {
-    if (!desiredNames.has(entry.key)) continue;
-    await fs.symlink(
-      entry.source,
-      path.join(target, entry.runtimeName),
+  try {
+    const target = path.join(tmp, ".claude", "skills");
+    await fs.mkdir(target, { recursive: true });
+    const availableEntries = await readPaperclipRuntimeSkillEntries(config, __moduleDir);
+    const desiredNames = new Set(
+      resolveClaudeDesiredSkillNames(
+        config,
+        availableEntries,
+      ),
     );
-  }
-  // V2: Also symlink desired user-installed skills from ~/.claude/skills/
-  const managedKeys = new Set(availableEntries.map((e) => e.key));
-  const env =
-    typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
-      ? (config.env as Record<string, unknown>)
-      : {};
-  const configuredHome = typeof env.HOME === "string" && env.HOME.trim().length > 0 ? path.resolve(env.HOME.trim()) : os.homedir();
-  const skillsHome = path.join(configuredHome, ".claude", "skills");
-  for (const desiredSkill of desiredNames) {
-    if (managedKeys.has(desiredSkill)) continue; // already symlinked above
-    const skillPath = path.join(skillsHome, desiredSkill);
-    try {
-      await fs.access(skillPath);
-      const targetLink = path.join(target, desiredSkill);
-      try { await fs.access(targetLink); } catch { await fs.symlink(skillPath, targetLink); }
-    } catch {
-      // skill not found in ~/.claude/skills, skip
+    // Symlink Paperclip-managed skills — non-fatal: a missing symlink means the
+    // skill won't appear in Claude Code but won't crash the run.
+    for (const entry of availableEntries) {
+      if (!desiredNames.has(entry.key)) continue;
+      await fs.symlink(
+        entry.source,
+        path.join(target, entry.runtimeName),
+      ).catch((err: NodeJS.ErrnoException) => {
+        // ENOSPC / EPERM on Windows — log and skip rather than killing the run.
+        console.warn(`[paperclip] buildSkillsDir: skipping skill symlink for ${entry.key}: ${err.message}`);
+      });
     }
+    // V2: Also symlink desired user-installed skills from ~/.claude/skills/
+    const managedKeys = new Set(availableEntries.map((e) => e.key));
+    const env =
+      typeof config.env === "object" && config.env !== null && !Array.isArray(config.env)
+        ? (config.env as Record<string, unknown>)
+        : {};
+    const configuredHome = typeof env.HOME === "string" && env.HOME.trim().length > 0 ? path.resolve(env.HOME.trim()) : os.homedir();
+    const skillsHome = path.join(configuredHome, ".claude", "skills");
+    for (const desiredSkill of desiredNames) {
+      if (managedKeys.has(desiredSkill)) continue; // already symlinked above
+      const skillPath = path.join(skillsHome, desiredSkill);
+      try {
+        await fs.access(skillPath);
+        const targetLink = path.join(target, desiredSkill);
+        try { await fs.access(targetLink); } catch { await fs.symlink(skillPath, targetLink); }
+      } catch {
+        // skill not found in ~/.claude/skills, skip
+      }
+    }
+    return tmp;
+  } catch (err) {
+    // Clean up the tmpdir so orphaned paperclip-skills-* dirs don't accumulate
+    // on low-disk-space machines (common cause of subsequent ENOSPC failures).
+    await fs.rm(tmp, { recursive: true, force: true }).catch(() => {});
+    throw err;
   }
-  return tmp;
 }
 
 interface ClaudeExecutionInput {
